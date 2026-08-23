@@ -32,9 +32,14 @@ in this repo.
    (§8.3).
 3. **Every implemented thing is a ticket.** Planning is exempt. If work lands without a
    ticket, a retro ticket is created automatically after the fact (§7.5).
-4. **Layer, never fork.** The Matt Pocock skill chain (grilling → to-spec → to-tickets
-   → implement, wayfinder for multi-session maps) is used as shipped. Argus adds
-   watchers, a registry, and dispatch around it. Plugin-cache files are never edited.
+4. **Fork with a tether, never edit the cache.** The Matt Pocock skill chain
+   (grilling → to-spec → to-tickets → implement, wayfinder for multi-session maps)
+   runs from **pocock-plus** — Johan's fork (`~/.claude/skills/pocock-plus`, its own
+   repo) carrying local upgrades (e.g. the tdd live-verification exit gate) plus a
+   `sync-upstream` skill that merges each new upstream release without losing the
+   local changes listed in its `LOCAL-CHANGES.md`. Upstream plugin-cache files are
+   never edited, and Argus behavior (watchers, registry, dispatch) still layers
+   around the chain rather than living inside it.
 5. **Provenance-aware, always-on.** Watchers never stop; they change *how* they write
    based on who authored each message (§5). Johan's words and agent output are never
    conflated.
@@ -247,7 +252,7 @@ Push-first, poll as safety net:
 
 ### 7.1 The chain
 
-The Matt Pocock chain, unmodified: `grilling → to-spec → to-tickets → implement`, with
+The Matt Pocock chain as shipped by pocock-plus (§1.4): `grilling → to-spec → to-tickets → implement`, with
 `wayfinder` for multi-session maps and `code-review` at the end. Tracker: GitHub Issues
 per target repo (native sub-issues + blocking edges = visible frontier).
 
