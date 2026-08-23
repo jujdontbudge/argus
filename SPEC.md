@@ -34,8 +34,8 @@ in this repo.
    ticket, a retro ticket is created automatically after the fact (§7.5).
 4. **Fork with a tether, never edit the cache.** The Matt Pocock skill chain
    (grilling → to-spec → to-tickets → implement, wayfinder for multi-session maps)
-   runs from **pocock-plus** — Johan's fork (`~/.claude/skills/pocock-plus`, its own
-   repo) carrying local upgrades (e.g. the tdd live-verification exit gate) plus a
+   runs from **pocock-plus** — Johan's fork (`~/pocock-plus`, installed globally as
+   a plugin from the johan-plugins marketplace) carrying local upgrades (e.g. the tdd live-verification exit gate) plus a
    `sync-upstream` skill that merges each new upstream release without losing the
    local changes listed in its `LOCAL-CHANGES.md`. Upstream plugin-cache files are
    never edited, and Argus behavior (watchers, registry, dispatch) still layers
