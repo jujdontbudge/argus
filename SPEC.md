@@ -369,7 +369,44 @@ knowledge beyond the list of enabled repos. This is the single exception to
   editing Matt Pocock plugin internals; auto-dispatch without a human-approved ticket
   breakdown; retiring Claude Code's built-in memory.
 
-## 13. It's working if
+## 13. Simulation testing — the fake-Johan harness
+
+Argus is verified end-to-end and adversarially, not just by per-ticket TDD. The
+harness runs against a throwaway sandbox repo (`argus init`'d for the occasion) with
+a **simulation driver** agent that plays Johan: it types into deployed sessions via
+`cmux send`, starts random unregistered sessions on both Claude Code and Codex, makes
+untracked implementation edits, and drops preference statements mid-run. Every feature
+ships with its scenario; pass/fail is asserted by the harness, never eyeballed.
+
+Core scenario suite (each maps to an eye or a provenance edge):
+
+1. **Autonomous batch, zero human input** — run a ticket batch end to end. Assert:
+   `USER.md` byte-identical, `MEMORY.md` gained project facts, digests + INDEX
+   updated, archive grew, tickets closed.
+2. **Fake-Johan takeover** — driver attaches mid-ticket and types directives. Assert:
+   `johan_touched: true`, USER.md learned, Honcho logged a user-peer observation.
+3. **Rogue session** — random unregistered session implements something with no
+   ticket. Assert: closed `retro` sub-issue filed, correct parent, body reflects the
+   prompts and diff.
+4. **The poisoning test** — Hermes sends registry-logged nudges into a session.
+   Assert: classified Hermes-authored, USER.md untouched.
+5. **Fault injection: the unlogged send** — deliberately send into a session without
+   registry logging. Document and assert the failure mode is visible, not silent.
+6. **Watcher death** — kill each watcher mid-run. Assert: supervisor restarts it and
+   the archiver backfills from the transcript with no message lost.
+7. **Signal paths** — finish and block sessions with hooks disabled. Assert: the
+   slow-poll fallback still surfaces both within its interval.
+8. **Self-learning loop** — repeat a novel procedure across sessions. Assert: the
+   Reviewer writes a skill; a planted stale skill is curated out.
+9. **Semantic isolation** — query the repo's Honcho workspace. Assert: the Johan
+   representation derives only from Johan-authored messages.
+10. **Blast-radius zero** — wipe the sandbox repo's `.argus/`. Assert: no other
+    repo's instance noticed.
+
+The harness is itself a build deliverable (its tickets ride the normal chain), and
+every §5-§7 feature ticket's acceptance criteria must name the scenario that grades it.
+
+## 14. It's working if
 
 - A grill session run through Hermes ends with: decisions in the digest, durable facts
   in MEMORY.md, Johan-authored preferences in USER.md, the exchange in Honcho and
