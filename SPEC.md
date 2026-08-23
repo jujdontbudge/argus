@@ -14,6 +14,8 @@ searchable history, session digests, and tickets.
   into any target repo. Every instance is fully independent.
 
 **Status:** SPEC — approved in the grilling session of 2026-08-22. Build not started.
+**Diagrams:** drawn on the live Excalidraw canvas (port 3100), exported to `diagrams/`
+in this repo.
 
 ---
 
@@ -23,7 +25,7 @@ searchable history, session digests, and tickets.
    skills, the Honcho workspace, the archive DB, digests, registry, events: all live
    under the target repo's `.argus/`. The only machine-global piece is a dumb process
    supervisor (§9) that keeps per-repo watchers alive. Global state: none. Global
-   process: one, and it holds no knowledge.
+   process: one, and it holds no knowledge beyond which repos are enabled.
 2. **One store, many readers. Never parallel memory systems.** Each concern has exactly
    one canonical file/store per repo. Agent-specific integration is done with adapters
    (symlinks, pointer files), never with agent-specific copies. claude-mem is retired
@@ -49,6 +51,9 @@ searchable history, session digests, and tickets.
 | **Hermes** | ChatGPT subscription, `gpt-5.6-sol` via `openai-codex` provider | Orchestrator. Deploys, monitors, routes, nudges. **Never implements.** |
 | **Claude Code** | Claude subscription, Fable | Grilling, specs, domain modeling, diagnosis, code review. |
 | **Codex** | ChatGPT subscription, `gpt-5.6-sol`, high reasoning effort | Default implementer for build tickets. |
+
+Model names above are current defaults, not commitments; both are config knobs in
+`.argus/config.yaml`.
 
 Routing is by ticket label. Hermes reads the label and picks the worker:
 
@@ -103,7 +108,7 @@ API (`cmux new-workspace`, `send`, `send-key`, `read-screen`, `notify`, `set-sta
     sends.jsonl           # every Hermes-authored message into any session
   memory/
     USER.md               # who Johan is, in this project's context
-    MEMORY.md             # durable project facts
+    MEMORY.md             # durable project facts (index; per-fact files beside it)
   skills/                 # canonical per-repo skills, SKILL.md format (§8.2)
   sessions/               # digest MDs, one per session (§5.4)
     INDEX.md              # one line per session; Hermes' low-res scan
@@ -114,11 +119,16 @@ API (`cmux new-workspace`, `send`, `send-key`, `read-screen`, `notify`, `set-sta
 
 Adapters installed by `argus init` (§10):
 
-- `~/.claude/projects/<slug>/memory/` → symlinked into `.argus/memory/` so Claude
-  Code's built-in auto-memory reads and writes the canonical store natively.
+- Claude Code's built-in memory dir (`~/.claude/projects/<slug>/memory/`) is **moved**
+  into `.argus/memory/` and replaced by a symlink pointing there. Its `MEMORY.md`
+  index IS the canonical `MEMORY.md`; per-fact files live beside it; the Reviewer
+  writes in that same index + per-fact-file format.
 - `.claude/skills/` entries symlinked from `.argus/skills/` for Claude Code.
 - Hermes `skills.external_dirs` gains the repo's `.argus/skills` path.
 - `AGENTS.md` gains a pointer block: memory files, skills dir, `argus search` usage.
+
+The `.argus/` entry is a committed line in the target repo's `.gitignore`, so every
+clone ignores it.
 
 ---
 
@@ -146,7 +156,8 @@ The registry (`.argus/registry/`) is the single source of provenance truth:
 
 ### 5.1 Reviewer (evaluative; the self-improvement loop)
 
-Runs post-turn (debounced). Brain: `codex exec`, small model, low reasoning effort, on
+Runs after every turn — invocations are debounced/coalesced, but every turn's
+content is seen; no turn is skipped. Brain: `codex exec`, small model, low reasoning effort, on
 the ChatGPT subscription. Decides whether anything durable happened, with two possible
 destinations (memory-vs-skills split — one watcher, two outputs):
 
@@ -181,7 +192,8 @@ self-hosting later is a URL change, not a redesign.
 
 ### 5.4 Digest (session narrative)
 
-Appends a running markdown digest per session: `.argus/sessions/<ticket>-<id>.md` with
+Appends a running markdown digest per session: `.argus/sessions/<ticket>-<id>.md`
+(`adhoc-<id>.md` for ticketless sessions) with
 frontmatter (`agent`, `ticket`, `status`, `started_by`, `johan_touched`), plus a
 one-line-per-session `INDEX.md`. Hermes' zoom path when it wants to understand a
 session: `INDEX.md` → digest → raw transcript. Same index-not-store rule as the
@@ -284,6 +296,11 @@ and by the Retro watcher for everything else. Planning/grilling sessions are exe
 natively by Claude Code through the symlink adapter. Near-clones of Hermes' own memory
 processes, made system-aware via provenance.
 
+Hermes' own native memory flush is global (`~/.hermes/memories/`). When Hermes
+operates in an Argus repo it must be bound to that repo's `.argus/memory/` pair,
+never the global one — otherwise the parallel-store disease this spec bans returns
+through the orchestrator itself. Binding mechanism: setup-phase ticket (§11).
+
 ### 8.2 Skills
 
 Canonical store `.argus/skills/`, SKILL.md format (the format Claude Code and Hermes
@@ -304,8 +321,9 @@ of the canonical store.
 
 One machine-level launchd job. It reads the registry of Argus-enabled repos
 (`~/.argus-repos` or equivalent), and keeps each repo's five watchers running:
-starts them on login, restarts them on crash. It holds no state and makes no
-decisions. This is the single exception to "nothing global," and it is knowledge-free.
+starts them on login, restarts them on crash. It makes no decisions and holds no
+knowledge beyond the list of enabled repos. This is the single exception to
+"nothing global."
 
 ---
 
@@ -314,9 +332,11 @@ decisions. This is the single exception to "nothing global," and it is knowledge
 `argus` (installed from this repo):
 
 - `argus init` — scaffold `.argus/` in the current repo, gitignore it, create the
-  repo's Honcho workspace, install the memory symlink + skills adapters + AGENTS.md
-  pointer block, create tracker labels (`retro`, wayfinder set), register the repo
-  with the supervisor, verify cmux hooks.
+  repo's Honcho workspace, migrate any existing Claude Code built-in memory into
+  `.argus/memory/` as seed content, install the memory symlink + skills adapters +
+  AGENTS.md pointer block, create tracker labels (`retro`, wayfinder set), verify
+  the Matt Pocock tracker wiring (`setup-matt-pocock-skills`) and lay it down if
+  missing, register the repo with the supervisor, verify cmux hooks.
 - `argus up | down | status` — start/stop/inspect this repo's watchers.
 - `argus search "<query>"` — FTS query over `archive.db`.
 
@@ -337,6 +357,11 @@ decisions. This is the single exception to "nothing global," and it is knowledge
    resume support.
 7. **Watcher brains wiring** — `codex exec` invocation pattern, debounce cadence,
    model/effort knobs in `.argus/config.yaml`.
+8. **Hermes memory binding** — redirect Hermes' native memory flush to the active
+   repo's `.argus/memory/` pair when working an Argus repo (§8.1).
+9. **Send↔transcript matching** — reliably match `sends.jsonl` entries to transcript
+   messages (content hash + timestamp window); the load-bearing edge of provenance
+   classification.
 
 ## 12. Out of scope (v1)
 
