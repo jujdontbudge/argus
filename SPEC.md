@@ -186,14 +186,18 @@ happens. No LLM, no filtering, pure capture + indexing. Exposed as `argus search
 
 ### 5.3 Honcho (external deriver; semantic memory)
 
-Feeds each exchange into **this repo's own** managed-Honcho workspace (per-project,
+Feeds each exchange into **this repo's own** Honcho workspace (per-project,
 like everything else). Honcho's Deriver runs its separate dialectic reasoning pass
 server-side and maintains peer representations: Johan as the observed user peer, each
 agent as its own AI peer. Provenance decides peer attribution, so the semantic model of
 Johan is never contaminated by agent-authored prompts. Config: `~/.honcho/config.json`
 holds credentials (the file Honcho shares across Claude Code, Cursor, etc.);
-`.argus/honcho.yaml` binds the repo to its workspace. Managed honcho.dev first;
-self-hosting later is a URL change, not a redesign.
+`.argus/honcho.yaml` binds the repo to its workspace. **Self-hosted first (Johan
+decision, 2026-08-24 — managed honcho.dev is usage-billed with no free tier):** run
+the AGPL FastAPI server locally (plastic-labs/honcho, Docker + Postgres), SDKs pointed
+at it via `HONCHO_URL=http://localhost:8000`; its deriver LLM calls go to a cheap
+model on Johan's own keys. Managed honcho.dev remains a URL change away if ever
+wanted, not a redesign.
 
 ### 5.4 Digest (session narrative)
 
@@ -351,8 +355,8 @@ knowledge beyond the list of enabled repos. This is the single exception to
 
 1. **Repair Hermes install** — `~/.local/bin/hermes` points at a venv that no longer
    exists (`~/.hermes/hermes-agent/venv/bin/hermes`).
-2. **Provision managed Honcho** — account, API key (`HONCHO_API_KEY` is empty in
-   `~/.hermes/.env`), `~/.honcho/config.json`.
+2. **Provision Honcho (self-hosted)** — local plastic-labs/honcho instance (Docker +
+   Postgres), `HONCHO_URL` wired into `~/.honcho/config.json` and `~/.hermes/.env`.
 3. **claude-mem curation pass** — mine the DB, migrate, uninstall (§8.3).
 4. **Codex rollout → repo attribution** — rollouts are date-filed, not repo-filed; the
    tailing library needs a reliable cwd/repo extraction from rollout content.
