@@ -383,6 +383,14 @@ a **simulation driver** agent that plays Johan: it types into deployed sessions 
 untracked implementation edits, and drops preference statements mid-run. Every feature
 ships with its scenario; pass/fail is asserted by the harness, never eyeballed.
 
+**Test agents and isolation (Johan directive, 2026-08-24):** all testing of the system
+— the simulation driver, the sessions under test, and any per-ticket test run — uses
+**Claude Opus 5** (`claude --model claude-opus-5`) for the Claude side and **Codex sol
+high** (`codex -c model_reasoning_effort=high`, gpt-5.6-sol) for the Codex side, each
+running **in isolation**: the throwaway sandbox repo and scratch tabs/worktrees only,
+never the production dispatcher, live worker sessions, or the real `~/argus` state.
+No test run touches a non-sandbox session.
+
 Core scenario suite (each maps to an eye or a provenance edge):
 
 1. **Autonomous batch, zero human input** — run a ticket batch end to end. Assert:
