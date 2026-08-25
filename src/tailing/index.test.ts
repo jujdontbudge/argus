@@ -9,5 +9,7 @@ describe("public API surface", () => {
     expect(typeof tailing.claudeProjectDir).toBe("function");
     expect(typeof tailing.createCodexSource).toBe("function");
     expect(typeof tailing.registerCodexScenarios).toBe("function");
+    expect(typeof tailing.createHermesSource).toBe("function");
+    expect(typeof tailing.registerHermesScenarios).toBe("function");
   });
 });

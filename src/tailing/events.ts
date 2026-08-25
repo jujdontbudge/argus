@@ -45,6 +45,8 @@ export interface SessionMetaEvent {
   parentSessionId?: string;
   /** Best-effort session-start branch from Codex's git snapshot. */
   gitBranch?: string;
+  /** Backing model when the source records it (for example Hermes state.db). */
+  model?: string;
   version?: string;
   ts?: string;
   file: string;
