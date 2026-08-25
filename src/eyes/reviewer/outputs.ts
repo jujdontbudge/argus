@@ -109,6 +109,15 @@ function factIndexLine(slug: string, title: string, content: string): string {
 
 const INDEX_LINE = /^- \[(.+?)\]\((.+?\.md)\) — /;
 
+/**
+ * The fact file one index line points at, or null when the line is not an
+ * index entry. Exported so every reader of MEMORY.md (the curator's scan and
+ * its archive pass, #35) matches lines exactly the way this writer emits them.
+ */
+export function memoryIndexTarget(line: string): string | null {
+  return INDEX_LINE.exec(line)?.[2] ?? null;
+}
+
 /** Replace the line indexing `<slug>.md` if present, else append. */
 async function upsertIndexLine(
   memoryDir: string,
