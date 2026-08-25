@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readlink, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 
@@ -10,6 +10,7 @@ export interface CommandResult {
 }
 
 export interface Sandbox {
+  createPeer(): Promise<Sandbox>;
   createWorktree(label: string): Promise<string>;
   env: Readonly<Record<string, string>>;
   home: string;
@@ -70,7 +71,7 @@ export async function createSandbox(
   const repo = join(root, "repo");
   const id = basename(root);
   const state = {
-    ARGUS_REPOS_DIR: join(root, "state/argus-repos"),
+    ARGUS_REPOS_FILE: join(root, "state/argus-repos"),
     CLAUDE_CONFIG_DIR: join(root, "state/claude"),
     CMUX_SOCKET_PATH: join(root, "state/cmux/cmux.sock"),
     CMUX_SOCKET_DIR: join(root, "state/cmux"),
@@ -100,7 +101,10 @@ export async function createSandbox(
       mkdir(home, { recursive: true }),
       mkdir(repo, { recursive: true }),
       ...Object.entries(state)
-        .filter(([name]) => name !== "CMUX_SOCKET_PATH")
+        .filter(
+          ([name]) =>
+            name !== "CMUX_SOCKET_PATH" && name !== "ARGUS_REPOS_FILE",
+        )
         .map(([, path]) => path)
         .filter((path) => path !== home)
         .map((path) => mkdir(path, { recursive: true })),
@@ -133,6 +137,7 @@ export async function createSandbox(
     );
 
     return {
+      createPeer: () => createSandbox(options),
       async createWorktree(label) {
         const worktree = join(root, "worktrees", label);
         await mkdir(join(root, "worktrees"), { recursive: true });
@@ -250,7 +255,9 @@ export class ScenarioRegistry {
 }
 
 export function createScenarioRegistry(): ScenarioRegistry {
-  return new ScenarioRegistry();
+  const registry = new ScenarioRegistry();
+  registry.register(10, blastRadiusZeroScenario);
+  return registry;
 }
 
 export interface ScenarioRunOptions {
@@ -289,6 +296,80 @@ function envPath(sandbox: Sandbox, name: string): string {
   return path;
 }
 
+async function exists(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+async function snapshotTree(root: string): Promise<string> {
+  const entries: Array<{ content?: string; path: string; type: string }> = [];
+
+  const visit = async (directory: string, prefix = ""): Promise<void> => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      const relativePath = join(prefix, entry.name);
+      if (entry.isDirectory()) {
+        entries.push({ path: relativePath, type: "directory" });
+        await visit(path, relativePath);
+      } else if (entry.isSymbolicLink()) {
+        entries.push({
+          content: await readlink(path),
+          path: relativePath,
+          type: "symlink",
+        });
+      } else {
+        entries.push({
+          content: Buffer.from(await Bun.file(path).arrayBuffer()).toString("base64"),
+          path: relativePath,
+          type: "file",
+        });
+      }
+    }
+  };
+
+  await visit(root);
+  return JSON.stringify(entries);
+}
+
+export const blastRadiusZeroScenario: ScenarioHandler = async ({
+  assert,
+  sandbox,
+}) => {
+  const peer = await sandbox.createPeer();
+  try {
+    assert(sandbox.up.exitCode === 0, "primary sandbox was converged by argus up");
+    assert(peer.up.exitCode === 0, "peer sandbox was converged by argus up");
+    const peerArgus = join(peer.repo, ".argus");
+    const peerStateBefore = await snapshotTree(peerArgus);
+    const peerSupervisor = envPath(peer, "ARGUS_REPOS_FILE");
+    const peerSupervisorBefore = await Bun.file(peerSupervisor).text();
+
+    await rm(join(sandbox.repo, ".argus"), { force: true, recursive: true });
+
+    assert(
+      !(await exists(join(sandbox.repo, ".argus"))),
+      "primary .argus state was removed",
+    );
+    assert(
+      (await snapshotTree(peerArgus)) === peerStateBefore,
+      "peer .argus state stayed byte-identical",
+    );
+    assert(
+      (await Bun.file(peerSupervisor).text()) === peerSupervisorBefore,
+      "peer supervisor state stayed byte-identical",
+    );
+  } finally {
+    await peer.teardown();
+  }
+};
+
 export const mechanicsScenario: ScenarioHandler = ({
   assertSandboxed,
   sandbox,
@@ -298,7 +379,7 @@ export const mechanicsScenario: ScenarioHandler = ({
     "real ~/.local/bin is outside the sandbox boundary",
   );
   assertSandboxed(
-    envPath(sandbox, "ARGUS_REPOS_DIR"),
+    envPath(sandbox, "ARGUS_REPOS_FILE"),
     "real ~/.argus-repos is outside the sandbox boundary",
   );
   assertSandboxed(
