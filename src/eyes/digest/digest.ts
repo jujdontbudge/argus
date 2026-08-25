@@ -87,6 +87,30 @@ export interface DigestEyeOptions {
   stuckAfterMs?: number;
 }
 
+function buildPrompt(entries: PendingEntry[]): string {
+  const blocks = entries.map(
+    ({ record, root }) =>
+      `[session=${root} author=${record.author} role=${record.event.role} ` +
+      `ts=${record.ts}]\n${record.text}`,
+  );
+  return [
+    "You are the Argus Digest eye. The blocks below are transcript turns from",
+    "agent sessions in this repo, each tagged with its logical session id and",
+    "registry-verified author. Maintain each session's running narrative. Do",
+    "not run any commands; judge only from the blocks.",
+    "",
+    "Emit JSON matching the output schema: for EVERY distinct session id in",
+    "the blocks, one entry with",
+    "- narrative: markdown for what happened in these turns (appended to the",
+    "  session's digest — write it to be read after the earlier entries).",
+    "- summary: ONE line describing where the session stands now.",
+    '- status: "done" when the work concluded, "blocked" when it waits on a',
+    '  human, otherwise "running".',
+    "",
+    ...blocks,
+  ].join("\n");
+}
+
 export class DigestEye {
   private pending: PendingEntry[];
   private readonly known: Map<string, KnownSession>;
@@ -96,6 +120,9 @@ export class DigestEye {
   private readonly sessionsDir: string;
   private readonly loadSessions: () => Promise<SessionRecord[]>;
   private readonly onAlert: (alert: StuckAlert) => void | Promise<void>;
+  private evaluating = false;
+  /** A lifecycle event happened: pending narrative is due NOW, not at cadence. */
+  private fireNow = false;
 
   private constructor(
     private readonly options: DigestEyeOptions,
@@ -236,11 +263,114 @@ export class DigestEye {
       { status: LIFECYCLE_STATUS[event.kind] },
       isNew ? "session started" : undefined,
     );
+    if (this.pending.length > 0) this.fireNow = true;
     await this.persist();
   }
 
   pendingCount(): number {
     return this.pending.length;
+  }
+
+  /** Epoch ms of the next due evaluation, or null when nothing pends. */
+  dueAt(): number | null {
+    if (this.fireNow && this.pending.length > 0) return this.now();
+    return this.coalescer.dueAt();
+  }
+
+  /**
+   * Evaluate the pending batch if it is due. Returns whether an evaluation
+   * ran. Never throws for brain failures — those retry forever inside.
+   */
+  async tick(): Promise<boolean> {
+    const due =
+      (this.fireNow && this.pending.length > 0) ||
+      this.coalescer.shouldFire(this.now());
+    if (this.evaluating || !due) return false;
+    this.evaluating = true;
+    try {
+      const batch = this.pending.slice();
+      const verdict = await retryForever(() => this.evaluateOnce(batch), {
+        eye: "digest",
+        onAlert: this.onAlert,
+        ...(this.options.baseDelayMs !== undefined && {
+          baseDelayMs: this.options.baseDelayMs,
+        }),
+        ...(this.options.maxDelayMs !== undefined && {
+          maxDelayMs: this.options.maxDelayMs,
+        }),
+        ...(this.options.stuckAfterMs !== undefined && {
+          stuckAfterMs: this.options.stuckAfterMs,
+        }),
+        now: this.now,
+        ...(this.options.sleep !== undefined && { sleep: this.options.sleep }),
+      });
+      await this.apply(verdict, batch);
+
+      // Turns that arrived during the evaluation stay pending for the next one.
+      this.pending = this.pending.slice(batch.length);
+      this.coalescer.flush();
+      for (const entry of this.pending) this.coalescer.note(entry.ingestedAt);
+      this.fireNow = false;
+      await this.persist();
+      return true;
+    } finally {
+      this.evaluating = false;
+    }
+  }
+
+  /** One brain attempt under the machine-wide cap; throws to trigger retry. */
+  private async evaluateOnce(batch: PendingEntry[]): Promise<DigestVerdict> {
+    const release = await this.options.cap.acquire();
+    try {
+      const outcome = await this.options.brain.evaluate({
+        prompt: buildPrompt(batch),
+        schema: DIGEST_OUTPUT_SCHEMA,
+        cwd: this.options.repo,
+      });
+      if (!outcome.ok) {
+        throw new Error(`brain ${outcome.reason}: ${outcome.detail}`);
+      }
+      const verdict = parseDigestVerdict(outcome.text);
+      if (verdict === null) {
+        throw new Error(`brain schema miss: ${outcome.text.slice(0, 500)}`);
+      }
+      return verdict;
+    } finally {
+      await release();
+    }
+  }
+
+  /**
+   * Fold the verdict into the digests. Entries are matched by logical session
+   * id (physical ids the brain echoes resolve through the batch); ids the
+   * batch never contained are ignored — the trust boundary, not the model,
+   * decides what gets written.
+   */
+  private async apply(verdict: DigestVerdict, batch: PendingEntry[]): Promise<void> {
+    const rootOf = new Map<string, string>();
+    const latestTs = new Map<string, string>();
+    for (const { record, root } of batch) {
+      rootOf.set(record.sessionId, root);
+      rootOf.set(root, root);
+      latestTs.set(root, record.ts);
+    }
+    for (const entry of verdict.sessions) {
+      const root = rootOf.get(entry.sessionId);
+      if (root === undefined) continue;
+      const session = this.known.get(root);
+      if (session === undefined) continue;
+      await this.surface(
+        session,
+        {
+          status: entry.status,
+          narrative: {
+            ts: latestTs.get(root) ?? new Date(this.now()).toISOString(),
+            text: entry.narrative,
+          },
+        },
+        entry.summary,
+      );
+    }
   }
 
   /** Atomic (temp + rename) so a crash can never tear the no-skip state. */
