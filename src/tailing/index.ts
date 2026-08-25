@@ -12,6 +12,12 @@ export {
   createClaudeCodeSource,
   type ClaudeCodeSourceOptions,
 } from "./claude-code";
+export {
+  codexAutonomousBatchScenario,
+  codexRogueSessionScenario,
+  registerCodexScenarios,
+} from "./codex-scenarios";
+export { createCodexSource, type CodexSourceOptions } from "./codex";
 export type {
   LifecycleEvent,
   MessageEvent,

@@ -7,5 +7,7 @@ describe("public API surface", () => {
     expect(typeof tailing.readNewLines).toBe("function");
     expect(typeof tailing.createClaudeCodeSource).toBe("function");
     expect(typeof tailing.claudeProjectDir).toBe("function");
+    expect(typeof tailing.createCodexSource).toBe("function");
+    expect(typeof tailing.registerCodexScenarios).toBe("function");
   });
 });
