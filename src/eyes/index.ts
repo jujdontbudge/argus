@@ -2,7 +2,7 @@
  * Shared eye plumbing (ticket #30; SPEC §5): the pieces every eye (#31–#33)
  * composes — config knobs, coalesced cadence, the codex brain seam, the
  * machine-wide brain cap, and never-drop backpressure — plus the Reviewer
- * eye itself under ./reviewer.
+ * eye under ./reviewer and the Digest eye (#31) under ./digest.
  */
 export {
   fileAlertEmitter,
@@ -37,6 +37,37 @@ export {
   type CadenceConfig,
   type EyesConfig,
 } from "./config";
+export { chainRootOf } from "./digest/chain";
+export {
+  DigestEye,
+  openDigest,
+  type DigestEyeOptions,
+  type OpenDigestOverrides,
+  type SessionLifecycleEvent,
+} from "./digest/digest";
+export {
+  applyDigestUpdate,
+  digestFileName,
+  updateIndex,
+  type DigestFrontmatter,
+  type DigestPatch,
+  type DigestSeed,
+  type IndexEntry,
+} from "./digest/outputs";
+export {
+  DIGEST_OUTPUT_SCHEMA,
+  parseDigestVerdict,
+  type BrainStatus,
+  type DigestStatus,
+  type DigestVerdict,
+  type SessionDigest,
+} from "./digest/schema";
+export {
+  digestAutonomousBatchScenario,
+  digestTakeoverScenario,
+  registerDigestScenarios,
+  signalPathsScenario,
+} from "./digest/scenarios";
 export {
   applyFindings,
   foldHermesEntries,
