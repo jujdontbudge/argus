@@ -45,6 +45,8 @@ export interface ScenarioSessionHandle {
   unloggedSend(text: string): Promise<void>;
   /** Johan attaches to the session and types. */
   johanTypes(text: string): Promise<void>;
+  /** The agent itself speaks (assistant-side transcript output). */
+  agentSays(text: string): Promise<void>;
 }
 
 export interface ProvenanceScenarioDriver {
@@ -99,16 +101,17 @@ export function createFixtureProvenanceDriver(): ProvenanceScenarioDriver {
     sessionId: string,
     text: string,
     atMs: number,
+    role: MessageEvent["role"] = "user",
   ): void => {
     const state = world(sandbox);
     const event: MessageEvent = {
       type: "message",
       sessionId,
-      role: "user",
+      role,
       text,
       ts: new Date(atMs).toISOString(),
       uuid: `fixture-${++state.uuidCounter}`,
-      candidate: true,
+      candidate: role === "user",
       file: join(sandbox.root, "transcripts", `${sessionId}.jsonl`),
     };
     state.events.push(event);
@@ -151,6 +154,9 @@ export function createFixtureProvenanceDriver(): ProvenanceScenarioDriver {
         },
         johanTypes: async (text) => {
           land(sandbox, sessionId, text, tick(state) + 1_000);
+        },
+        agentSays: async (text) => {
+          land(sandbox, sessionId, text, tick(state) + 1_000, "assistant");
         },
       };
     },
