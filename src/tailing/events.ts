@@ -2,9 +2,9 @@
  * The normalized transcript event stream (SPEC §5: three source formats, one
  * event stream) and the pluggable-source seam that tickets #22/#23 implement.
  *
- * Events are a pure function of transcript file bytes: replaying the same
- * bytes through the same source yields the identical event sequence, which is
- * what makes cursor-based backfill lossless and fixture replay byte-stable.
+ * Message/lifecycle parsing is a pure function of transcript bytes. Source
+ * metadata may additionally capture tail-time filesystem facts (Codex repo
+ * attribution), which must be persisted before disposable worktrees vanish.
  */
 
 import type { ReadResult } from "./line-reader";
@@ -63,7 +63,7 @@ export interface LifecycleEvent {
 
 export type TailEvent = MessageEvent | SessionMetaEvent | LifecycleEvent;
 
-/** Per-file stateful parser; state derives only from lines fed to it, in order. */
+/** Per-file stateful parser; transcript state derives from lines fed in order. */
 export interface SourceParser {
   /** Parse one raw transcript line into zero or more events. */
   parseLine(line: string): TailEvent[];

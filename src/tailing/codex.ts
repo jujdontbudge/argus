@@ -223,7 +223,6 @@ class CodexParser implements SourceParser {
       }
     }
 
-
     if (record.type === "message" && this.sessionId) {
       const role = record.role;
       if (role !== "user" && role !== "assistant") return [];
