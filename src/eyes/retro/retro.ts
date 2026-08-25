@@ -23,6 +23,7 @@
  */
 import { mkdir, rename } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { hashText } from "../../matching";
 import {
   loadRegistry,
   registryPaths,
@@ -37,7 +38,7 @@ import { loadEyesConfig, type CadenceConfig } from "../config";
 import { applyDigestUpdate, listDigests } from "../digest/outputs";
 import { referencedTickets, attributeChanges } from "./attribution";
 import { composeRetro, type RetroPrompt } from "./compose";
-import { resolvePath, scanGit, type GitRunner } from "./git";
+import { resolvePath, scanGit, type GitRunner, type GitScan } from "./git";
 import { detectTracker, type GhRunner, type Tracker, type TrackerIssue } from "./gh";
 import { resolveParent, type ParentRule } from "./parent";
 import {
@@ -124,6 +125,8 @@ interface PersistedState {
   filedSessions: string[];
   /** sessionId → observed cwd. */
   sessionDirs: Record<string, string>;
+  /** checkout → fingerprint of the working tree already reported for it. */
+  workingTrees: Record<string, string>;
   /** True once the cursor has been anchored at the repo's current HEADs. */
   primed: boolean;
 }
@@ -135,6 +138,7 @@ const EMPTY_STATE: PersistedState = {
   judged: {},
   filedSessions: [],
   sessionDirs: {},
+  workingTrees: {},
   primed: false,
 };
 
@@ -290,6 +294,7 @@ export class RetroEye {
           judged: raw.judged ?? {},
           filedSessions: Array.isArray(raw.filedSessions) ? raw.filedSessions : [],
           sessionDirs: raw.sessionDirs ?? {},
+          workingTrees: raw.workingTrees ?? {},
           primed: raw.primed === true,
         };
       } catch {
@@ -314,8 +319,31 @@ export class RetroEye {
       ...(this.options.git !== undefined && { run: this.options.git }),
     });
     this.state.seen = scan.seen;
+    this.cursorWorkingTrees(scan);
     this.state.primed = true;
     await this.persist();
+  }
+
+  /**
+   * The working tree is a cursor, not a standing accusation. A checkout that
+   * was already dirty when the eye started watching — `argus up` scaffolding
+   * nobody committed, a half-finished edit from last week — is the state of
+   * the world, not rogue work. Only a tree that CHANGED since the last scan
+   * is a signal.
+   */
+  private cursorWorkingTrees(scan: GitScan): GitScan {
+    return {
+      ...scan,
+      roots: scan.roots.map((root) => {
+        if (root.workingTree === null) return root;
+        const fingerprint = hashText(
+          [root.workingTree.files.join("\n"), root.workingTree.diff].join("\n--\n"),
+        );
+        const reported = this.state.workingTrees[root.dir] === fingerprint;
+        this.state.workingTrees[root.dir] = fingerprint;
+        return reported ? { ...root, workingTree: null } : root;
+      }),
+    };
   }
 
   /** A session was seen running in a checkout (session-meta `cwd`). */
@@ -385,7 +413,10 @@ export class RetroEye {
           ),
         ),
       );
-      const attribution = attributeChanges(scan, { sessions, sessionDirs });
+      const attribution = attributeChanges(this.cursorWorkingTrees(scan), {
+        sessions,
+        sessionDirs,
+      });
       const digests = await listDigests(this.sessionsDir);
       const signals = buildSignals({ attribution, digests, sessionDirs, sessions }).filter(
         (signal) => this.isFresh(signal),

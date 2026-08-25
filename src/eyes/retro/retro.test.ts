@@ -422,3 +422,59 @@ describe("the Retro eye's state survives a restart", () => {
     }
   }, 60_000);
 });
+
+describe("the working tree is a cursor too, not a standing accusation", () => {
+  test("a tree already dirty when the eye starts is never retro'd", async () => {
+    const place = await scratch();
+    const gh = createFakeGh({ repo: "JohanSardar/argus" });
+    try {
+      // What `argus up` leaves behind: scaffolding nobody has committed yet.
+      await mkdir(join(place.repo, "docs/agents"), { recursive: true });
+      await writeFile(join(place.repo, "docs/agents/issue-tracker.md"), "# Tracker\n");
+      await writeFile(join(place.repo, "AGENTS.md"), "# Agents\n");
+
+      const { eye } = await openEye(place, gh);
+      await eye.prime();
+
+      expect(await eye.scan()).toEqual([]);
+      expect(gh.issues).toHaveLength(0);
+    } finally {
+      await place.cleanup();
+    }
+  }, 60_000);
+
+  test("uncommitted work that appears AFTER priming files a retro", async () => {
+    const place = await scratch();
+    const gh = createFakeGh({ repo: "JohanSardar/argus" });
+    try {
+      await writeFile(join(place.repo, "already-here.md"), "# Notes\n");
+      const { eye } = await openEye(place, gh);
+      await eye.prime();
+      await mkdir(join(place.repo, "src"), { recursive: true });
+      await writeFile(join(place.repo, "src/wip.ts"), "export const wip = 1;\n");
+
+      const filings = await eye.scan();
+
+      expect(filings).toHaveLength(1);
+      expect(filedIssue(gh)!.body).toContain("src/wip.ts");
+    } finally {
+      await place.cleanup();
+    }
+  }, 60_000);
+
+  test("the same unchanged dirty tree is not reported twice", async () => {
+    const place = await scratch();
+    const gh = createFakeGh({ repo: "JohanSardar/argus" });
+    try {
+      const { eye } = await openEye(place, gh);
+      await eye.prime();
+      await mkdir(join(place.repo, "src"), { recursive: true });
+      await writeFile(join(place.repo, "src/wip.ts"), "export const wip = 1;\n");
+
+      expect(await eye.scan()).toHaveLength(1);
+      expect(await eye.scan()).toEqual([]);
+    } finally {
+      await place.cleanup();
+    }
+  }, 60_000);
+});
