@@ -4,7 +4,14 @@
  * the ONE classification mechanism all five eyes consume — no heuristics
  * elsewhere. `ProvenanceRecord` is the seam for tickets #30–#33.
  */
-import { derivedForms, hashText, SendMatcher } from "../matching";
+import {
+  derivedForms,
+  hashText,
+  SendMatcher,
+  toEpochMs,
+  WINDOW_AFTER_MS,
+  type Timestamp,
+} from "../matching";
 import type { LifecycleEvent, MessageEvent, TailEvent } from "../tailing";
 import type { SendRecord, SessionRecord } from "./registry";
 
@@ -59,12 +66,26 @@ export type ProvenanceAuditEvent =
    */
   | { type: "encoding-bug-suspect"; sessionId: string; sendId?: string; ts: string; text: string }
   /** sends.jsonl names a session sessions.jsonl never registered. */
-  | { type: "send-into-unregistered-session"; sessionId: string; sendId?: string };
+  | { type: "send-into-unregistered-session"; sessionId: string; sendId?: string }
+  /** A logged non-slash send whose window passed with no landing (dead session, lost send). */
+  | { type: "send-expired"; sessionId: string; sendId?: string; text: string; at: number }
+  /** A registered dispatch prompt that has not landed within the window. */
+  | { type: "dispatch-expired"; sessionId: string; at: number; sessionSeen: boolean };
 
 export interface ClassifyOutput {
   /** Null for events that carry no message (session-meta, lifecycle). */
   record: ProvenanceRecord | null;
   audits: ProvenanceAuditEvent[];
+}
+
+/** Session-level provenance, the Digest's frontmatter fields (§5.4). */
+export interface SessionProvenance {
+  sessionId: string;
+  registered: boolean;
+  startedBy: "johan" | "hermes";
+  johanTouched: boolean;
+  agent?: string;
+  ticket?: string;
 }
 
 interface SessionState {
@@ -80,6 +101,10 @@ interface SessionState {
   johanTouched: boolean;
   /** The send-into-unregistered-session audit fires once per session. */
   unregisteredSendAudited: boolean;
+  /** Any transcript event for this session has been handled. */
+  seen: boolean;
+  /** The dispatch-expired audit fires once per session. */
+  dispatchAudited: boolean;
 }
 
 export class ProvenanceClassifier {
@@ -94,6 +119,8 @@ export class ProvenanceClassifier {
         matcher: new SendMatcher(),
         johanTouched: false,
         unregisteredSendAudited: false,
+        seen: false,
+        dispatchAudited: false,
       };
       this.sessions.set(sessionId, state);
     }
@@ -109,6 +136,21 @@ export class ProvenanceClassifier {
     state.registration = record;
     state.dispatchHashes = new Set(derivedForms(record.dispatchPrompt).map(hashText));
     return [];
+  }
+
+  /** The session-level view, or undefined for a session never referenced. */
+  sessionState(sessionId: string): SessionProvenance | undefined {
+    const state = this.sessions.get(sessionId);
+    if (!state) return undefined;
+    const registration = state.registration;
+    return {
+      sessionId,
+      registered: registration !== undefined,
+      startedBy: registration ? "hermes" : "johan",
+      johanTouched: state.johanTouched,
+      ...(registration?.agent !== undefined && { agent: registration.agent }),
+      ...(registration?.ticket !== undefined && { ticket: registration.ticket }),
+    };
   }
 
   /** Feed one sends.jsonl record (§5 rule 2). */
@@ -133,12 +175,51 @@ export class ProvenanceClassifier {
   }
 
   handle(event: TailEvent): ClassifyOutput {
+    if (event.sessionId !== undefined) this.session(event.sessionId).seen = true;
     if (event.type === "lifecycle") {
       this.handleLifecycle(event);
       return { record: null, audits: [] };
     }
     if (event.type !== "message") return { record: null, audits: [] };
     return this.classifyMessage(event);
+  }
+
+  /**
+   * Retire what can no longer land: expired sends (dead sessions, lost sends)
+   * and registered dispatch prompts whose transcripts never showed up. The
+   * dispatch prompt stays matchable after its audit — expiry makes it loud,
+   * never Johan.
+   */
+  sweep(now: Timestamp): ProvenanceAuditEvent[] {
+    const t = toEpochMs(now);
+    const audits: ProvenanceAuditEvent[] = [];
+    for (const [sessionId, state] of this.sessions) {
+      for (const expired of state.matcher.sweepExpired(t)) {
+        const sendId = expired.send.id;
+        audits.push({
+          type: "send-expired",
+          sessionId,
+          ...(sendId !== undefined && { sendId }),
+          text: expired.send.text,
+          at: expired.at,
+        });
+      }
+      if (
+        state.registration &&
+        state.dispatchHashes !== null &&
+        !state.dispatchAudited &&
+        t > toEpochMs(state.registration.ts) + WINDOW_AFTER_MS
+      ) {
+        state.dispatchAudited = true;
+        audits.push({
+          type: "dispatch-expired",
+          sessionId,
+          at: t,
+          sessionSeen: state.seen,
+        });
+      }
+    }
+    return audits;
   }
 
   private handleLifecycle(event: LifecycleEvent): void {

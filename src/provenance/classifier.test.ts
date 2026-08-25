@@ -293,3 +293,144 @@ describe("loud failure surfacing (SPEC §5 rule 3b, §13 scenario 5)", () => {
     });
   });
 });
+
+const HOUR = 3_600_000;
+
+describe("sweep — dead sessions and never-landing registry rows", () => {
+  test("a send into a dead session expires loudly with its session id", () => {
+    const c = new ProvenanceClassifier();
+    registered(c, "sess-dead");
+    c.handle(message({ sessionId: "sess-dead", text: DISPATCH, ts: iso(0) }));
+    c.recordSend({
+      ts: iso(10_000),
+      sessionId: "sess-dead",
+      text: "are you alive?",
+      id: "s-dead",
+    });
+
+    expect(c.sweep(iso(HOUR))).toEqual([]); // window still open — quiet
+    const audits = c.sweep(iso(HOUR + 10_001));
+    expect(audits).toEqual([
+      {
+        type: "send-expired",
+        sessionId: "sess-dead",
+        sendId: "s-dead",
+        text: "are you alive?",
+        at: t0 + HOUR + 10_001,
+      },
+    ]);
+    expect(c.sweep(iso(HOUR + 20_000))).toEqual([]); // audited once, not every sweep
+  });
+
+  test("a registered session whose transcript never appears audits once past the window", () => {
+    const c = new ProvenanceClassifier();
+    registered(c, "sess-never");
+
+    expect(c.sweep(iso(HOUR))).toEqual([]);
+    expect(c.sweep(iso(HOUR + 1))).toEqual([
+      {
+        type: "dispatch-expired",
+        sessionId: "sess-never",
+        at: t0 + HOUR + 1,
+        sessionSeen: false,
+      },
+    ]);
+    expect(c.sweep(iso(2 * HOUR))).toEqual([]); // once
+
+    // The never-Johan guarantee survives the audit: a late landing still matches.
+    const { record } = c.handle(
+      message({ sessionId: "sess-never", text: DISPATCH, ts: iso(3 * HOUR) }),
+    );
+    expect(record).toMatchObject({ author: "hermes", via: "dispatch-prompt" });
+  });
+
+  test("a seen session whose dispatch never landed audits with sessionSeen true", () => {
+    const c = new ProvenanceClassifier();
+    registered(c, "sess-half");
+    c.handle(
+      message({ sessionId: "sess-half", role: "assistant", text: "…", ts: iso(1_000) }),
+    );
+
+    expect(c.sweep(iso(HOUR + 1))).toEqual([
+      {
+        type: "dispatch-expired",
+        sessionId: "sess-half",
+        at: t0 + HOUR + 1,
+        sessionSeen: true,
+      },
+    ]);
+  });
+
+  test("a consumed dispatch prompt never expires", () => {
+    const c = new ProvenanceClassifier();
+    registered(c, "sess-ok");
+    c.handle(message({ sessionId: "sess-ok", text: DISPATCH, ts: iso(1_000) }));
+    expect(c.sweep(iso(2 * HOUR))).toEqual([]);
+  });
+});
+
+describe("multiple concurrent registered sessions in one repo", () => {
+  test("identical sends to two sessions are consumed per-session, no cross-talk", () => {
+    const c = new ProvenanceClassifier();
+    registered(c, "sess-a");
+    registered(c, "sess-b");
+    c.handle(message({ sessionId: "sess-a", text: DISPATCH, ts: iso(0) }));
+    c.handle(message({ sessionId: "sess-b", text: DISPATCH, ts: iso(0) }));
+    c.recordSend({ ts: iso(10_000), sessionId: "sess-a", text: "status?", id: "sa" });
+    c.recordSend({ ts: iso(10_000), sessionId: "sess-b", text: "status?", id: "sb" });
+
+    expect(
+      c.handle(message({ sessionId: "sess-a", text: "status?", ts: iso(11_000) }))
+        .record!.via,
+    ).toBe("registry-send");
+    expect(
+      c.handle(message({ sessionId: "sess-b", text: "status?", ts: iso(11_500) }))
+        .record!.via,
+    ).toBe("registry-send");
+    expect(c.sweep(iso(2 * HOUR))).toEqual([]);
+  });
+
+  test("a send cross-landing in the wrong session is takeover there, expiry here", () => {
+    const c = new ProvenanceClassifier();
+    registered(c, "sess-a");
+    registered(c, "sess-b");
+    c.handle(message({ sessionId: "sess-a", text: DISPATCH, ts: iso(0) }));
+    c.handle(message({ sessionId: "sess-b", text: DISPATCH, ts: iso(0) }));
+    c.recordSend({ ts: iso(10_000), sessionId: "sess-a", text: "meant for A", id: "sa" });
+
+    // Hermes fat-fingers the tab: the text lands in B's transcript.
+    const { record } = c.handle(
+      message({ sessionId: "sess-b", text: "meant for A", ts: iso(11_000) }),
+    );
+    expect(record!.via).toBe("takeover"); // visible in B…
+    expect(
+      c.sweep(iso(HOUR + 10_001)).map(({ type }) => type),
+    ).toEqual(["send-expired"]); // …and loud for A. Never silent.
+  });
+
+  test("sessionState exposes the digest-frontmatter view per session", () => {
+    const c = new ProvenanceClassifier();
+    registered(c, "sess-a");
+    c.handle(message({ sessionId: "sess-a", text: DISPATCH, ts: iso(0) }));
+    c.handle(message({ sessionId: "adhoc-1", text: "quick question", ts: iso(0) }));
+
+    expect(c.sessionState("sess-a")).toEqual({
+      sessionId: "sess-a",
+      registered: true,
+      startedBy: "hermes",
+      johanTouched: false,
+      agent: "claude",
+      ticket: "25",
+    });
+    expect(c.sessionState("adhoc-1")).toEqual({
+      sessionId: "adhoc-1",
+      registered: false,
+      startedBy: "johan",
+      johanTouched: false,
+    });
+    expect(c.sessionState("sess-unknown")).toBeUndefined();
+
+    c.handle(message({ sessionId: "sess-a", text: "I'm taking over", ts: iso(5_000) }));
+    expect(c.sessionState("sess-a")).toMatchObject({ johanTouched: true });
+  });
+});
