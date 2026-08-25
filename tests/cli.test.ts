@@ -40,4 +40,14 @@ describe("argus CLI", () => {
     expect(result.stderr).toContain("requires Bun >= 1.3.12");
     expect(result.stderr).toContain("found 1.2.99");
   });
+
+  test("routes unfinished feature commands to explicit stubs", async () => {
+    for (const command of ["up", "down", "status", "watch", "search"]) {
+      const result = await runCli([command]);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe(`argus ${command}: not implemented yet\n`);
+    }
+  });
 });

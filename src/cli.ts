@@ -14,6 +14,7 @@ Commands:
 `;
 
 export const MINIMUM_BUN_VERSION = "1.3.12";
+const STUB_COMMANDS = new Set(["up", "down", "status", "watch", "search"]);
 
 function isVersionAtLeast(actual: string, minimum: string): boolean {
   const actualParts = actual.split("-", 1)[0]?.split(".").map(Number) ?? [];
@@ -43,6 +44,11 @@ export async function main(args: string[]): Promise<number> {
   if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
     console.log(HELP);
     return 0;
+  }
+
+  if (STUB_COMMANDS.has(args[0] ?? "")) {
+    console.error(`argus ${args[0]}: not implemented yet`);
+    return 1;
   }
 
   console.error(`argus: unknown command '${args[0]}'`);
