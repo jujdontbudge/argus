@@ -11,6 +11,7 @@ export {
   claudeCandidateText,
   codexCandidateText,
   isCodexSubagentThread,
+  syntheticEnvelopeTag,
 } from "./candidates";
 export { deriveKind, derivedForms, type SendKind } from "./derived-forms";
 export { hashText, sha256Hex } from "./hash";

@@ -3,12 +3,24 @@ import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createBrainCap } from "../cap";
+import { loadScaledMs } from "../test-budget";
 import { applyDigestUpdate } from "../digest/outputs";
 import type { ProvenanceRecord } from "../../provenance";
 import { registryPaths } from "../../provenance";
 import { createFakeGh, type FakeGh } from "./fake-gh";
 import { fixtureRetroBrain } from "./fixture-brain";
 import { RetroEye, type RetroAudit, type RetroFiling } from "./retro";
+
+/**
+ * Per-test budget. Every test here spawns `git` several times against its own
+ * scratch repo, and subprocess spawn is what degrades worst on a saturated
+ * machine: the slowest test measured 1.11s at load average 8-21 on ten cores,
+ * and 60s — 54x that — still produced three hard timeouts in #36 and #38 when
+ * the box was busy. 60s on an idle machine (unchanged, so no hang is hidden),
+ * stretching to 300s in proportion to measured oversubscription. See
+ * ../test-budget.ts for the numbers and the reasoning.
+ */
+const BUDGET_MS = loadScaledMs(60_000, 300_000);
 
 /** A scratch repo the eye may watch; every test owns its own (§13 isolation). */
 interface Scratch {
@@ -206,7 +218,7 @@ describe("the Retro eye files closed retro sub-issues (SPEC §5.5)", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 
   test("work a registered ticket session did files NOTHING", async () => {
     const place = await scratch();
@@ -229,7 +241,7 @@ describe("the Retro eye files closed retro sub-issues (SPEC §5.5)", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 
   test("the same rogue work is never filed twice", async () => {
     const place = await scratch();
@@ -248,7 +260,7 @@ describe("the Retro eye files closed retro sub-issues (SPEC §5.5)", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 
   test("with no plausible parent the retro is filed at root level, still closed", async () => {
     const place = await scratch();
@@ -268,7 +280,7 @@ describe("the Retro eye files closed retro sub-issues (SPEC §5.5)", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 
   test("Johan's own ad hoc implementation files a retro too (§7.4)", async () => {
     const place = await scratch();
@@ -289,7 +301,7 @@ describe("the Retro eye files closed retro sub-issues (SPEC §5.5)", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 
   test("a session that only planned files no retro", async () => {
     const place = await scratch();
@@ -308,7 +320,7 @@ describe("the Retro eye files closed retro sub-issues (SPEC §5.5)", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 });
 
 describe("the Retro eye degrades loudly, never silently (ADR-0001)", () => {
@@ -337,7 +349,7 @@ describe("the Retro eye degrades loudly, never silently (ADR-0001)", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 
   test("a rogue checkout with no digest still leaves an unfiled retro on disk", async () => {
     const place = await scratch();
@@ -357,7 +369,7 @@ describe("the Retro eye degrades loudly, never silently (ADR-0001)", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 
   test("a gh failure keeps the record and audits it — the eye never crashes", async () => {
     const place = await scratch();
@@ -383,7 +395,7 @@ describe("the Retro eye degrades loudly, never silently (ADR-0001)", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 
   test("an unlinkable sub-issue still files the retro, loudly unlinked", async () => {
     const place = await scratch();
@@ -405,7 +417,7 @@ describe("the Retro eye degrades loudly, never silently (ADR-0001)", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 });
 
 describe("the Retro eye's state survives a restart", () => {
@@ -428,7 +440,7 @@ describe("the Retro eye's state survives a restart", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 
   test("priming a fresh repo never retros the history that predates the eye", async () => {
     const place = await scratch();
@@ -443,7 +455,7 @@ describe("the Retro eye's state survives a restart", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 });
 
 describe("the working tree is a cursor too, not a standing accusation", () => {
@@ -464,7 +476,7 @@ describe("the working tree is a cursor too, not a standing accusation", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 
   test("uncommitted work that appears AFTER priming files a retro", async () => {
     const place = await scratch();
@@ -483,7 +495,7 @@ describe("the working tree is a cursor too, not a standing accusation", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 
   test("the same unchanged dirty tree is not reported twice", async () => {
     const place = await scratch();
@@ -499,7 +511,7 @@ describe("the working tree is a cursor too, not a standing accusation", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 });
 
 describe("rogue work in a worktree belongs to the parent repo (§7.3)", () => {
@@ -529,7 +541,7 @@ describe("rogue work in a worktree belongs to the parent repo (§7.3)", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 });
 
 describe("a first scan primes instead of accusing the whole repo", () => {
@@ -550,7 +562,7 @@ describe("a first scan primes instead of accusing the whole repo", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 });
 
 describe("two eyes in one process never share state", () => {
@@ -577,7 +589,7 @@ describe("two eyes in one process never share state", () => {
       await first.cleanup();
       await second.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 });
 
 const SCOPE_SEVEN =
@@ -635,7 +647,7 @@ describe("in-ticket scope drift (SPEC §14, #38)", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 
   test("an IN-SCOPE refactor in a registered ticket session files NOTHING", async () => {
     const place = await scratch();
@@ -656,7 +668,7 @@ describe("in-ticket scope drift (SPEC §14, #38)", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 
   test("a one-line ticket body states too little scope to judge — silence, not a guess", async () => {
     const place = await scratch();
@@ -677,7 +689,7 @@ describe("in-ticket scope drift (SPEC §14, #38)", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 
   test("a ticket CLOSED mid-session is still judged, and still files", async () => {
     const place = await scratch();
@@ -706,7 +718,7 @@ describe("in-ticket scope drift (SPEC §14, #38)", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 
   test("the same drift is never filed twice", async () => {
     const place = await scratch();
@@ -728,7 +740,7 @@ describe("in-ticket scope drift (SPEC §14, #38)", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 
   test("work in the ticket's own WORKTREE is judged against the parent repo's ticket", async () => {
     const place = await scratch();
@@ -758,7 +770,7 @@ describe("in-ticket scope drift (SPEC §14, #38)", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 });
 
 describe("scope drift never takes the eye down (ADR-0001)", () => {
@@ -814,7 +826,7 @@ describe("scope drift never takes the eye down (ADR-0001)", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 
   test("a schema miss is reported once, not retried forever", async () => {
     const place = await scratch();
@@ -863,7 +875,7 @@ describe("scope drift never takes the eye down (ADR-0001)", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 
   test("a brain that THROWS is caught too — the scan returns, the eye lives", async () => {
     const place = await scratch();
@@ -912,7 +924,7 @@ describe("scope drift never takes the eye down (ADR-0001)", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 
   test("a gh failure keeps the drift record in the digest and audits it", async () => {
     const place = await scratch();
@@ -943,7 +955,7 @@ describe("scope drift never takes the eye down (ADR-0001)", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 
   test("tracker-less mode cannot read a stated scope, so it asks nothing", async () => {
     const place = await scratch();
@@ -968,5 +980,5 @@ describe("scope drift never takes the eye down (ADR-0001)", () => {
     } finally {
       await place.cleanup();
     }
-  }, 60_000);
+  }, BUDGET_MS);
 });

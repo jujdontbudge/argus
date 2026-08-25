@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createCodexBrain } from "../brain";
 import { DEFAULT_EYES_CONFIG } from "../config";
+import { loadScaledMs } from "../test-budget";
 import {
   buildDriftCandidates,
   buildDriftPrompt,
@@ -27,6 +28,16 @@ import {
  * is not involved, only the brain seam.
  */
 const codexAvailable = Bun.which("codex") !== null;
+
+/**
+ * Per-test budget. One real `codex exec` round trip each, measured at 6.98s in
+ * #36 — and timing out against a 240s budget in the same run, because a second
+ * live drive was running alongside. Nothing inside `../brain.ts` sets a
+ * timeout, so this number is the ONLY hang detector for a stuck `codex exec`:
+ * it stretches to 600s (86x the measured round trip) and no further, so a hang
+ * still reports in ten minutes. 240s on an idle machine, unchanged.
+ */
+const BUDGET_MS = loadScaledMs(240_000, 600_000);
 
 /** The shape ./retro.ts builds: signal blocks, then the candidate tickets. */
 const PROMPT = [
@@ -89,7 +100,14 @@ describe.skipIf(!codexAvailable)("live luna brain (retro integration)", () => {
         expect(implemented!.what.length).toBeGreaterThan(0);
         // The eye validates the parent anyway; this asserts the model can
         // pick from the list rather than inventing a number.
-        expect([null, "15", "22"]).toContain(implemented!.parentTicket);
+        //
+        // The JUDGMENT is which ticket — never how the model punctuated it.
+        // The same right answer has come back as `15` and as `#15` across
+        // runs, and pinning one spelling has cost three tickets a re-run
+        // (#35, #36, #38). Normalized exactly as production does it, in
+        // ./parent.ts, so this test and the eye agree about what a pick is.
+        const picked = implemented!.parentTicket?.trim().replace(/^#\s*/, "") ?? null;
+        expect([null, "15", "22"]).toContain(picked);
 
         const planning = verdict!.retros.find(
           (retro) => retro.signalId === "retro-live-planning",
@@ -99,7 +117,7 @@ describe.skipIf(!codexAvailable)("live luna brain (retro integration)", () => {
         await rm(sandboxRepo, { force: true, recursive: true });
       }
     },
-    240_000,
+    BUDGET_MS,
   );
 });
 
@@ -229,6 +247,6 @@ describe.skipIf(!codexAvailable)("live luna brain (scope-drift integration)", ()
         await rm(sandboxRepo, { force: true, recursive: true });
       }
     },
-    240_000,
+    BUDGET_MS,
   );
 });

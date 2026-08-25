@@ -45,6 +45,22 @@ export interface ParentResolution {
 
 const RETRO_LABEL = "retro";
 
+/**
+ * The brain's pick as a bare ticket number, or null when it is not one.
+ *
+ * `parentTicket` is free-form model output: the run that returns `15` returns
+ * `#15` on the next pass (#42, and the live-brain flake that cost three
+ * tickets a re-run). The judgment is WHICH ticket; the punctuation is not part
+ * of it, and an exact compare silently files at root level a retro whose
+ * parent Argus actually has. Anything that is not a single number is still
+ * unusable, so §5.5's "a model may not invent an issue number" is untouched.
+ */
+function pickedNumber(choice: string | null): string | null {
+  if (choice === null) return null;
+  const picked = /^#?\s*(\d+)$/.exec(choice.trim());
+  return picked ? picked[1]! : null;
+}
+
 export function resolveParent(input: ParentInput): ParentResolution {
   const sessionTicket = input.sessionTickets.find((ticket) => /^\d+$/.test(ticket));
   if (sessionTicket !== undefined) {
@@ -56,10 +72,9 @@ export function resolveParent(input: ParentInput): ParentResolution {
     return { parent: referenced, rule: "referenced-ticket" };
   }
 
-  if (input.brainChoice !== null) {
-    const chosen = input.candidates.find(
-      (issue) => issue.number === input.brainChoice,
-    );
+  const brainChoice = pickedNumber(input.brainChoice);
+  if (brainChoice !== null) {
+    const chosen = input.candidates.find((issue) => issue.number === brainChoice);
     if (chosen !== undefined && !chosen.labels.includes(RETRO_LABEL)) {
       return { parent: chosen.number, rule: "brain-choice" };
     }

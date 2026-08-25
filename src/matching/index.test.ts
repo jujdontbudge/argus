@@ -11,6 +11,7 @@ describe("public API surface", () => {
     expect(typeof matching.claudeCandidateText).toBe("function");
     expect(typeof matching.codexCandidateText).toBe("function");
     expect(typeof matching.isCodexSubagentThread).toBe("function");
+    expect(typeof matching.syntheticEnvelopeTag).toBe("function");
     expect(typeof matching.toEpochMs).toBe("function");
     expect(typeof matching.SendMatcher).toBe("function");
     expect(matching.WINDOW_BEFORE_MS).toBe(5_000);

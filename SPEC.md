@@ -157,6 +157,15 @@ The registry (`.argus/registry/`) is the single source of provenance truth:
    - Session in the registry → the dispatch prompt and all registry-logged sends are
      **Hermes-authored**; any other user-side message means Johan attached and typed →
      **Johan-authored**.
+   - **Not every user-role record is a prompt.** Agent CLIs inject their own
+     context into the transcript as user-role items — codex-cli 0.149.1 ships a
+     plugin catalogue this way. An item shaped like a context envelope (an
+     opening tag alone on its first line, closing with its own tag) that
+     arrives in a session's **opening run** — before any prompt has landed and
+     before the agent has spoken — is the CLI's injection, not a takeover, and
+     classifies **system**. Both directions are audited loudly: over-filtering
+     would make Argus deaf to Johan, which breaks the same invariant the other
+     way round.
 4. Every watcher classifies through this one mechanism. No heuristics elsewhere.
 
 ### 5.1 Reviewer (evaluative; the self-improvement loop)

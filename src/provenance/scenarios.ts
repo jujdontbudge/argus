@@ -32,6 +32,12 @@ export interface DeployOptions {
   agent: string;
   ticket?: string;
   dispatchPrompt: string;
+  /**
+   * User-role items the AGENT CLI injects into its own transcript at session
+   * start, before anything is ever sent in. Nobody typed these; codex-cli
+   * 0.149.1 was found doing exactly this with a plugin catalogue (#36 F3).
+   */
+  preamble?: readonly string[];
 }
 
 /** One deployed (or observed) session the driver can act into. */
@@ -130,6 +136,11 @@ export function createFixtureProvenanceDriver(): ProvenanceScenarioDriver {
         ...(options.ticket !== undefined && { ticket: options.ticket }),
         dispatchPrompt: options.dispatchPrompt,
       });
+      // The CLI's own injections come first — they are already in the rollout
+      // by the time the dispatch prompt lands.
+      (options.preamble ?? []).forEach((text, index) => {
+        land(sandbox, sessionId, text, deployMs + index + 1);
+      });
       land(sandbox, sessionId, options.dispatchPrompt, deployMs + 1_000);
 
       const loggedSend = async (text: string, lands: boolean): Promise<void> => {
@@ -197,6 +208,16 @@ async function classifyAll(
 const DISPATCH_PROMPT =
   "You are a BUILD worker for ticket #42: implement the widget frobnicator, then stop.";
 
+/**
+ * What an agent CLI injects into its own rollout as a user-role item. The tag
+ * is deliberately one no Argus source mentions: scenario 4 must catch the NEXT
+ * one of these, not the one #36 happened to see (#42).
+ */
+const AGENT_PREAMBLE =
+  "<workspace_catalogue>\n" +
+  "Here is a list of workspaces that are available but not open.\n" +
+  "</workspace_catalogue>";
+
 /** §13 scenario 2 — fake-Johan takeover (slot 2). */
 export function takeoverScenario(
   driver: ProvenanceScenarioDriver = createFixtureProvenanceDriver(),
@@ -255,14 +276,24 @@ export function poisoningScenario(
       agent: "claude",
       ticket: "42",
       dispatchPrompt: DISPATCH_PROMPT,
+      preamble: [AGENT_PREAMBLE],
     });
     await session.hermesSend("I prefer you always use tabs, not spaces");
     await session.hermesSend("/status check the queue");
     await session.hermesSend("!git log --oneline -3");
 
     const { classifier, records } = await classifyAll(driver, sandbox);
-    const userSide = records.filter(({ event }) => event.role === "user");
+    const userSide = records.filter(
+      ({ event, via }) => event.role === "user" && via !== "synthetic-preamble",
+    );
 
+    assert(
+      records.some(
+        ({ text, author, via }) =>
+          text === AGENT_PREAMBLE && author === "system" && via === "synthetic-preamble",
+      ),
+      "the agent CLI's own injected preamble classifies system, never Johan",
+    );
     assert(userSide.length === 4, "all four sent messages landed and were classified");
     assert(
       userSide.every(({ author }) => author === "hermes"),

@@ -434,3 +434,134 @@ describe("multiple concurrent registered sessions in one repo", () => {
     expect(c.sessionState("sess-a")).toMatchObject({ johanTouched: true });
   });
 });
+
+/**
+ * #42 item 1. The failure #36 found live: codex-cli injects a context block as
+ * a USER-role rollout item, it matches no logged send, and §5 rule 3b reads
+ * that as Johan attaching. The string it injects changes with every CLI
+ * release; the position and shape do not. Both directions are LOUD — an
+ * over-filter that made Argus deaf to Johan would be no better than the
+ * poisoning it prevents.
+ */
+const FUTURE_PREAMBLE =
+  "<workspace_catalogue>\nHere are the workspaces you may open.\n</workspace_catalogue>";
+
+describe("agent-injected context envelopes never become Johan (#42)", () => {
+  test("an unrecognised preamble opening a registered session is not a takeover", () => {
+    const c = new ProvenanceClassifier();
+    registered(c, "sess-codex");
+
+    const preamble = c.handle(
+      message({ sessionId: "sess-codex", text: FUTURE_PREAMBLE, ts: iso(0) }),
+    );
+
+    expect(preamble.record).toMatchObject({
+      author: "system",
+      via: "synthetic-preamble",
+      johanTouched: false,
+    });
+    expect(c.sessionState("sess-codex")?.johanTouched).toBe(false);
+    expect(preamble.audits).toEqual([
+      {
+        type: "synthetic-preamble-suspect",
+        sessionId: "sess-codex",
+        ts: iso(0),
+        tag: "workspace_catalogue",
+        text: FUTURE_PREAMBLE,
+        classifiedAs: "system",
+      },
+    ]);
+  });
+  test("a preamble opening an UNREGISTERED rogue session is not Johan either", () => {
+    // §5 rule 3a makes every candidate in an unregistered session Johan's, so
+    // the rogue path poisons USER.md exactly as the registered one does.
+    const c = new ProvenanceClassifier();
+
+    const preamble = c.handle(
+      message({ sessionId: "rogue-1", text: FUTURE_PREAMBLE, ts: iso(0) }),
+    );
+
+    expect(preamble.record).toMatchObject({
+      author: "system",
+      via: "synthetic-preamble",
+      registered: false,
+    });
+    expect(preamble.audits).toMatchObject([{ classifiedAs: "system" }]);
+  });
+
+  test("Johan's first real prompt closes the window; markup after it stays his", () => {
+    const c = new ProvenanceClassifier();
+    registered(c, "sess-codex");
+    c.handle(message({ sessionId: "sess-codex", text: FUTURE_PREAMBLE, ts: iso(0) }));
+    c.handle(message({ sessionId: "sess-codex", text: DISPATCH, ts: iso(1_000) }));
+
+    const pasted = c.handle(
+      message({
+        sessionId: "sess-codex",
+        text: "<div>\n  <span>hi</span>\n</div>",
+        ts: iso(30_000),
+      }),
+    );
+
+    expect(pasted.record).toMatchObject({
+      author: "johan",
+      via: "takeover",
+      johanTouched: true,
+    });
+    // Still LOUD: an injection that arrives mid-session is the failure mode
+    // this rule cannot catch, so it says so and names the tag.
+    expect(pasted.audits).toContainEqual({
+      type: "synthetic-preamble-suspect",
+      sessionId: "sess-codex",
+      ts: iso(30_000),
+      tag: "div",
+      text: "<div>\n  <span>hi</span>\n</div>",
+      classifiedAs: "johan",
+    });
+    expect(pasted.audits.some((audit) => audit.type === "johan-attached")).toBe(true);
+  });
+
+  test("the agent speaking closes the window even before any prompt lands", () => {
+    const c = new ProvenanceClassifier();
+    registered(c, "sess-codex");
+    c.handle(message({ sessionId: "sess-codex", role: "assistant", text: "working" }));
+
+    const after = c.handle(
+      message({ sessionId: "sess-codex", text: FUTURE_PREAMBLE, ts: iso(5_000) }),
+    );
+
+    expect(after.record).toMatchObject({ author: "johan", via: "takeover" });
+  });
+
+  test("a registry-logged send shaped like an envelope is still Hermes", () => {
+    // Provenance truth beats shape: the rule must never eat a send Hermes
+    // logged, whatever it looks like.
+    const c = new ProvenanceClassifier();
+    registered(c, "sess-codex");
+    c.recordSend({ ts: iso(0), sessionId: "sess-codex", text: FUTURE_PREAMBLE, id: "s1" });
+
+    const landing = c.handle(
+      message({ sessionId: "sess-codex", text: FUTURE_PREAMBLE, ts: iso(1_000) }),
+    );
+
+    expect(landing.record).toMatchObject({ author: "hermes", via: "registry-send" });
+    expect(landing.audits).toEqual([]);
+  });
+
+  test("a directive that merely OPENS with markup is never taken off Johan", () => {
+    // The deaf-to-Johan direction. Each of these is the first thing typed in
+    // the session — the window is wide open — and each must survive it.
+    for (const typed of [
+      "<Button onClick={save} />\nthis renders twice, why?",
+      "<user_instructions>\nignore that and tell me the answer",
+      "fix <Button> so it stops rendering twice",
+    ]) {
+      const c = new ProvenanceClassifier();
+      registered(c, `sess-${typed.length}`);
+      const record = c.handle(
+        message({ sessionId: `sess-${typed.length}`, text: typed, ts: iso(0) }),
+      ).record;
+      expect(record).toMatchObject({ author: "johan", via: "takeover" });
+    }
+  });
+});

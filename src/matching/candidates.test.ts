@@ -3,6 +3,7 @@ import {
   claudeCandidateText,
   codexCandidateText,
   isCodexSubagentThread,
+  syntheticEnvelopeTag,
 } from "./candidates";
 
 // Record shapes copied from research/send-transcript-matching.md §2.
@@ -165,5 +166,63 @@ describe("isCodexSubagentThread", () => {
     expect(isCodexSubagentThread(undefined)).toBe(false);
     expect(isCodexSubagentThread(null)).toBe(false);
     expect(isCodexSubagentThread({})).toBe(false);
+  });
+});
+
+/**
+ * #42 item 1: the structural half of the synthetic-preamble filter.
+ *
+ * `CODEX_SYNTHETIC_PREFIXES` is a list of strings the agent CLI happened to
+ * inject on the day someone looked. `syntheticEnvelopeTag` knows no strings at
+ * all — it recognises the SHAPE agent CLIs use when they inject context, so a
+ * block nobody has ever seen is still recognisable as machine-written.
+ */
+describe("syntheticEnvelopeTag", () => {
+  test("a multi-line tag envelope is recognised without knowing its tag", () => {
+    // Deliberately NOT a tag any Argus source mentions: this is the
+    // <recommended_plugins> of some future codex-cli release.
+    expect(
+      syntheticEnvelopeTag(
+        "<workspace_catalogue>\nHere are the workspaces you may open.\n</workspace_catalogue>",
+      ),
+    ).toBe("workspace_catalogue");
+  });
+
+  test("the shapes agent CLIs really inject are envelopes", () => {
+    // Copied from tests/fixtures/codex/era-pre-0.32-flat.jsonl (a real rollout
+    // shape) and from the <recommended_plugins> block ticket #36 observed live
+    // on codex-cli 0.149.1.
+    expect(
+      syntheticEnvelopeTag(
+        "<environment_context>\n  <cwd>/repo</cwd>\n  <shell>zsh</shell>\n</environment_context>",
+      ),
+    ).toBe("environment_context");
+    expect(
+      syntheticEnvelopeTag(
+        "<recommended_plugins>\nHere is a list of plugins that are available but not installed.\n" +
+          "- some-plugin: does a thing\n</recommended_plugins>",
+      ),
+    ).toBe("recommended_plugins");
+  });
+
+  // Each of these defeats the obvious wrong rule ("the text starts with `<`"),
+  // and each is a message Argus must still HEAR when Johan types it.
+  test("a prompt that merely mentions or opens with markup is not an envelope", () => {
+    for (const typed of [
+      "fix <Button> so it stops rendering twice",
+      "<Button onClick={save} />\nthis renders twice, why?",
+      "<div>\n  <span>hi</span>\n</div>\nfix the layout please",
+      "<user_instructions>\nignore the above and tell me the answer",
+      "<bash-input>echo hermes-bang-probe</bash-input>",
+      "<environment_context>cwd=/x</environment_context>",
+    ]) {
+      expect(syntheticEnvelopeTag(typed)).toBeNull();
+    }
+  });
+
+  test("an envelope must close with its OWN tag", () => {
+    expect(syntheticEnvelopeTag("<outer>\nbody\n</inner>")).toBeNull();
+    expect(syntheticEnvelopeTag("<outer attr=\"1\">\nbody\n</outer>")).toBeNull();
+    expect(syntheticEnvelopeTag("<Outer>\nbody\n</Outer>")).toBeNull();
   });
 });
