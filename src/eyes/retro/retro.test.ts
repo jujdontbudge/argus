@@ -142,6 +142,29 @@ async function seedDigest(
   );
 }
 
+
+/** Run git in any checkout (the worktree tests need more than the repo). */
+async function gitIn(cwd: string, ...args: string[]): Promise<void> {
+  const child = Bun.spawn(
+    [
+      "git",
+      "-c",
+      "user.name=Johan Sardar",
+      "-c",
+      "user.email=johansardar77@gmail.com",
+      "-c",
+      "commit.gpgsign=false",
+      ...args,
+    ],
+    { cwd, stderr: "pipe", stdout: "pipe" },
+  );
+  const [exitCode, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stderr).text(),
+  ]);
+  if (exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${stderr}`);
+}
+
 const filedIssue = (gh: FakeGh) =>
   gh.issues.find((issue) => issue.labels.includes("retro"));
 
@@ -473,6 +496,36 @@ describe("the working tree is a cursor too, not a standing accusation", () => {
 
       expect(await eye.scan()).toHaveLength(1);
       expect(await eye.scan()).toEqual([]);
+    } finally {
+      await place.cleanup();
+    }
+  }, 60_000);
+});
+
+describe("rogue work in a worktree belongs to the parent repo (§7.3)", () => {
+  test("a commit made in a linked worktree files a retro against the parent tracker", async () => {
+    const place = await scratch();
+    const worktree = join(place.root, "worktrees/rogue");
+    const gh = createFakeGh({ repo: "JohanSardar/argus" });
+    try {
+      await place.git("worktree", "add", "--quiet", "-b", "build/rogue", worktree);
+      const { eye } = await openEye(place, gh);
+      await eye.prime();
+
+      await mkdir(join(worktree, "src"), { recursive: true });
+      await writeFile(join(worktree, "src/rogue.ts"), "export const rogue = 1;\n");
+      await gitIn(worktree, "add", "src/rogue.ts");
+      await gitIn(worktree, "commit", "--quiet", "-m", "worktree rogue work");
+
+      // The eye watches the PARENT repo; it must still see the worktree work.
+      const filings = await eye.scan();
+
+      expect(filings).toHaveLength(1);
+      expect(filedIssue(gh)!.title).toBe("Retro: worktree rogue work");
+      // gh ran against the parent repo tracker, from the parent checkout.
+      expect(gh.cwds.every((cwd) => cwd === place.repo)).toBe(true);
+      expect(filedIssue(gh)!.body).toContain("worktree of");
+      expect(filedIssue(gh)!.body).toContain("src/rogue.ts");
     } finally {
       await place.cleanup();
     }
