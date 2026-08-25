@@ -18,11 +18,16 @@ export interface ArchiveBatchResult {
   inserted: number;
 }
 
-function ingestKey(record: ProvenanceRecord): string {
+function uuidIngestKey(record: ProvenanceRecord): string | null {
   const { event } = record;
   if (event.uuid !== undefined) {
     return `uuid:${event.sessionId}:${event.uuid}`;
   }
+  return null;
+}
+
+function eventFingerprint(record: ProvenanceRecord): string {
+  const { event } = record;
   const hash = createHash("sha256");
   for (const value of [
     event.file,
@@ -36,7 +41,7 @@ function ingestKey(record: ProvenanceRecord): string {
     hash.update(value, "utf8");
     hash.update("\0", "utf8");
   }
-  return `event:${hash.digest("hex")}`;
+  return hash.digest("hex");
 }
 
 /**
@@ -138,6 +143,7 @@ export class ArchiverEye {
     tailer: Tailer,
     classifier: ProvenanceClassifier,
   ): Promise<ArchiveBatchResult> {
+    const startingCursors = tailer.cursors();
     const events = await tailer.catchUp();
     const sessionMeta: SessionMetaEvent[] = [];
     const records: ProvenanceRecord[] = [];
@@ -169,18 +175,35 @@ export class ArchiverEye {
       INSERT INTO archive_cursors (file, offset) VALUES (?, ?)
       ON CONFLICT(file) DO UPDATE SET offset = excluded.offset
     `);
+    const fallbackCount = this.database.query<{ count: number }, [string]>(
+      "SELECT count(*) AS count FROM archive_messages WHERE ingest_key GLOB ?",
+    );
 
     let inserted = 0;
     const commit = this.database.transaction(() => {
+      const nextFallbackOccurrence = new Map<string, number>();
       for (const event of sessionMeta) {
         insertSession.get(event.sessionId, event.agent);
       }
       for (const record of records) {
+        let key = uuidIngestKey(record);
+        if (key === null) {
+          const prefix = `event:${eventFingerprint(record)}:`;
+          let occurrence = nextFallbackOccurrence.get(prefix);
+          if (occurrence === undefined) {
+            occurrence =
+              (startingCursors[record.event.file] ?? 0) > 0
+                ? fallbackCount.get(`${prefix}*`)!.count
+                : 0;
+          }
+          key = `${prefix}${occurrence}`;
+          nextFallbackOccurrence.set(prefix, occurrence + 1);
+        }
         const agent =
           record.agent ?? sessionAgent.get(record.sessionId)?.agent ?? null;
         if (
           insertMessage.get(
-            ingestKey(record),
+            key,
             record.sessionId,
             agent,
             record.event.role,

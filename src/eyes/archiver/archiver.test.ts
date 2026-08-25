@@ -10,7 +10,7 @@ import { ArchiverEye } from "./archiver";
 const T0 = "2026-08-24T10:00:00.000Z";
 
 function userLine(
-  uuid: string,
+  uuid: string | undefined,
   text: string,
   ts: string,
   promptSource: string | undefined = "typed",
@@ -20,7 +20,7 @@ function userLine(
     message: { role: "user", content: text },
     timestamp: ts,
     ...(promptSource !== undefined && { promptSource }),
-    uuid,
+    ...(uuid !== undefined && { uuid }),
     sessionId: "session-26",
     cwd: "/tmp/sandbox",
     version: "2.1.241",
@@ -105,6 +105,40 @@ describe("ArchiverEye", () => {
       expect(reopened.cursors()).toEqual(persistedCursors);
       expect(reopened.messageCount()).toBe(4);
       reopened.close();
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  test("fallback keys preserve repeated no-uuid messages and still dedupe replay", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-archiver-no-uuid-"));
+    const repo = join(root, "repo");
+    const transcripts = join(root, "transcripts");
+    const transcript = join(transcripts, "session-26.jsonl");
+    await Bun.write(join(repo, ".gitkeep"), "");
+    await Bun.write(join(transcripts, ".gitkeep"), "");
+    const repeated = userLine(undefined, "same message", T0);
+    await writeFile(transcript, repeated + repeated);
+
+    try {
+      const source = createClaudeCodeSource({ dir: transcripts });
+      const eye = await ArchiverEye.open({ repo });
+      expect((await eye.catchUp(new Tailer(source), classifier())).inserted).toBe(2);
+
+      await appendFile(transcript, repeated);
+      expect(
+        (
+          await eye.catchUp(
+            new Tailer(source, { cursors: eye.cursors() }),
+            classifier(),
+          )
+        ).inserted,
+      ).toBe(1);
+      expect(eye.messageCount()).toBe(3);
+
+      expect((await eye.catchUp(new Tailer(source), classifier())).inserted).toBe(0);
+      expect(eye.messageCount()).toBe(3);
+      eye.close();
     } finally {
       await rm(root, { force: true, recursive: true });
     }
