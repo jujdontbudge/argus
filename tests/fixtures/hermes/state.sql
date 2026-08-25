@@ -22,4 +22,3 @@ CREATE TABLE messages (
   timestamp REAL,
   active INTEGER DEFAULT 1
 );
-

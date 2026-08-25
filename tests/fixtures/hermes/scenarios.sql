@@ -8,4 +8,3 @@ INSERT INTO messages
 VALUES
   ('hermes-scenario-session', 'user', 'Run the Hermes autonomous batch.', 1777300001, 1),
   ('hermes-scenario-session', 'assistant', 'Hermes completed the autonomous batch.', 1777300002, 1);
-
