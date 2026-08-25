@@ -278,4 +278,110 @@ describe("argus watch", () => {
       }
     }
   }, 30_000);
+
+  test("a duplicate watcher waits, then takes over without double-consuming", async () => {
+    const world = await watchWorld();
+    const command = [
+      process.execPath,
+      cli,
+      "watch",
+      "reviewer",
+      "--repo",
+      world.repo,
+    ];
+    const first = Bun.spawn(command, {
+      env: world.env,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const cursorPath = join(
+      world.repo,
+      ".argus",
+      "eyes",
+      "reviewer",
+      "cursors.json",
+    );
+    for (let attempt = 0; !(await Bun.file(cursorPath).exists()) && attempt < 200; attempt += 1) {
+      await Bun.sleep(20);
+    }
+    const second = Bun.spawn(command, {
+      env: world.env,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    try {
+      const ownerPath = join(
+        world.repo,
+        ".argus",
+        "eyes",
+        "reviewer",
+        "watch.lock",
+        "owner.json",
+      );
+      let firstOwner = false;
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        await Bun.sleep(20);
+        try {
+          firstOwner =
+            ((await Bun.file(ownerPath).json()) as { pid: number }).pid === first.pid;
+        } catch {
+          // The first process may still be acquiring the lease.
+        }
+        if (firstOwner) break;
+      }
+      expect(firstOwner).toBe(true);
+
+      first.kill("SIGKILL");
+      await first.exited;
+      let secondOwner = false;
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        await Bun.sleep(20);
+        try {
+          secondOwner =
+            ((await Bun.file(ownerPath).json()) as { pid: number }).pid === second.pid;
+        } catch {
+          // The replacement is removing the stale lease and acquiring it.
+        }
+        if (secondOwner) break;
+      }
+      expect(secondOwner).toBe(true);
+
+      const transcriptDirectory = claudeProjectDir(
+        world.repo,
+        join(world.env.CLAUDE_CONFIG_DIR, "projects"),
+      );
+      await mkdir(transcriptDirectory, { recursive: true });
+      await Bun.write(
+        join(transcriptDirectory, "lease-takeover.jsonl"),
+        `${JSON.stringify({
+          type: "user",
+          message: { role: "user", content: "Only the lease owner consumes me." },
+          timestamp: "2026-08-25T12:03:00.000Z",
+          promptSource: "typed",
+          uuid: "lease-u-1",
+          sessionId: "lease-session",
+          cwd: world.repo,
+          version: "test",
+        })}\n`,
+      );
+      const statePath = join(world.repo, ".argus", "eyes", "reviewer", "state.json");
+      let pending = 0;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        await Bun.sleep(20);
+        try {
+          pending = ((await Bun.file(statePath).json()) as { pending: unknown[] })
+            .pending.length;
+        } catch {
+          // The replacement's source poll may still be in flight.
+        }
+        if (pending === 1) break;
+      }
+      expect(pending).toBe(1);
+    } finally {
+      first.kill("SIGTERM");
+      second.kill("SIGTERM");
+      await Promise.all([first.exited, second.exited]);
+      await rm(world.root, { force: true, recursive: true });
+    }
+  }, 30_000);
 });

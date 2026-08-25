@@ -7,6 +7,7 @@ import { classifierFromRegistry, loadRegistry, registryPaths } from "./provenanc
 import { Tailer, type TranscriptSource } from "./tailing/index.ts";
 import { ProvenanceFeed } from "./eyes/source.ts";
 import { parseArgusEvent } from "./events/schema.ts";
+import { acquireWatchLease } from "./watch/lease.ts";
 
 interface OpenWatcher {
   readonly resource: unknown;
@@ -192,7 +193,28 @@ async function runLoop(
   let watcher: OpenWatcher | undefined;
   let source: TranscriptSource | undefined;
   const pollMilliseconds = positiveInteger(process.env.ARGUS_WATCH_POLL_MS, 250);
+  let checkingEnrollment = false;
+  const enrollmentMonitor = setInterval(async () => {
+    if (checkingEnrollment || controller.signal.aborted) return;
+    checkingEnrollment = true;
+    try {
+      if (!(await isEnrolled(registryPath, repo))) controller.abort();
+    } catch (error) {
+      console.error(
+        `argus watch ${eye}: enrollment check failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      checkingEnrollment = false;
+    }
+  }, pollMilliseconds);
+  const lease = await acquireWatchLease(
+    repo,
+    eye,
+    controller.signal,
+    pollMilliseconds,
+  );
   try {
+    if (lease === null) return 0;
     while (!controller.signal.aborted) {
       if (!(await isEnrolled(registryPath, repo))) return 0;
       try {
@@ -211,6 +233,8 @@ async function runLoop(
     return 0;
   } finally {
     watcher?.close?.();
+    await lease?.release();
+    clearInterval(enrollmentMonitor);
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);
   }
