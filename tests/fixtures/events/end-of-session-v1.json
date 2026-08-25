@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "fixture-end-v1",
+  "kind": "end-of-session",
+  "agent": "claude-code",
+  "sessionId": "claude-fixture-session",
+  "repo": "/tmp/argus-fixture-repo",
+  "createdAt": "2026-08-25T12:00:00.000Z",
+  "message": "Implemented and verified. DONE."
+}

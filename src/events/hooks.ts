@@ -49,7 +49,7 @@ const ENDED = [
 
 export function classifyTerminalMessage(message: string): EventKind | null {
   if (BLOCKED.some((pattern) => pattern.test(message))) return "blocked-on-human";
-  if (ENDED.some((pattern) => pattern.test(message))) return "session-ended";
+  if (ENDED.some((pattern) => pattern.test(message))) return "end-of-session";
   return null;
 }
 

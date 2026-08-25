@@ -42,7 +42,7 @@ function missionSession(sessions: SessionRecord[]): SessionRecord | null {
 }
 
 function notificationText(event: ArgusEvent): string {
-  const state = event.kind === "session-ended" ? "finished" : "blocked on a human";
+  const state = event.kind === "end-of-session" ? "finished" : "blocked on a human";
   return normalize(
     `[argus] ${event.agent} session ${event.sessionId} ${state}; event .argus/events/${
       basename(`v${event.schemaVersion}-${event.kind}-${event.id}.json`)

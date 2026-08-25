@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { hashText } from "../matching";
 import {
@@ -15,6 +16,9 @@ import {
 } from "./index.ts";
 
 const scratchDirectories: string[] = [];
+const fixtures = fileURLToPath(
+  new URL("../../tests/fixtures/events", import.meta.url),
+);
 
 async function scratchRepo(argus = true): Promise<string> {
   const repo = await mkdtemp(join(tmpdir(), "argus-events-"));
@@ -35,11 +39,25 @@ afterEach(async () => {
 });
 
 describe("Argus lifecycle event schema and writer", () => {
+  test("parses the checked-in v1 completion and block fixtures", async () => {
+    const events = await Promise.all(
+      ["end-of-session-v1.json", "blocked-on-human-v1.json"].map(async (name) =>
+        parseArgusEvent(await Bun.file(join(fixtures, name)).text()),
+      ),
+    );
+
+    expect(events.map((event) => event?.kind).sort()).toEqual([
+      "blocked-on-human",
+      "end-of-session",
+    ]);
+    expect(events.every((event) => event?.schemaVersion === 1)).toBe(true);
+  });
+
   test("writes a versioned event and deduplicates a repeated native fire", async () => {
     const repo = await scratchRepo();
     const input = {
       agent: "claude-code" as const,
-      kind: "session-ended" as const,
+      kind: "end-of-session" as const,
       message: "Implemented ticket #34. DONE.",
       sessionId: "claude-session-1",
     };
@@ -58,7 +76,7 @@ describe("Argus lifecycle event schema and writer", () => {
     expect(parseArgusEvent(await Bun.file(first.path).text())).toEqual({
       schemaVersion: EVENT_SCHEMA_VERSION,
       id: first.event.id,
-      kind: "session-ended",
+      kind: "end-of-session",
       agent: "claude-code",
       sessionId: "claude-session-1",
       repo,
@@ -78,7 +96,7 @@ describe("Argus lifecycle event schema and writer", () => {
     });
     const ended = await writeEvent(repo, {
       ...shared,
-      kind: "session-ended",
+      kind: "end-of-session",
       message: "Key supplied; work complete. DONE.",
     });
 
@@ -92,7 +110,7 @@ describe("Argus lifecycle event schema and writer", () => {
         JSON.stringify({
           schemaVersion: 2,
           id: "future",
-          kind: "session-ended",
+          kind: "end-of-session",
           agent: "codex",
           sessionId: "thread",
           repo: "/repo",
@@ -122,7 +140,7 @@ describe("mission-control notification", () => {
     const event = (
       await writeEvent(repo, {
         agent: "codex",
-        kind: "session-ended",
+        kind: "end-of-session",
         message: "DONE",
         sessionId: "codex-thread-1",
       })
@@ -212,7 +230,7 @@ describe("native hook entrypoints", () => {
     );
     expect(kinds.map((event) => event?.kind).sort()).toEqual([
       "blocked-on-human",
-      "session-ended",
+      "end-of-session",
     ]);
     expect(errors).toHaveLength(2); // no registered Hermes mission workspace
   });

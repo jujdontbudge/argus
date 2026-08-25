@@ -1,7 +1,7 @@
 export const EVENT_SCHEMA_VERSION = 1 as const;
 
 export type EventAgent = "claude-code" | "codex";
-export type EventKind = "session-ended" | "blocked-on-human";
+export type EventKind = "end-of-session" | "blocked-on-human";
 
 export interface ArgusEvent {
   schemaVersion: typeof EVENT_SCHEMA_VERSION;
@@ -14,7 +14,7 @@ export interface ArgusEvent {
   message: string;
 }
 
-const KINDS: readonly EventKind[] = ["session-ended", "blocked-on-human"];
+const KINDS: readonly EventKind[] = ["end-of-session", "blocked-on-human"];
 const AGENTS: readonly EventAgent[] = ["claude-code", "codex"];
 
 /** Parse the durable v1 boundary. Unknown versions are intentionally ignored. */

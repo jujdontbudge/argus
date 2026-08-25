@@ -86,7 +86,7 @@ export function eventSignalPathsScenario(
         events.length === 2 &&
         events.every((event) => event !== null) &&
         events.map((event) => event!.kind).sort().join(",") ===
-          "blocked-on-human,session-ended",
+          "blocked-on-human,end-of-session",
       "hooks promptly wrote finish and block event files",
     );
     assert(
