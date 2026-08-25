@@ -87,4 +87,61 @@ describe("Hermes state.db source", () => {
       await rm(root, { force: true, recursive: true });
     }
   });
+
+  test("replays rewrites once and filters soft-deleted and non-message roles", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-hermes-source-"));
+    try {
+      const { db, file } = await fixtureDatabase(root);
+      db.run(
+        `INSERT INTO sessions
+          (id, source, started_at, message_count)
+         VALUES (?, ?, ?, ?)`,
+        ["session-rewrite", "cli", 1_777_100_000, 2],
+      );
+      const insert = db.query(
+        `INSERT INTO messages
+          (session_id, role, content, timestamp, active)
+         VALUES (?, ?, ?, ?, ?)`,
+      );
+      insert.run("session-rewrite", "user", "original prompt", 1_777_100_001, 1);
+      insert.run("session-rewrite", "assistant", "original answer", 1_777_100_002, 1);
+
+      const tailer = new Tailer(createHermesSource({ hermesRoot: root }));
+      const initial = await tailer.catchUp();
+
+      db.transaction(() => {
+        db.run("DELETE FROM messages WHERE session_id = ?", ["session-rewrite"]);
+        db.run("UPDATE sessions SET message_count = 3 WHERE id = ?", [
+          "session-rewrite",
+        ]);
+        insert.run("session-rewrite", "user", "original prompt", 1_777_100_100, 1);
+        insert.run(
+          "session-rewrite",
+          "assistant",
+          "replacement answer",
+          1_777_100_100,
+          1,
+        );
+        insert.run("session-rewrite", "user", "new suffix", 1_777_100_100, 1);
+        insert.run("session-rewrite", "tool", "tool output", 1_777_100_100, 1);
+        insert.run("session-rewrite", "user", "rewound prompt", 1_777_100_100, 0);
+      })();
+
+      const replay = await tailer.catchUp();
+      expect(
+        [...initial, ...replay]
+          .filter((event) => event.type === "message")
+          .map(({ role, text }) => ({ role, text })),
+      ).toEqual([
+        { role: "user", text: "original prompt" },
+        { role: "assistant", text: "original answer" },
+        { role: "assistant", text: "replacement answer" },
+        { role: "user", text: "new suffix" },
+      ]);
+      expect(tailer.cursors()).toEqual({ [file]: 7 });
+      db.close();
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
 });

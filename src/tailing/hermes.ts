@@ -1,4 +1,5 @@
 import { constants, Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -85,6 +86,47 @@ class HermesParser implements SourceParser {
 }
 
 class HermesDatabaseReader {
+  private readonly sequences = new Map<string, Map<string, string[]>>();
+
+  private signature(row: HermesRow): string {
+    const content = createHash("sha256").update(row.content).digest("hex");
+    return `${row.role}:${content}`;
+  }
+
+  private unreplayed(file: string, rows: HermesRow[]): HermesRow[] {
+    let sessions = this.sequences.get(file);
+    if (!sessions) {
+      sessions = new Map();
+      this.sequences.set(file, sessions);
+    }
+    const grouped = new Map<string, HermesRow[]>();
+    for (const row of rows) {
+      const group = grouped.get(row.sessionId) ?? [];
+      group.push(row);
+      grouped.set(row.sessionId, group);
+    }
+
+    const emitted = new Set<number>();
+    for (const [sessionId, group] of grouped) {
+      const previous = sessions.get(sessionId) ?? [];
+      const signatures = group.map((row) => this.signature(row));
+      const rewrite =
+        previous.length > 0 &&
+        signatures[0] === previous[0] &&
+        group.every((row) => row.timestamp === group[0]?.timestamp);
+      if (rewrite) {
+        group.forEach((row, index) => {
+          if (signatures[index] !== previous[index]) emitted.add(row.id);
+        });
+        sessions.set(sessionId, signatures);
+      } else {
+        for (const row of group) emitted.add(row.id);
+        sessions.set(sessionId, [...previous, ...signatures]);
+      }
+    }
+    return rows.filter((row) => emitted.has(row.id));
+  }
+
   async read(file: string, offset: number): Promise<ReadResult> {
     const db = new Database(
       readOnlyUri(file),
@@ -104,14 +146,16 @@ class HermesDatabaseReader {
            sessions.model AS model
          FROM messages
          LEFT JOIN sessions ON sessions.id = messages.session_id
-         WHERE messages.id > ? AND messages.active = 1
+         WHERE messages.id > ?
+           AND messages.active = 1
+           AND messages.role IN ('user', 'assistant')
          ORDER BY messages.id`,
       ).all(offset);
       const maximum = db.query<{ id: number | null }, []>(
         "SELECT max(id) AS id FROM messages",
       ).get()?.id;
       return {
-        lines: rows.map((row) => JSON.stringify(row)),
+        lines: this.unreplayed(file, rows).map((row) => JSON.stringify(row)),
         offset: maximum === null || maximum === undefined ? offset : Math.max(offset, maximum),
         truncated: false,
       };
