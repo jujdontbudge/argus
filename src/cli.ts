@@ -18,7 +18,7 @@ Commands:
 `;
 
 export const MINIMUM_BUN_VERSION = "1.3.12";
-const STUB_COMMANDS = new Set(["watch", "search"]);
+const STUB_COMMANDS = new Set(["watch"]);
 
 function isVersionAtLeast(actual: string, minimum: string): boolean {
   const actualParts = actual.split("-", 1)[0]?.split(".").map(Number) ?? [];
@@ -78,6 +78,50 @@ async function install(): Promise<number> {
   return 0;
 }
 
+async function search(args: string[]): Promise<number> {
+  const query = args.join(" ").trim();
+  if (query.length === 0) {
+    console.error('Usage: argus search "<query>"');
+    return 1;
+  }
+
+  const { gitRoot } = await import("./up/git.ts");
+  const repo = await gitRoot(process.cwd());
+  if (repo === null) {
+    console.error("argus search: current directory is not inside a git repository");
+    return 1;
+  }
+  if (!(await Bun.file(join(repo, ".argus/archive.db")).exists())) {
+    console.error(`argus search: no archive exists for ${repo}`);
+    return 1;
+  }
+
+  const { openArchiveSearch } = await import("./search/index.ts");
+  const archive = openArchiveSearch({ repo });
+  try {
+    const results = archive.query(query);
+    if (results.length === 0) {
+      console.log(`No archived messages matched "${query}".`);
+      return 0;
+    }
+    for (const result of results) {
+      const attribution = [
+        result.ts,
+        `session=${result.sessionId}`,
+        `agent=${result.agent ?? "unknown"}`,
+        `role=${result.role}`,
+        `provenance=${result.provenance}`,
+        ...(result.ticket !== null ? [`ticket=#${result.ticket}`] : []),
+      ].join("  ");
+      console.log(attribution);
+      console.log(`  ${result.snippet}`);
+    }
+    return 0;
+  } finally {
+    archive.close();
+  }
+}
+
 export async function main(args: string[]): Promise<number> {
   const bunVersion = process.versions.bun;
   if (!bunVersion || !isVersionAtLeast(bunVersion, MINIMUM_BUN_VERSION)) {
@@ -110,6 +154,10 @@ export async function main(args: string[]): Promise<number> {
   if (args[0] === "supervisor") {
     const { runSupervisorDaemon } = await import("./supervisor/daemon.ts");
     return runSupervisorDaemon();
+  }
+
+  if (args[0] === "search") {
+    return search(args.slice(1));
   }
 
   if (STUB_COMMANDS.has(args[0] ?? "")) {
