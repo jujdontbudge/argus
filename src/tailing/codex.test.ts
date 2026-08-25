@@ -287,4 +287,88 @@ describe("Codex rollout source", () => {
       await rm(root, { force: true, recursive: true });
     }
   });
+
+  test("accepts every additive rollout era from 0.39 through 0.149", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-codex-source-"));
+    try {
+      const repo = join(root, "repo");
+      await initializeRepo(repo);
+      const codexHome = join(root, "codex");
+      const rolloutDir = join(codexHome, "sessions/eras");
+      await mkdir(rolloutDir, { recursive: true });
+      const eras = [
+        ["0.39", "era-0.39.jsonl", "00000000-0000-0000-0000-000000000039"],
+        ["0.44", "era-0.44.jsonl", "00000000-0000-0000-0000-000000000044"],
+        ["0.88", "era-0.88.jsonl", "00000000-0000-0000-0000-000000000088"],
+        ["0.117", "edge-worktree.jsonl", "22222222-2222-2222-2222-222222222222"],
+        ["0.137", "edge-dead-worktree.jsonl", "33333333-3333-3333-3333-333333333333"],
+        ["0.140", "era-0.140.jsonl", "00000000-0000-0000-0000-000000000140"],
+        ["0.143", "era-0.143.jsonl", "00000000-0000-0000-0000-000000000143"],
+        ["0.145", "era-0.145.jsonl", "00000000-0000-0000-0000-000000000145"],
+        ["0.148", "era-0.148-revert.jsonl", "00000000-0000-0000-0000-000000000148"],
+        ["0.149", "era-0.149.jsonl", "00000000-0000-0000-0000-000000000149"],
+      ] as const;
+      for (const [version, fixtureName, id] of eras) {
+        const fixture = await Bun.file(join(fixtureRoot, fixtureName)).text();
+        const name = version === "0.148"
+          ? `rollout-era-${id}_bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.jsonl`
+          : `rollout-era-${id}.jsonl`;
+        await writeFile(
+          join(rolloutDir, name),
+          fixture
+            .replaceAll("__CWD__", repo)
+            .replaceAll("__WORKTREE_CWD__", repo)
+            .replaceAll("__DEAD_CWD__", repo)
+            .replaceAll("__REPOSITORY_URL__", repo)
+            .replaceAll("__START_CWD__", repo)
+            .replaceAll("__LATEST_CWD__", repo)
+            .replaceAll("__PARENT_CWD__", repo),
+        );
+      }
+
+      const events = await new Tailer(createCodexSource({ codexHome })).catchUp();
+      const versions = events
+        .filter((event) => event.type === "session-meta")
+        .map((event) => event.version);
+
+      for (const [version] of eras) {
+        expect(versions).toContain(`${version}.0`);
+      }
+      expect(
+        events.filter((event) => event.type === "message").map((event) => event.sessionId),
+      ).toContain("00000000-0000-0000-0000-000000000149");
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  test("links subagent rollouts to parent_thread_id and excludes copied prompts", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-codex-source-"));
+    try {
+      const repo = join(root, "repo");
+      await initializeRepo(repo);
+      const codexHome = join(root, "codex");
+      const rolloutDir = join(codexHome, "sessions/2026/06/15");
+      await mkdir(rolloutDir, { recursive: true });
+      const rollout = join(
+        rolloutDir,
+        "rollout-2026-06-15T10-00-00-00000000-0000-0000-0000-000000000140.jsonl",
+      );
+      const fixture = await Bun.file(join(fixtureRoot, "era-0.140.jsonl")).text();
+      await writeFile(rollout, fixture.replaceAll("__CWD__", repo));
+
+      const events = await new Tailer(createCodexSource({ codexHome })).catchUp();
+
+      expect(events[0]).toMatchObject({
+        parentSessionId: "00000000-0000-0000-0000-000000000001",
+        sessionId: "00000000-0000-0000-0000-000000000140",
+      });
+      expect(events.find((event) => event.type === "message")).toMatchObject({
+        candidate: false,
+        text: "era 0.140 subagent",
+      });
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
 });

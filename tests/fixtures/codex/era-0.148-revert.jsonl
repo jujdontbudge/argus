@@ -1,0 +1,2 @@
+{"timestamp":"2026-08-18T10:00:00.000Z","ordinal":0,"type":"session_meta","payload":{"id":"00000000-0000-0000-0000-000000000148","cwd":"__CWD__","cli_version":"0.148.0"}}
+{"timestamp":"2026-08-18T10:00:01.000Z","ordinal":1,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"era 0.148 revert"}]}}

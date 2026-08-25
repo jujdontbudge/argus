@@ -6,7 +6,10 @@ import {
 import { readdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
-import { codexCandidateText } from "../matching/candidates";
+import {
+  codexCandidateText,
+  isCodexSubagentThread,
+} from "../matching/candidates";
 import type { SourceParser, TailEvent, TranscriptSource } from "./events";
 
 export interface CodexSourceOptions {
@@ -109,6 +112,7 @@ class CodexParser implements SourceParser {
   private cwd: string | undefined;
   private gitBranch: string | undefined;
   private gitRepository: string | undefined;
+  private isSubagent = false;
   private parentSessionId: string | undefined;
   private repo: string | undefined;
   private sessionId: string | undefined;
@@ -171,6 +175,7 @@ class CodexParser implements SourceParser {
       this.gitRepository = git ? str(git.repository_url) : undefined;
       this.repo = this.resolveRepository();
       this.version = str(payload.cli_version);
+      this.isSubagent = isCodexSubagentThread(payload.source);
       this.parentSessionId =
         str(payload.parent_thread_id) ?? str(payload.forked_from_id);
       return [this.metaEvent(ts)];
@@ -198,7 +203,7 @@ class CodexParser implements SourceParser {
           role: "user",
           text: userText,
           ts,
-          candidate: codexCandidateText(record) !== null,
+          candidate: !this.isSubagent && codexCandidateText(record) !== null,
           file: this.file,
         }];
       }
