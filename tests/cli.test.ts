@@ -2,10 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { copyFile, mkdir, mkdtemp, readlink, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const checkout = new URL("..", import.meta.url).pathname;
-const cli = new URL("../src/cli.ts", import.meta.url).pathname;
-const oldBunPreload = new URL("./fixtures/old-bun.ts", import.meta.url).pathname;
+const checkout = fileURLToPath(new URL("..", import.meta.url));
+const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+const oldBunPreload = fileURLToPath(
+  new URL("./fixtures/old-bun.ts", import.meta.url),
+);
 
 async function runCli(
   args: string[],
