@@ -200,6 +200,8 @@ test.skipIf(gate.codex.status !== "run")(
         tab: `argus-test-${sandbox.id}-codex`,
       });
 
+      // stderr is compared to itself so a non-zero exit prints the CLI's own
+      // complaint in the diff — the house idiom from all-scenarios.test.ts.
       expect({ exitCode: result.exitCode, stderr: result.stderr?.slice(-400) })
         .toEqual({ exitCode: 0, stderr: result.stderr?.slice(-400) });
 
@@ -241,17 +243,21 @@ test.skipIf(gate.codex.status !== "run")(
           .map((record) => record.event.text.slice(0, 120)),
       ).toEqual([]);
 
-      // §7.3 / #22 — a worktree cwd maps to the parent sandbox repo.
+      // §7.3 / #22 — a worktree cwd maps to the parent sandbox repo. Compared
+      // through realpath: on macOS the sandbox lives under /var, which is a
+      // symlink, and the child resolves its own cwd to /private/var.
       const metas = events.filter(
         (event): event is SessionMetaEvent => event.type === "session-meta",
       );
+      const [realRepo, realWorktree] = await Promise.all([
+        realpath(sandbox.repo),
+        realpath(worktree),
+      ]);
       expect(
-        metas.some(
-          (meta) =>
-            meta.sessionId === dispatched!.sessionId &&
-            meta.repo === sandbox.repo,
-        ),
-      ).toBe(true);
+        metas
+          .filter((meta) => meta.sessionId === dispatched!.sessionId)
+          .map(({ cwd, repo }) => ({ cwd, repo })),
+      ).toContainEqual({ cwd: realWorktree, repo: realRepo });
     } finally {
       await sandbox.teardown();
     }
