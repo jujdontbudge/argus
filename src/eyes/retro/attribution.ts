@@ -15,6 +15,11 @@
  * A commit naming a ticket NOBODY claimed stays rogue: the tracker cannot be
  * consulted from here, and §5.5 is explicit that a missing retro is the
  * expensive failure. The referenced number rides along as a parent hint.
+ *
+ * A ticket's worktree covers its OWN session's work and nobody else's: a session
+ * the registry never saw, running in that same checkout, is rogue work that
+ * merely sits in someone else's worktree — and that worktree's ticket becomes
+ * its nearest plausible parent.
  */
 import type { SessionRecord } from "../../provenance";
 import type { GitCommit, GitScan, WorkingTreeChange } from "./git";
@@ -48,6 +53,8 @@ export interface RogueChanges {
   sessionIds: string[];
   /** Ticket numbers the rogue work names, in first-seen order (parent hints). */
   referencedTickets: string[];
+  /** Tickets whose worktree this is — the nearest plausible parent (§7.3). */
+  sessionTickets: string[];
 }
 
 export interface Attribution {
@@ -77,6 +84,9 @@ export function attributeChanges(
 ): Attribution {
   const byWorkspace = new Map<string, SessionRecord>();
   const byTicket = new Map<string, SessionRecord>();
+  const bySession = new Map(
+    context.sessions.map((session) => [session.sessionId, session] as const),
+  );
   for (const session of context.sessions) {
     if (session.ticket === undefined) continue; // planning sessions claim nothing
     if (session.workspace !== undefined) {
@@ -97,7 +107,15 @@ export function attributeChanges(
       .map(([sessionId]) => sessionId);
 
     const owner = byWorkspace.get(dir);
-    if (owner?.ticket !== undefined) {
+    // A ticket's worktree covers its own session's work — but only its own.
+    // A session the registry never registered (or one claiming a different
+    // ticket) running in that same checkout is rogue work that happens to sit
+    // in someone else's worktree, and the worktree's ticket becomes its
+    // nearest plausible parent.
+    const intruders = sessionIds.filter(
+      (sessionId) => bySession.get(sessionId)?.ticket !== owner?.ticket,
+    );
+    if (owner?.ticket !== undefined && intruders.length === 0) {
       attributed.push({
         dir: root.dir,
         commits: root.commits,
@@ -111,6 +129,7 @@ export function attributeChanges(
       });
       continue;
     }
+    const workspaceTickets = owner?.ticket !== undefined ? [owner.ticket] : [];
 
     // Per commit: one checkout can hold both covered and rogue work.
     const rogueCommits: GitCommit[] = [];
@@ -151,8 +170,9 @@ export function attributeChanges(
         dir: root.dir,
         commits: rogueCommits,
         workingTree: root.workingTree,
-        sessionIds,
+        sessionIds: intruders.length > 0 ? intruders : sessionIds,
         referencedTickets: hints,
+        sessionTickets: workspaceTickets,
       });
     }
   }

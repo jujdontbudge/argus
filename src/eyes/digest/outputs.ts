@@ -13,7 +13,7 @@
  * true, and `dead` is terminal — a brain judgment cannot resurrect a session
  * the supervisor declared dead.
  */
-import { mkdir, rename, rmdir, stat } from "node:fs/promises";
+import { mkdir, readdir, rename, rmdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { DigestStatus } from "./schema";
 
@@ -236,4 +236,49 @@ export async function updateIndex(
     else lines.push(line);
     await writeAtomic(path, `${lines.join("\n")}\n`);
   });
+}
+
+/** A digest read back off disk: the §5.5 Retro eye's transcript signal. */
+export interface StoredDigest {
+  fileName: string;
+  /** The session id `digestFileName` encoded (ids may contain dashes). */
+  sessionId: string;
+  frontmatter: DigestFrontmatter;
+  body: string;
+}
+
+/** Neutral seed for reads: it only shows through on malformed frontmatter. */
+const READ_SEED: DigestSeed = { agent: "unknown", startedBy: "johan" };
+
+/** Inverse of `digestFileName`: the ticket prefix, then the session id. */
+function sessionIdOf(fileName: string): string {
+  return fileName.replace(/\.md$/, "").split("-").slice(1).join("-");
+}
+
+/** Read one session digest, or null when it does not exist. */
+export async function readDigest(
+  sessionsDir: string,
+  fileName: string,
+): Promise<StoredDigest | null> {
+  const file = Bun.file(join(sessionsDir, fileName));
+  if (!(await file.exists())) return null;
+  const { frontmatter, body } = parseDigest(await file.text(), READ_SEED);
+  return { fileName, sessionId: sessionIdOf(fileName), frontmatter, body };
+}
+
+/** Every session digest in the directory; INDEX.md is not one of them. */
+export async function listDigests(sessionsDir: string): Promise<StoredDigest[]> {
+  let names: string[];
+  try {
+    names = await readdir(sessionsDir);
+  } catch {
+    return []; // no sessions directory yet: no digests, not an error
+  }
+  const digests: StoredDigest[] = [];
+  for (const name of names.sort()) {
+    if (!name.endsWith(".md") || name === "INDEX.md") continue;
+    const digest = await readDigest(sessionsDir, name);
+    if (digest) digests.push(digest);
+  }
+  return digests;
 }

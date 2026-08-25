@@ -179,3 +179,43 @@ describe("attribution: commits against registered ticket sessions (SPEC §5.5)",
     expect(result.rogue[0]!.sessionIds).toEqual(["sess-rogue"]);
   });
 });
+
+describe("attribution: an unregistered session inside a ticket's worktree", () => {
+  test("work is rogue when a session the registry never saw was running in that checkout", () => {
+    const result = attributeChanges(
+      scan({
+        roots: [{ dir: "/worktrees/seven", commits: [commit()], workingTree: null }],
+      }),
+      {
+        sessions: [registered()],
+        sessionDirs: new Map([["sess-rogue", "/worktrees/seven"]]),
+      },
+    );
+
+    expect(result.attributed).toEqual([]);
+    expect(result.rogue).toHaveLength(1);
+    expect(result.rogue[0]!.sessionIds).toEqual(["sess-rogue"]);
+    // The worktree's ticket is the nearest plausible parent for that work.
+    expect(result.rogue[0]!.sessionTickets).toEqual(["7"]);
+  });
+
+  test("the ticket session's OWN session running there keeps the work attributed", () => {
+    const result = attributeChanges(
+      scan({
+        roots: [{ dir: "/worktrees/seven", commits: [commit()], workingTree: null }],
+      }),
+      {
+        sessions: [registered()],
+        sessionDirs: new Map([["sess-dispatch", "/worktrees/seven"]]),
+      },
+    );
+
+    expect(result.rogue).toEqual([]);
+    expect(result.attributed).toHaveLength(1);
+  });
+
+  test("a rogue checkout with no ticket session anywhere near it has no session ticket", () => {
+    const result = attributeChanges(scan(), { sessions: [] });
+    expect(result.rogue[0]!.sessionTickets).toEqual([]);
+  });
+});
