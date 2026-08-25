@@ -53,13 +53,14 @@ describe("argus CLI", () => {
     expect(result.stderr).toContain("found 1.2.99");
   });
 
-  test("routes unfinished feature commands to explicit stubs", async () => {
-    for (const command of ["watch"]) {
-      const result = await runCli([command]);
+  test("watch rejects an unknown eye with the five valid names", async () => {
+    const result = await runCli(["watch", "cyclops", "--repo", checkout]);
 
-      expect(result.exitCode).toBe(1);
-      expect(result.stdout).toBe("");
-      expect(result.stderr).toBe(`argus ${command}: not implemented yet\n`);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("unknown eye 'cyclops'");
+    for (const eye of ["reviewer", "digest", "retro", "archiver", "honcho"]) {
+      expect(result.stderr).toContain(eye);
     }
   });
 

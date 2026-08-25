@@ -18,7 +18,6 @@ Commands:
 `;
 
 export const MINIMUM_BUN_VERSION = "1.3.12";
-const STUB_COMMANDS = new Set(["watch"]);
 
 function isVersionAtLeast(actual: string, minimum: string): boolean {
   const actualParts = actual.split("-", 1)[0]?.split(".").map(Number) ?? [];
@@ -160,9 +159,9 @@ export async function main(args: string[]): Promise<number> {
     return search(args.slice(1));
   }
 
-  if (STUB_COMMANDS.has(args[0] ?? "")) {
-    console.error(`argus ${args[0]}: not implemented yet`);
-    return 1;
+  if (args[0] === "watch") {
+    const { runWatcher } = await import("./watch.ts");
+    return runWatcher(args.slice(1));
   }
 
   if (args[0] === "install") {
