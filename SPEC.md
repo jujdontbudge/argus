@@ -405,33 +405,66 @@ Codex, makes untracked implementation edits, and drops preference statements mid
 Every feature ships with its scenario; pass/fail is asserted by the harness, never
 eyeballed.
 
-**Test agents and isolation (Johan directive, amended 2026-08-25):** live testing of
-the system — the simulation driver, sessions under test and per-ticket live drives —
-uses **Codex sol high** (`codex -c model_reasoning_effort=high`, gpt-5.6-sol) in
-isolation. Its one permitted credential touchpoint is copying `auth.json` into the
-scratch `CODEX_HOME`.
+**Test agents and isolation (Johan directive, 2026-08-24; amended 2026-08-25).** The
+governing rule is the original one, and it is defined at the **repo** level: every
+agent that runs uses the throwaway sandbox repo and scratch tabs/worktrees only,
+never the production dispatcher, live worker sessions, real `~/argus` state, or a
+non-sandbox session. No test run touches a non-sandbox session.
 
-The Claude half is run with **Claude Opus 5** (`claude --model claude-opus-5`) only
-when the caller already has a separately provisioned `CLAUDE_CODE_OAUTH_TOKEN`.
-The harness injects that token into the Claude child environment only; it never
-persists it, reads a Keychain secret, copies `~/.claude/.credentials.json`, invokes
-`claude setup-token`, or points Claude at the real config. Anthropic documents this
-token as the supported subscription-auth mechanism for scripts and CI. The existing
-interactive subscription credential has no supported read-only export operation: on
-macOS it is Keychain-backed, and copying its rotating access/refresh credential into
-a second config risks revoking the credential used by live sessions. The automation
-token must instead be provisioned separately, out of band.
+Live testing — the simulation driver, sessions under test and per-ticket live drives
+— uses **Codex sol high** (`codex -c model_reasoning_effort=high`, gpt-5.6-sol) and
+**Claude Opus 5** (`claude --model claude-opus-5`). Codex's one permitted credential
+touchpoint is copying `auth.json` into the scratch `CODEX_HOME`.
 
-As of 2026-08-25 this machine has no pre-provisioned `CLAUDE_CODE_OAUTH_TOKEN`, so
-**Codex sol high is the only live test-agent policy enforceable here**. Claude cases
-must be reported **NOT RUN**, never rounded up from fixtures or Codex results. The
-residual risk is explicit: `src/tailing/claude-code.ts` has not met a real Opus 5
-transcript, so live-only synthetic user-role content or transcript-shape drift could
-still poison provenance classification.
+The Claude half runs in **one of two modes, and the caller must name which**. They
+differ by deliberate choice, never by a forgotten argument: each has its own entry
+point and its own gate, and neither is reachable by omitting something.
 
-Every agent that does run uses the throwaway sandbox repo and scratch tabs/worktrees
-only, never the production dispatcher, live worker sessions, real `~/argus` state,
-or a non-sandbox session.
+**Hermetic mode** (`createIsolatedAgentSpawner`, gate `ARGUS_LIVE_AGENTS`) is the
+stricter option, for anyone who wants an OS-enforced boundary. It runs only when the
+caller already has a separately provisioned `CLAUDE_CODE_OAUTH_TOKEN`. The harness
+injects that token into the Claude child environment only; it never persists it,
+reads a Keychain secret, copies `~/.claude/.credentials.json`, invokes `claude
+setup-token`, or points Claude at the real config. Anthropic documents this token as
+the supported subscription-auth mechanism for scripts and CI. It **refuses** any
+`HOME` or `CLAUDE_CONFIG_DIR` under the real home, and that refusal is raised
+*before* the untokened refusal, so provisioning a token can never become the way to
+silence a real-home mistake.
+
+**Subscription mode** (`createSubscriptionAgentSpawner`, gate
+`ARGUS_LIVE_CLAUDE_SUBSCRIPTION`) spawns a normal terminal Claude session: **real
+`HOME`, so subscription auth simply works, and no token at all**, with `cwd` set to
+the throwaway sandbox repo or one of its worktrees. Its transcript lands in
+`~/.claude/projects/<sandbox-slug>/` under its own slug, touching no other project's
+transcripts. It refuses a `cwd` outside the sandbox, and it strips
+`CLAUDE_CONFIG_DIR` and all three credential variables so nothing can silently
+change which provider — or whose quota — the session runs against.
+
+**Why #41's credential hazard does not apply to subscription mode.** That risk was
+specific: a **copied** `.credentials.json` inside a scratch config is a second copy
+of a rotating credential, and letting it refresh can revoke the one Johan's live
+sessions are using. Nothing is copied here. A normal terminal session refreshes on
+**the same `~/.claude` path every one of Johan's live sessions already uses**, so
+there is no second copy and nothing to rotate out from under anyone. Copying that
+file remains forbidden in both modes.
+
+**Subscription mode's residual risk, stated plainly.** The blast radius is **not
+OS-enforced**. The session runs under the real `HOME` and can in principle read it;
+it spends Johan's own subscription quota; it appears in his session list; and it
+leaves slug directories under the real `~/.claude/projects/` that the harness
+deliberately does not clean up, because removing anything under the real home is the
+class of operation this section exists to prevent. What replaces the OS boundary is
+**scripted scope**: a sandbox `cwd`, a dispatch that asks only for benign scripted
+work with no tools, and `SandboxScope` — through which every destructive and
+harness-side operation runs, refusing by name any path outside the sandbox root
+(resolving symlinks first) and any process this harness did not itself spawn.
+Scenario 6's watcher kills adopt only watchers whose repo is the sandbox's, because
+the production dispatcher supervises the real `~/argus` on the same machine. That
+scoping is the safety property in this mode, so it is asserted directly in
+`src/harness/sandbox-scope.test.ts` rather than left as a convention.
+
+Whichever mode ran must be reported by name. Claude cases are **NOT RUN** unless a
+live drive actually executed, never rounded up from fixtures or Codex results.
 
 Core scenario suite (each maps to an eye or a provenance edge):
 

@@ -292,4 +292,37 @@ describe("claude-code parser", () => {
 
     expect(events.map((e) => e.type)).toEqual(["message"]);
   });
+
+  /**
+   * Ticket #49, found on a REAL Opus 5 transcript, not derived.
+   *
+   * Every fixture in this tree opens a session with a `user` record, which
+   * carries `cwd`. A real one does not: the first line Claude Code 2.1.246
+   * writes is a `queue-operation` with a sessionId and a timestamp and
+   * nothing else. Latching `session-meta` on THAT record emits a meta with no
+   * cwd and then suppresses the real one forever, which silently kills
+   * §7.3/#22's worktree-to-parent-repo mapping for every live Claude session
+   * — invisible to 600 green tests, because no fixture has this shape.
+   */
+  test("a real transcript's cwd-less opening records do not swallow session-meta", () => {
+    const parser = parserFor();
+
+    // Verbatim shape of line 1 of a real 2.1.246 transcript.
+    const opening = parser.parseLine(
+      JSON.stringify({
+        type: "queue-operation",
+        operation: "enqueue",
+        content: "the dispatch",
+        sessionId: "s-1",
+        timestamp: "2026-08-25T18:36:00.000Z",
+      }),
+    );
+    expect(opening.map((event) => event.type)).toEqual(["lifecycle"]);
+
+    const landed = parser.parseLine(userLine());
+
+    expect(landed).toContainEqual(
+      expect.objectContaining({ type: "session-meta", cwd: "/tmp/proj", version: "2.1.241" }),
+    );
+  });
 });

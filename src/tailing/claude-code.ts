@@ -53,15 +53,24 @@ class ClaudeCodeParser implements SourceParser {
     const sessionId = str(rec.sessionId);
     const ts = str(rec.timestamp);
 
-    if (sessionId && !this.metaSeen.has(sessionId)) {
+    // #49: emit session-meta from the first record that actually CARRIES the
+    // session's identity, not merely the first one that names it. A real
+    // Claude Code transcript opens with `queue-operation`, `atis-latch` and
+    // `last-prompt` records that have a sessionId and no `cwd` at all.
+    // Latching on those emitted a cwd-less meta and then suppressed the real
+    // one forever, which is how §7.3/#22's worktree-to-parent-repo mapping
+    // would have gone quietly missing on every live Claude session. `cwd` is
+    // the whole payload of this event, so a meta without one is not worth
+    // emitting either. Fixtures never showed it: fixtures start with `user`.
+    const cwd = str(rec.cwd);
+    if (sessionId && cwd !== undefined && !this.metaSeen.has(sessionId)) {
       this.metaSeen.add(sessionId);
-      const cwd = str(rec.cwd);
       const version = str(rec.version);
       events.push({
         type: "session-meta",
         sessionId,
         agent: "claude-code",
-        ...(cwd !== undefined && { cwd }),
+        cwd,
         ...(version !== undefined && { version }),
         ...(ts !== undefined && { ts }),
         file: this.file,
