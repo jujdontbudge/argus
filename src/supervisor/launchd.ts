@@ -59,8 +59,10 @@ export async function convergeSupervisorJob(
     }
   }
 
-  if (!loaded || reloaded) await launchctl.bootstrap(options.plistPath);
-  await launchctl.kickstart();
+  if (!loaded || reloaded) {
+    await launchctl.bootstrap(options.plistPath);
+    await launchctl.kickstart();
+  }
   return { changed, reloaded };
 }
 

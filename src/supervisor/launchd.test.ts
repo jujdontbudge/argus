@@ -74,7 +74,6 @@ describe("launchd supervisor job", () => {
       `bootstrap ${options.plistPath}`,
       "kickstart",
       "is-loaded",
-      "kickstart",
       "is-loaded",
       "bootout",
       `bootstrap ${options.plistPath}`,
