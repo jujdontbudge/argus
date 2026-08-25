@@ -414,6 +414,50 @@ if (args[0] === "label" && args[1] === "list") console.log(JSON.stringify([{ nam
     );
   });
 
+  test("idempotently converges the Claude Stop hook and Codex notify command", async () => {
+    const { env, repo, root } = await createScratchRepo();
+    const codexHome = join(root, "state", "codex");
+    await mkdir(join(repo, ".claude"), { recursive: true });
+    await mkdir(codexHome, { recursive: true });
+    await Bun.write(
+      join(repo, ".claude", "settings.local.json"),
+      JSON.stringify({
+        permissions: { allow: ["Read"] },
+        hooks: {
+          Stop: [
+            {
+              hooks: [{ type: "command", command: "./custom-stop.sh" }],
+            },
+          ],
+        },
+      }),
+    );
+    await Bun.write(join(codexHome, "config.toml"), 'model = "gpt-5.6-sol"\n');
+
+    const first = await runUp(repo, { ...env, CODEX_HOME: codexHome });
+    const second = await runUp(repo, { ...env, CODEX_HOME: codexHome });
+
+    expect(first.exitCode).toBe(0);
+    expect(second.exitCode).toBe(0);
+    const claude = await Bun.file(
+      join(repo, ".claude", "settings.local.json"),
+    ).json();
+    expect(claude.permissions).toEqual({ allow: ["Read"] });
+    expect(claude.hooks.Stop).toHaveLength(2);
+    expect(claude.hooks.Stop[0].hooks[0].command).toBe("./custom-stop.sh");
+    const argusCommands = claude.hooks.Stop.flatMap(
+      (group: { hooks?: Array<{ command?: string }> }) =>
+        group.hooks?.map(({ command }) => command ?? "") ?? [],
+    ).filter((command: string) => command.includes("ARGUS_HOOK=claude-stop"));
+    expect(argusCommands).toHaveLength(1);
+
+    const codex = await Bun.file(join(codexHome, "config.toml")).text();
+    expect(codex).toContain('model = "gpt-5.6-sol"');
+    expect(codex.match(/^notify = /gm)).toHaveLength(1);
+    expect(codex).toContain("scripts/codex-notify.ts");
+    expect(codex.match(/# argus:notify:begin/g)).toHaveLength(1);
+  });
+
   test("refuses a non-git directory without creating local or supervisor state", async () => {
     const root = await mkdtemp(join(tmpdir(), "argus-up-non-git-"));
     sandboxes.push(root);
