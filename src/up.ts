@@ -136,10 +136,19 @@ async function ensureIgnoreEntry(repo: string): Promise<void> {
   const file = Bun.file(ignorePath);
   const existing = (await file.exists()) ? await file.text() : "";
   const lines = existing.split(/\r?\n/);
-  if (lines.includes(".argus/")) return;
+  if (!lines.includes(".argus/")) {
+    const separator =
+      existing.length === 0 || existing.endsWith("\n") ? "" : "\n";
+    await Bun.write(ignorePath, `${existing}${separator}.argus/\n`);
+  }
 
-  const separator = existing.length === 0 || existing.endsWith("\n") ? "" : "\n";
-  await Bun.write(ignorePath, `${existing}${separator}.argus/\n`);
+  const committedIgnore = await run(["git", "show", "HEAD:.gitignore"], repo);
+  if (
+    committedIgnore.exitCode === 0 &&
+    committedIgnore.stdout.split(/\r?\n/).includes(".argus/")
+  ) {
+    return;
+  }
 
   const added = await run(["git", "add", "--", ".gitignore"], repo);
   if (added.exitCode !== 0) throw new Error(added.stderr.trim());

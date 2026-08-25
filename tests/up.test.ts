@@ -363,4 +363,15 @@ if (args[0] === "label" && args[1] === "list") console.log(JSON.stringify([{ nam
     expect(await Bun.file(join(root, ".argus/config.yaml")).exists()).toBe(false);
     expect(await Bun.file(supervisor).exists()).toBe(false);
   });
+
+  test("commits a pre-existing uncommitted Argus ignore entry", async () => {
+    const { env, repo } = await createScratchRepo();
+    await Bun.write(join(repo, ".gitignore"), ".argus/\n");
+
+    expect((await runUp(repo, env)).exitCode).toBe(0);
+
+    expect(
+      (await run(["git", "show", "HEAD:.gitignore"], repo, env)).stdout,
+    ).toBe(".argus/\n");
+  });
 });
