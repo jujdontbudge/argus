@@ -83,7 +83,14 @@ export class WatcherSupervisor {
           process,
           repo,
         });
-        void process.exited.then(() => this.#restartAfterExit(key, process));
+        void process.exited
+          .then(() => this.#restartAfterExit(key, process))
+          .catch((error: unknown) => {
+            console.error(
+              `argus supervisor: failed to handle ${eye} watcher exit for ${repo}`,
+              error,
+            );
+          });
       }
     }
 

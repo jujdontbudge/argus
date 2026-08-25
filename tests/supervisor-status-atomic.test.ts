@@ -93,6 +93,7 @@ describe("supervisor status writes are atomic", () => {
       expect(errorLog).toHaveBeenCalledTimes(1);
       expect(String(errorLog.mock.calls[0]?.[0])).toContain("watcher exit");
       expect(errorLog.mock.calls[0]?.[1]).toBe(backgroundFailures[0]);
+      expect(await readdir(join(root, "state"))).toEqual(["status.json"]);
 
       await rm(statusPath, { recursive: true });
       await supervisor.reconcile();
