@@ -18,7 +18,7 @@ Commands:
 `;
 
 export const MINIMUM_BUN_VERSION = "1.3.12";
-const STUB_COMMANDS = new Set(["down", "status", "watch", "search"]);
+const STUB_COMMANDS = new Set(["watch", "search"]);
 
 function isVersionAtLeast(actual: string, minimum: string): boolean {
   const actualParts = actual.split("-", 1)[0]?.split(".").map(Number) ?? [];
@@ -95,6 +95,16 @@ export async function main(args: string[]): Promise<number> {
   if (args[0] === "up") {
     const { convergeUp } = await import("./up.ts");
     return convergeUp();
+  }
+
+  if (args[0] === "down") {
+    const { down } = await import("./supervisor/commands.ts");
+    return down();
+  }
+
+  if (args[0] === "status") {
+    const { status } = await import("./supervisor/commands.ts");
+    return status();
   }
 
   if (STUB_COMMANDS.has(args[0] ?? "")) {

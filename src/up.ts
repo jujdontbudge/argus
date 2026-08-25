@@ -14,6 +14,8 @@ import {
   HttpHonchoClient,
   type HonchoClient,
 } from "./up/bindings.ts";
+import { startSupervisor } from "./supervisor/control.ts";
+import { enableRepo } from "./supervisor/registry.ts";
 
 const ARGUS_DIRECTORIES = [
   "registry",
@@ -479,12 +481,7 @@ async function ensureSupervisorEnrollment(repo: string): Promise<void> {
     process.env.ARGUS_REPOS_FILE ?? (home ? join(home, ".argus-repos") : null);
   if (!registry) throw new Error("argus up: HOME is not set");
 
-  const file = Bun.file(registry);
-  const existing = (await file.exists()) ? await file.text() : "";
-  const repos = existing.split(/\r?\n/).filter(Boolean);
-  if (repos.includes(repo)) return;
-  await mkdir(dirname(registry), { recursive: true });
-  await Bun.write(registry, `${repos.join("\n")}${repos.length > 0 ? "\n" : ""}${repo}\n`);
+  await enableRepo(registry, repo);
 }
 
 export async function convergeUp(cwd = process.cwd()): Promise<number> {
@@ -507,6 +504,7 @@ export async function convergeUp(cwd = process.cwd()): Promise<number> {
   await ensureAgentsPointer(repo);
   await ensureIgnoreEntry(repo);
   await ensureSupervisorEnrollment(repo);
+  await startSupervisor();
   await ensureTracker(repo);
 
   const home = process.env.HOME;
