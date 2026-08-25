@@ -8,6 +8,7 @@ import {
   derivedForms,
   hashText,
   SendMatcher,
+  syntheticEnvelopeTag,
   toEpochMs,
   WINDOW_AFTER_MS,
   type Timestamp,
@@ -26,6 +27,11 @@ export type Via =
   | "registry-send"
   /** An unmatched user message in a registered session: Johan attached (§5 rule 3b). */
   | "takeover"
+  /**
+   * A tag-enveloped user item in the session's OPENING run: the agent CLI's
+   * own context injection, not a prompt anybody sent (#42).
+   */
+  | "synthetic-preamble"
   /** Assistant-side output: the agent itself. */
   | "assistant"
   /** User-side transcript record that is not a real prompt (tool output, meta). */
@@ -70,7 +76,22 @@ export type ProvenanceAuditEvent =
   /** A logged non-slash send whose window passed with no landing (dead session, lost send). */
   | { type: "send-expired"; sessionId: string; sendId?: string; text: string; at: number }
   /** A registered dispatch prompt that has not landed within the window. */
-  | { type: "dispatch-expired"; sessionId: string; at: number; sessionSeen: boolean };
+  | { type: "dispatch-expired"; sessionId: string; at: number; sessionSeen: boolean }
+  /**
+   * A user-role item shaped like an agent CLI's context injection (#42). Loud
+   * in BOTH directions, because both are §13.4 breaches: `system` means the
+   * opening-run rule kept it out of USER.md and Johan should confirm it was
+   * never his; `johan` means it landed mid-session and stayed his, which is
+   * the `<recommended_plugins>` failure asking to be recognised by name.
+   */
+  | {
+      type: "synthetic-preamble-suspect";
+      sessionId: string;
+      ts: string;
+      tag: string;
+      text: string;
+      classifiedAs: "system" | "johan";
+    };
 
 export interface ClassifyOutput {
   /** Null for events that carry no message (session-meta, lifecycle). */
@@ -105,6 +126,13 @@ interface SessionState {
   seen: boolean;
   /** The dispatch-expired audit fires once per session. */
   dispatchAudited: boolean;
+  /**
+   * True until the session's opening run of injected context is over — that
+   * is, until the agent speaks or a real prompt lands. Agent CLIs write their
+   * preamble items first; a person cannot have taken over a session before
+   * anything was ever sent into it.
+   */
+  preambleWindow: boolean;
 }
 
 /** Everything provenance surfaces loudly: registry file problems + classifier audits. */
@@ -146,6 +174,7 @@ export class ProvenanceClassifier {
         unregisteredSendAudited: false,
         seen: false,
         dispatchAudited: false,
+        preambleWindow: true,
       };
       this.sessions.set(sessionId, state);
     }
@@ -277,6 +306,7 @@ export class ProvenanceClassifier {
       event,
     };
     if (event.role === "assistant") {
+      state.preambleWindow = false; // the agent has spoken: the preamble is behind us
       return { record: { ...base, author: "agent", via: "assistant" }, audits: [] };
     }
     if (!event.candidate) {
@@ -285,6 +315,7 @@ export class ProvenanceClassifier {
     const hash = hashText(event.text);
     if (state.dispatchHashes?.has(hash)) {
       state.dispatchHashes = null; // consumed: one deployment, one dispatch landing
+      state.preambleWindow = false;
       return {
         record: { ...base, author: "hermes", via: "dispatch-prompt" },
         audits: [],
@@ -294,8 +325,31 @@ export class ProvenanceClassifier {
     // is missing (audited at recordSend) — a matched landing is never Johan.
     const match = state.matcher.classify({ text: event.text, ts: event.ts });
     if (match.author === "hermes") {
+      state.preambleWindow = false;
       return { record: { ...base, author: "hermes", via: "registry-send" }, audits: [] };
     }
+    // #42: the structural half of the synthetic-preamble filter. Two
+    // independent signals have to agree before anything is taken off Johan:
+    // the SHAPE is an agent CLI's context envelope, and the POSITION is the
+    // session's opening run, where no prompt has landed and no agent has
+    // spoken. A growing list of tag names cannot keep up with the CLIs; this
+    // does not have to. Over-filtering here would make Argus deaf to Johan,
+    // so the drop is audited too — neither direction is silent.
+    const envelopeTag = syntheticEnvelopeTag(event.text);
+    if (envelopeTag !== null && state.preambleWindow) {
+      return {
+        record: { ...base, author: "system", via: "synthetic-preamble" },
+        audits: [{
+          type: "synthetic-preamble-suspect",
+          sessionId: event.sessionId,
+          ts: event.ts,
+          tag: envelopeTag,
+          text: event.text,
+          classifiedAs: "system",
+        }],
+      };
+    }
+    state.preambleWindow = false;
     const audits: ProvenanceAuditEvent[] = [];
     if (match.encodingBugSuspect) {
       const sendId = match.encodingBugSuspect.id;
@@ -305,6 +359,18 @@ export class ProvenanceClassifier {
         ...(sendId !== undefined && { sendId }),
         ts: event.ts,
         text: event.text,
+      });
+    }
+    if (envelopeTag !== null) {
+      // Shaped like an injection but past the opening run, so it stays Johan's
+      // — and says so loudly, naming the tag to add if it was never his.
+      audits.push({
+        type: "synthetic-preamble-suspect",
+        sessionId: event.sessionId,
+        ts: event.ts,
+        tag: envelopeTag,
+        text: event.text,
+        classifiedAs: "johan",
       });
     }
     if (!registration) {
