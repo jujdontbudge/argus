@@ -118,6 +118,12 @@ describe("codexCandidateText", () => {
       "<user_instructions>be nice</user_instructions>",
       "<environment_context>cwd=/x</environment_context>",
       "<ide_context>open file</ide_context>",
+      // codex-cli 0.149.1 injects this one into every rollout. Observed live
+      // in ticket #36's acceptance run: without it the plugin catalogue
+      // classifies as a Johan TAKEOVER, lands in USER.md and marks every
+      // Codex session johan_touched — the §13.4 invariant, breached by the
+      // agent's own preamble rather than by Hermes.
+      "<recommended_plugins>\nHere is a list of plugins that are available but not installed.",
     ]) {
       expect(
         codexCandidateText({

@@ -1,0 +1,277 @@
+==============================================================================
+ARGUS LIVE COMMAND SWEEP — ticket #36
+==============================================================================
+checkout        /Users/johansardar/argus-worktrees/acceptance
+sandbox root    /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC
+sandbox repo    /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC
+scratch HOME    /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/home
+scratch registry /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/argus-repos
+scratch CLAUDE  /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/claude
+scratch HERMES  /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/hermes
+scratch CODEX   /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/codex
+scratch cmux    /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/cmux/cmux.sock
+
+------------------------------------------------------------------------------
+1. argus --help
+------------------------------------------------------------------------------
+
+$ argus --help      # help
+  exit 0
+  out| Argus — orchestration and self-learning toolkit
+  out| Usage: argus <command>
+  out| Commands:
+  out|   up       converge and start this repo's eyes
+  out|   down     stop this repo's eyes
+  out|   status   inspect this repo's eyes
+  out|   watch    run one eye
+  out|   search   search the transcript archive
+  out|   install  install argus from this checkout
+
+------------------------------------------------------------------------------
+2. argus up  (first run — performed by the harness sandbox factory)
+------------------------------------------------------------------------------
+
+$ argus up      # up #1 (fresh repo)
+  exit 0
+  out| Hermes profile: argus-scratch-argus-harness-tgwktc
+  out| Push hooks: Claude Stop + Codex notify
+  out| cmux hooks: pending #7 (soft check)
+  out| Argus converged /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC
+  err| TRACKER-LESS MODE: no GitHub remote; skipped GitHub labels and tracker checks
+  err| HONCHO DEGRADED: http://localhost:8000 unavailable (HONCHO_API_KEY and ~/.honcho/config.json apiKey are both missing); local bindings converged
+
+------------------------------------------------------------------------------
+3. argus up  (second run — idempotency)
+------------------------------------------------------------------------------
+
+$ argus up      # up #2 (idempotent)
+  exit 0
+  out| Hermes profile: argus-scratch-argus-harness-tgwktc
+  out| Push hooks: Claude Stop + Codex notify
+  out| cmux hooks: pending #7 (soft check)
+  out| Argus converged /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC
+  err| TRACKER-LESS MODE: no GitHub remote; skipped GitHub labels and tracker checks
+  err| HONCHO DEGRADED: http://localhost:8000 unavailable (HONCHO_API_KEY and ~/.honcho/config.json apiKey are both missing); local bindings converged
+
+  IDEMPOTENCY CHECKS
+  .argus/ tree byte-identical across the two ups .. YES
+  AGENTS.md byte-identical ....................... YES
+  ~/.argus-repos byte-identical (no dupe rows) ... YES
+  .claude/settings.local.json byte-identical ..... YES
+  $CODEX_HOME/config.toml byte-identical ......... YES
+  registry rows: "/private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC\n"
+
+------------------------------------------------------------------------------
+4. argus up  (from a nested subdirectory — repo-root resolution)
+------------------------------------------------------------------------------
+
+$ argus up      # up from subdir
+  exit 0
+  out| Hermes profile: argus-scratch-argus-harness-tgwktc
+  out| Push hooks: Claude Stop + Codex notify
+  out| cmux hooks: pending #7 (soft check)
+  out| Argus converged /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC
+  err| TRACKER-LESS MODE: no GitHub remote; skipped GitHub labels and tracker checks
+  err| HONCHO DEGRADED: http://localhost:8000 unavailable (HONCHO_API_KEY and ~/.honcho/config.json apiKey are both missing); local bindings converged
+
+------------------------------------------------------------------------------
+5. argus status
+------------------------------------------------------------------------------
+
+$ argus status      # status (repo enrolled)
+  exit 0
+  out| REPO                                                                                                        EYE       STATE    PID
+  out| /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC  reviewer  stopped  -
+  out| /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC  archiver  stopped  -
+  out| /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC  honcho    stopped  -
+  out| /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC  digest    stopped  -
+  out| /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC  retro     stopped  -
+
+------------------------------------------------------------------------------
+6. argus search  (against seeded archive content)
+------------------------------------------------------------------------------
+
+$ argus search torn      # search with no archive
+  exit 1
+  err| argus search: no archive exists for /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC
+  archived 2/2 messages into .argus/archive.db
+
+  seeded 45056 bytes of .argus/archive.db
+
+$ argus search torn status read      # search hit
+  exit 0
+  out| 2026-08-25T09:00:00.000Z  session=acceptance-sweep-session  agent=claude  role=user  provenance=hermes  ticket=#36
+  out|   How did we solve the torn status read?
+  out| 2026-08-25T09:00:05.000Z  session=acceptance-sweep-session  agent=claude  role=assistant  provenance=agent  ticket=#36
+  out|   We solved the torn status read by writing supervisor status temp-then-rename.
+
+$ argus search temp-then-rename      # search from a subdir
+  exit 0
+  out| 2026-08-25T09:00:05.000Z  session=acceptance-sweep-session  agent=claude  role=assistant  provenance=agent  ticket=#36
+  out|   We solved the torn status read by writing supervisor status temp-then-rename.
+
+$ argus search zzz-nothing-matches-this      # search miss
+  exit 0
+  out| No archived messages matched "zzz-nothing-matches-this".
+
+$ argus search      # search with no query
+  exit 1
+  err| Usage: argus search "<query>"
+
+------------------------------------------------------------------------------
+7. argus watch <eye>  — for each of the five eyes
+------------------------------------------------------------------------------
+
+$ argus watch reviewer --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC      # watch reviewer
+  exit 1
+  err| argus watch: not implemented yet
+
+$ argus watch archiver --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC      # watch archiver
+  exit 1
+  err| argus watch: not implemented yet
+
+$ argus watch honcho --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC      # watch honcho
+  exit 1
+  err| argus watch: not implemented yet
+
+$ argus watch digest --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC      # watch digest
+  exit 1
+  err| argus watch: not implemented yet
+
+$ argus watch retro --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC      # watch retro
+  exit 1
+  err| argus watch: not implemented yet
+
+------------------------------------------------------------------------------
+7b. the REAL supervisor daemon spawning those same `argus watch` children
+------------------------------------------------------------------------------
+  (this is exactly what `runSupervisorDaemon` does in production:
+   createWatcherSpawner([bunPath, cliPath]) -> `argus watch <eye> --repo <repo>`)
+
+  after 3s of real supervision of 5 eyes:
+    distinct watcher PIDs spawned .. 272
+    verdict ........................ RESTART LOOP — every `argus watch` child exits 1 immediately
+    supervisor's own failures ...... 214
+    of which ENOENT on status.tmp .. 214  <-- #writeStatus renames a FIXED temp path; concurrent writers collide
+    e.g. Error: ENOENT: no such file or directory, rename '/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/live-sweep-supervisor.json.tmp' -> '/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/live-sweep-supervisor.json'
+
+------------------------------------------------------------------------------
+8. argus down, then argus status
+------------------------------------------------------------------------------
+121 |     // by `argus status` whenever a human asks — so it is written temp-then-
+122 |     // rename like every other polled surface in Argus. A plain write truncates
+123 |     // first, and a reader that lands in that window gets a torn file.
+124 |     const temporary = `${this.#options.statusPath}.tmp`;
+125 |     await Bun.write(temporary, `${JSON.stringify(status, null, 2)}\n`);
+126 |     await rename(temporary, this.#options.statusPath);
+                ^
+ENOENT: no such file or directory, rename '/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/live-sweep-supervisor.json.tmp' -> '/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/live-sweep-supervisor.json'
+    path: "/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/live-sweep-supervisor.json.tmp",
+    dest: "/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/live-sweep-supervisor.json",
+ syscall: "rename",
+   errno: -2,
+    code: "ENOENT"
+
+      at async #writeStatus (/Users/johansardar/argus-worktrees/acceptance/src/supervisor/runtime.ts:126:11)
+      at async reconcile (/Users/johansardar/argus-worktrees/acceptance/src/supervisor/runtime.ts:89:16)
+      at async #restartAfterExit (/Users/johansardar/argus-worktrees/acceptance/src/supervisor/runtime.ts:137:16)
+
+$ argus down      # down
+  exit 0
+  out| Argus stopped /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC
+  out| Supervisor unloaded (no enabled repos)
+  registry after down: ""
+121 |     // by `argus status` whenever a human asks — so it is written temp-then-
+122 |     // rename like every other polled surface in Argus. A plain write truncates
+123 |     // first, and a reader that lands in that window gets a torn file.
+124 |     const temporary = `${this.#options.statusPath}.tmp`;
+125 |     await Bun.write(temporary, `${JSON.stringify(status, null, 2)}\n`);
+126 |     await rename(temporary, this.#options.statusPath);
+                ^
+ENOENT: no such file or directory, rename '/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/live-sweep-supervisor.json.tmp' -> '/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/live-sweep-supervisor.json'
+    path: "/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/live-sweep-supervisor.json.tmp",
+    dest: "/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/live-sweep-supervisor.json",
+ syscall: "rename",
+   errno: -2,
+    code: "ENOENT"
+
+      at async #writeStatus (/Users/johansardar/argus-worktrees/acceptance/src/supervisor/runtime.ts:126:11)
+      at async #restartAfterExit (/Users/johansardar/argus-worktrees/acceptance/src/supervisor/runtime.ts:135:16)
+
+$ argus status      # status (after down)
+  exit 0
+  out| REPO  EYE  STATE  PID
+
+------------------------------------------------------------------------------
+9. clone-is-install bootstrap
+------------------------------------------------------------------------------
+
+$ argus install      # install (fresh scratch HOME)
+  exit 0
+  out| Installed argus at /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/install-home/.local/bin/argus
+  /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/install-home/.local/bin/argus -> /Users/johansardar/argus-worktrees/acceptance/src/cli.ts
+
+$ argus install      # install (second run — idempotent)
+  exit 0
+  out| Argus is already installed at /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/install-home/.local/bin/argus
+
+$ /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/install-home/.local/bin/argus --help      # the installed launcher actually runs
+  exit 0
+  out| Argus — orchestration and self-learning toolkit
+  out| Usage: argus <command>
+  out| Commands:
+  out|   up       converge and start this repo's eyes
+  out|   down     stop this repo's eyes
+  out|   status   inspect this repo's eyes
+  out|   watch    run one eye
+  out|   search   search the transcript archive
+  out|   install  install argus from this checkout
+
+$ argus install      # from a non-checkout copy (must refuse)
+  exit 1
+  err| argus install must run from a git checkout of Argus
+
+------------------------------------------------------------------------------
+10. argus <unknown>
+------------------------------------------------------------------------------
+
+$ argus nope      # unknown command
+  exit 1
+  err| argus: unknown command 'nope'
+
+------------------------------------------------------------------------------
+11. argus up outside a git repository
+------------------------------------------------------------------------------
+
+$ argus up      # up outside git
+  exit 1
+  err| argus up: current directory is not inside a git repository
+
+==============================================================================
+SWEEP SUMMARY
+==============================================================================
+  exit   0  argus --help
+  exit   0  argus up
+  exit   0  argus up
+  exit   0  argus up
+  exit   0  argus status
+  exit   1  argus search torn
+  exit   0  argus search torn status read
+  exit   0  argus search temp-then-rename
+  exit   0  argus search zzz-nothing-matches-this
+  exit   1  argus search
+  exit   1  argus watch reviewer --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC
+  exit   1  argus watch archiver --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC
+  exit   1  argus watch honcho --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC
+  exit   1  argus watch digest --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC
+  exit   1  argus watch retro --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC
+  exit   0  argus down
+  exit   0  argus status
+  exit   0  argus install
+  exit   0  argus install
+  exit   1  argus nope
+  exit   1  argus up
+
+sandbox torn down.
+
+Bun v1.3.12 (macOS arm64)

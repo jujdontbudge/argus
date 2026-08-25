@@ -1,0 +1,74 @@
+==============================================================================
+ARGUS LIVE TEST-AGENT DRIVE — ticket #36
+==============================================================================
+sandbox repo   /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-pk4Wg1/scratch-argus-harness-pk4Wg1
+scratch CODEX_HOME /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-pk4Wg1/state/codex-live
+argus up exit  0
+codex CLI      codex-cli 0.149.1
+retro eye     primed (live brain, cursor anchored on repo history)
+
+------------------------------------------------------------------------------
+1. deploy a REAL Codex sol high session (the dispatch prompt)
+------------------------------------------------------------------------------
+  exit 0
+  out| Created [NOTES.md](/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-pk4Wg1/worktrees/live-ticket/NOTES.md) with exactly the requested line.
+  out| 
+
+  rollout      /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-pk4Wg1/state/codex-live/sessions/2026/08/25/rollout-2026-08-25T13-27-58-01a03a2d-d963-7230-bcd6-7eb806df0698.jsonl
+  session id   01a03a2d-d963-7230-bcd6-7eb806df0698
+
+------------------------------------------------------------------------------
+2. a registry-LOGGED Hermes nudge into the live session
+------------------------------------------------------------------------------
+  exit 0  (logged to sends.jsonl BEFORE typing)
+
+------------------------------------------------------------------------------
+3. an UNLOGGED fake-Johan takeover typed into the same session
+------------------------------------------------------------------------------
+  exit 0  (NOT logged — this is Johan typing)
+
+------------------------------------------------------------------------------
+4. a ROGUE unregistered Codex session that commits real work
+------------------------------------------------------------------------------
+  exit 0  (no sessions.jsonl row — unregistered)
+  rogue session id 01a03a2e-987f-76b3-938f-20df103b18f7
+
+------------------------------------------------------------------------------
+5. what Argus reads back from the transcripts the model wrote
+------------------------------------------------------------------------------
+  tailed 16 events (14 messages, 2 session-metas) from 2 live rollouts
+
+  PASS  the live dispatch prompt is in the normalized stream
+  PASS  the logged Hermes nudge is in the normalized stream
+  PASS  the unlogged fake-Johan directive is in the normalized stream
+  PASS  the live model's own assistant turns are in the normalized stream
+  session-meta 01a03a2d cwd=/private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-pk4Wg1/worktrees/live-ticket repo=/private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-pk4Wg1/scratch-argus-harness-pk4Wg1
+  session-meta 01a03a2e cwd=/private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-pk4Wg1/worktrees/live-rogue repo=/private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-pk4Wg1/scratch-argus-harness-pk4Wg1
+  PASS  the live session's worktree cwd maps to the parent sandbox repo (SPEC §7.3)
+
+  PASS  §13.4 — the live dispatch prompt classifies Hermes-authored
+  PASS  §13.4 — the logged nudge classifies Hermes-authored (USER.md stays clean)
+  johan-authored: via=takeover text="stop — ship the auth fix first, then come back. I prefer bun over npm "
+  PASS  §13.2 — the unlogged directive is the ONLY Johan-authored message, via takeover
+  PASS  §13.2 — johan_touched is set on the record and on the session
+  PASS  §13.5 — the attach surfaces as a loud johan-attached audit, never silence
+
+  git scan: 3 roots, rogue=3, attributed=0
+    ROGUE 4c2c6e5d harness sandbox
+    ROGUE fafbec07 chore: ignore Argus state
+    ROGUE 6b2dbf3c feat: document the rate limiter
+  PASS  §13.3 — the live rogue commit is unattributable and becomes retro signal
+  PASS  §13.3 — the registered ticket session's own worktree files no retro
+
+  the REAL Retro eye over the same live work:
+  retro audit {"type":"tracker-less","signalId":"retro-369a6f8812e3e4c1","title":"Retro: Documented rate limiter","where":"/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-pk4Wg1/scratch-argus-harness-pk4Wg1/.argus/eyes/retro/unfiled/retro-369a6f8812e3e4c1.md"}
+    digest-note  "Retro: Documented rate limiter"  parent=none rule=root-level reason=tracker-less mode: no GitHub tracker for this repo
+  PASS  §13.3 — the primed eye files exactly one retro (repo history is not accused)
+  PASS  §13.3 — the retro the LIVE brain wrote names the rogue work
+  PASS  §13.3 — tracker-less sandbox degrades LOUDLY to a digest note, never silence
+  PASS  §13.3 — a second sweep re-files nothing
+
+==============================================================================
+LIVE AGENT DRIVE: 16/16 checks passed
+==============================================================================
+EXIT=0
