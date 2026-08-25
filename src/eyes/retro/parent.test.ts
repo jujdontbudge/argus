@@ -67,6 +67,41 @@ describe("nearest plausible parent (SPEC §5.5)", () => {
     expect(resolved).toEqual({ parent: "7", rule: "session-ticket" });
   });
 
+  /**
+   * #42 item 4. The live-brain flake that cost three tickets a re-run was the
+   * model answering "15" where a test wanted "#15" — and the SAME assumption
+   * is load-bearing here. `parentTicket` is free-form model output; when it
+   * comes back punctuated, an exact compare drops a parent Argus HAS and files
+   * the retro at root level, silently. The judgment is which ticket, never how
+   * the model wrote the number.
+   */
+  test("the brain's pick is matched by ticket NUMBER, not by punctuation", () => {
+    for (const brainChoice of ["#16", " 16 ", "#16 "]) {
+      expect(
+        resolveParent({
+          sessionTickets: [],
+          referencedTickets: [],
+          brainChoice,
+          candidates: [candidate("15"), candidate("16")],
+        }),
+      ).toEqual({ parent: "16", rule: "brain-choice" });
+    }
+  });
+
+  test("normalizing the pick does not let the brain invent one", () => {
+    // Still the §5.5 rule: a model may not name a number that does not exist.
+    for (const brainChoice of ["#999", "issue 15", "15 or 16", "fifteen", "#"]) {
+      expect(
+        resolveParent({
+          sessionTickets: [],
+          referencedTickets: [],
+          brainChoice,
+          candidates: [candidate("15")],
+        }),
+      ).toEqual({ parent: null, rule: "root-level" });
+    }
+  });
+
   test("the retro never parents itself onto another retro ticket", () => {
     const retro: TrackerIssue = {
       number: "88",

@@ -89,7 +89,14 @@ describe.skipIf(!codexAvailable)("live luna brain (retro integration)", () => {
         expect(implemented!.what.length).toBeGreaterThan(0);
         // The eye validates the parent anyway; this asserts the model can
         // pick from the list rather than inventing a number.
-        expect([null, "15", "22"]).toContain(implemented!.parentTicket);
+        //
+        // The JUDGMENT is which ticket — never how the model punctuated it.
+        // The same right answer has come back as `15` and as `#15` across
+        // runs, and pinning one spelling has cost three tickets a re-run
+        // (#35, #36, #38). Normalized exactly as production does it, in
+        // ./parent.ts, so this test and the eye agree about what a pick is.
+        const picked = implemented!.parentTicket?.trim().replace(/^#\s*/, "") ?? null;
+        expect([null, "15", "22"]).toContain(picked);
 
         const planning = verdict!.retros.find(
           (retro) => retro.signalId === "retro-live-planning",
