@@ -115,3 +115,15 @@ test("the watcher stability probe runs its short real-process mode", async () =>
   expect(report.distinctPids).toBe(report.expectedEyes);
   expect(Object.values(report.pidsByEye).every((count) => count === 1)).toBe(true);
 }, 10_000);
+
+test("the scenario evidence reporter executes one composed scratch slot", async () => {
+  const result = await runAcceptanceScript("scenario-evidence.ts");
+
+  expect({ stderr: result.stderr, timedOut: result.timedOut }).toEqual({
+    stderr: "",
+    timedOut: false,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout).toContain("ARGUS §13 SCENARIO EVIDENCE SMOKE");
+  expect(result.stdout).toContain("10. Blast-radius zero  ->  PASSED");
+}, 10_000);

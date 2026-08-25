@@ -20,9 +20,26 @@ import { runScenarios } from "../../src/harness/index.ts";
 const checkout = new URL("../../", import.meta.url).pathname.replace(/\/$/, "");
 const registry = createFullScenarioRegistry();
 const reportDirectory = await mkdtemp(join(tmpdir(), "argus-evidence-"));
+const smoke = Bun.env.ARGUS_ACCEPTANCE_SMOKE === "1";
+const slots = registry.list();
+const selectedSlots = smoke
+  ? slots.filter(({ number }) => number === 10)
+  : slots;
+if (
+  selectedSlots.length === 0 ||
+  selectedSlots.some(({ number, status }) =>
+    status !== "implemented" || registry.get(number) === undefined
+  )
+) {
+  throw new Error("the selected evidence scenario is not implemented");
+}
 
 console.log("=".repeat(78));
-console.log("ARGUS §13 SCENARIO EVIDENCE — ticket #45 re-acceptance");
+console.log(
+  smoke
+    ? "ARGUS §13 SCENARIO EVIDENCE SMOKE"
+    : "ARGUS §13 SCENARIO EVIDENCE — ticket #45 re-acceptance",
+);
 console.log("=".repeat(78));
 console.log(`checkout ${checkout}`);
 console.log("");
@@ -32,7 +49,7 @@ try {
   const reports = await runScenarios({
     checkout,
     reportDirectory,
-    scenarios: registry.list().map(({ number, title }) => ({
+    scenarios: selectedSlots.map(({ number, title }) => ({
       name: `${number}. ${title}`,
       scenario: registry.get(number)!,
     })),
