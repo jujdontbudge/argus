@@ -171,9 +171,11 @@ The registry (`.argus/registry/`) is the single source of provenance truth:
 ### 5.1 Reviewer (evaluative; the self-improvement loop)
 
 Runs after every turn — invocations are debounced/coalesced, but every turn's
-content is seen; no turn is skipped. Brain: `codex exec`, small model, low reasoning effort, on
-the ChatGPT subscription. Decides whether anything durable happened, with two possible
-destinations (memory-vs-skills split — one watcher, two outputs):
+content is seen; no turn is skipped. Brain: `codex exec`, small model, low reasoning
+effort, on the ChatGPT subscription ([ADR-0002](docs/adr/0002-watcher-brain-defaults.md)
+records the watcher-brain defaults and cadence). Decides whether anything durable
+happened, with two possible destinations (memory-vs-skills split — one watcher, two
+outputs):
 
 - **A fact** →
   - `USER.md`: **only** from registry-verified Johan-authored messages, in any
@@ -351,7 +353,8 @@ knowledge beyond the list of enabled repos. This is the single exception to
 
 ## 10. CLI
 
-`argus` (installed from this repo):
+`argus` (installed from this repo; implementation and packaging rationale:
+[ADR-0001](docs/adr/0001-implementation-stack-bun-typescript.md)):
 
 - `argus up` — idempotently scaffold `.argus/` in the current repo, gitignore it,
   create the repo's Honcho workspace, migrate any existing Claude Code built-in
