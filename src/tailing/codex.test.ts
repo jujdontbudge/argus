@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -366,6 +373,143 @@ describe("Codex rollout source", () => {
       expect(events.find((event) => event.type === "message")).toMatchObject({
         candidate: false,
         text: "era 0.140 subagent",
+      });
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  test("tails zstd rollouts and resumes from the same logical cursor after swap-back", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-codex-source-"));
+    try {
+      const repo = join(root, "repo");
+      await initializeRepo(repo);
+      const codexHome = join(root, "codex");
+      const rolloutDir = join(codexHome, "sessions/2026/08/20");
+      await mkdir(rolloutDir, { recursive: true });
+      const plain = join(
+        rolloutDir,
+        "rollout-2026-08-20T10-00-00-00000000-0000-0000-0000-000000000149.jsonl",
+      );
+      const compressed = `${plain}.zst`;
+      const fixture = (await Bun.file(join(fixtureRoot, "era-0.149.jsonl")).text())
+        .replaceAll("__CWD__", repo);
+      await writeFile(
+        compressed,
+        new Uint8Array(await Bun.zstdCompress(new TextEncoder().encode(fixture))),
+      );
+      const source = createCodexSource({ codexHome });
+      const tailer = new Tailer(source);
+
+      const compressedEvents = await tailer.catchUp();
+      expect(
+        compressedEvents.filter((event) => event.type === "message").map((event) => event.text),
+      ).toEqual(["era 0.149"]);
+
+      const appended = `${JSON.stringify({
+        timestamp: "2026-08-20T10:01:00.000Z",
+        ordinal: 3,
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "after swap-back" }],
+        },
+      })}\n`;
+      await rm(compressed);
+      await writeFile(plain, fixture + appended);
+
+      const resumedEvents = await tailer.catchUp();
+      expect(resumedEvents).toEqual([
+        {
+          type: "message",
+          sessionId: "00000000-0000-0000-0000-000000000149",
+          role: "user",
+          text: "after swap-back",
+          ts: "2026-08-20T10:01:00.000Z",
+          candidate: true,
+          file: plain,
+        },
+      ]);
+      expect(Object.keys(tailer.cursors())).toEqual([
+        "rollout-2026-08-20T10-00-00-00000000-0000-0000-0000-000000000149.jsonl",
+      ]);
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  test("treats a move into archived_sessions as the same already-tailed rollout", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-codex-source-"));
+    try {
+      const repo = join(root, "repo");
+      await initializeRepo(repo);
+      const codexHome = join(root, "codex");
+      const sessionDir = join(codexHome, "sessions/2025/09/20");
+      const archiveDir = join(codexHome, "archived_sessions");
+      await Promise.all([
+        mkdir(sessionDir, { recursive: true }),
+        mkdir(archiveDir, { recursive: true }),
+      ]);
+      const name =
+        "rollout-2025-09-20T10-00-00-00000000-0000-0000-0000-000000000039.jsonl";
+      const active = join(sessionDir, name);
+      const archived = join(archiveDir, name);
+      const fixture = (await Bun.file(join(fixtureRoot, "era-0.39.jsonl")).text())
+        .replaceAll("__CWD__", repo);
+      await writeFile(active, fixture);
+      const source = createCodexSource({ codexHome });
+      const tailer = new Tailer(source);
+      expect((await tailer.catchUp()).some((event) => event.type === "message")).toBe(true);
+
+      await rename(active, archived);
+
+      expect(await source.listFiles()).toEqual([archived]);
+      expect(await tailer.catchUp()).toEqual([]);
+      expect(Object.keys(tailer.cursors())).toEqual([name]);
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  test("reopens an in-place paginated-history rewrite when the inode changes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-codex-source-"));
+    try {
+      const repo = join(root, "repo");
+      await initializeRepo(repo);
+      const codexHome = join(root, "codex");
+      const rolloutDir = join(codexHome, "sessions/2026/08/19");
+      await mkdir(rolloutDir, { recursive: true });
+      const rollout = join(
+        rolloutDir,
+        "rollout-2026-08-19T10-00-00-44444444-4444-4444-4444-444444444444.jsonl",
+      );
+      const before = (await Bun.file(
+        join(fixtureRoot, "edge-rewrite-before.jsonl"),
+      ).text()).replaceAll("__CWD__", repo);
+      const after = (await Bun.file(
+        join(fixtureRoot, "edge-rewrite-after.jsonl"),
+      ).text()).replaceAll("__CWD__", repo);
+      await writeFile(rollout, before);
+      const tailer = new Tailer(createCodexSource({ codexHome }));
+      await tailer.catchUp();
+
+      const replacement = join(rolloutDir, "replacement.tmp");
+      await writeFile(replacement, after);
+      await rename(replacement, rollout);
+      const events = await tailer.catchUp();
+
+      expect(events[0]).toEqual({
+        type: "lifecycle",
+        kind: "file-truncated",
+        file: rollout,
+      });
+      expect(events.find((event) => event.type === "session-meta")).toMatchObject({
+        sessionId: "44444444-4444-4444-4444-444444444444",
+        version: "0.149.0",
+      });
+      expect(events.find((event) => event.type === "message")).toMatchObject({
+        text: "same semantic history",
       });
     } finally {
       await rm(root, { force: true, recursive: true });

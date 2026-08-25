@@ -7,6 +7,8 @@
  * what makes cursor-based backfill lossless and fixture replay byte-stable.
  */
 
+import type { ReadResult } from "./line-reader";
+
 /** A user- or assistant-authored message as recorded in a transcript. */
 export interface MessageEvent {
   type: "message";
@@ -75,6 +77,10 @@ export interface TranscriptSource {
   watchPaths(): string[];
   /** Current transcript files to tail (absolute paths). */
   listFiles(): Promise<string[]>;
+  /** Stable logical identity when a rollout can move or change suffix. */
+  fileKey?(file: string): string;
+  /** Source-specific reader for compressed or otherwise non-plain files. */
+  readNewLines?(file: string, offset: number): Promise<ReadResult>;
   /** A fresh parser for one file; the tailer feeds it complete lines in order. */
   createParser(file: string): SourceParser;
 }

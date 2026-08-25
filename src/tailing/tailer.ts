@@ -44,23 +44,26 @@ export class Tailer {
     const events: TailEvent[] = [];
     const files = [...(await this.source.listFiles())].sort();
     for (const file of files) {
-      const result = await readNewLines(file, this.offsets.get(file) ?? 0);
+      const key = this.source.fileKey?.(file) ?? file;
+      const result = this.source.readNewLines
+        ? await this.source.readNewLines(file, this.offsets.get(key) ?? 0)
+        : await readNewLines(file, this.offsets.get(key) ?? 0);
       if (result.truncated) {
         // Rotation: a new file now lives at this path — parser state resets.
-        this.parsers.delete(file);
+        this.parsers.delete(key);
         events.push({ type: "lifecycle", kind: "file-truncated", file });
       }
       if (result.lines.length > 0) {
-        let parser = this.parsers.get(file);
+        let parser = this.parsers.get(key);
         if (!parser) {
           parser = this.source.createParser(file);
-          this.parsers.set(file, parser);
+          this.parsers.set(key, parser);
         }
         for (const line of result.lines) {
           events.push(...parser.parseLine(line));
         }
       }
-      this.offsets.set(file, result.offset);
+      this.offsets.set(key, result.offset);
     }
     return events;
   }

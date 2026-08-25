@@ -2,15 +2,17 @@ import {
   lstatSync,
   readFileSync,
   realpathSync,
+  statSync,
 } from "node:fs";
 import { readdir } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import {
   codexCandidateText,
   isCodexSubagentThread,
 } from "../matching/candidates";
 import type { SourceParser, TailEvent, TranscriptSource } from "./events";
+import type { ReadResult } from "./line-reader";
 
 export interface CodexSourceOptions {
   /** Isolated Codex state root. Production passes `~/.codex`. */
@@ -262,6 +264,58 @@ class CodexParser implements SourceParser {
   }
 }
 
+function logicalRolloutName(file: string): string {
+  return basename(file).replace(/\.zst$/, "");
+}
+
+class CodexLineReader {
+  private readonly identities = new Map<
+    string,
+    { device: number; inode: number; path: string }
+  >();
+
+  async read(file: string, originalOffset: number): Promise<ReadResult> {
+    let stat;
+    let stored: Buffer;
+    try {
+      stat = statSync(file);
+      stored = readFileSync(file);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return { lines: [], offset: originalOffset, truncated: false };
+      }
+      throw error;
+    }
+    const content = file.endsWith(".jsonl.zst")
+      ? Buffer.from(await Bun.zstdDecompress(stored))
+      : stored;
+    const key = logicalRolloutName(file);
+    const previous = this.identities.get(key);
+    const replacedAtSamePath =
+      previous !== undefined &&
+      previous.path === file &&
+      (previous.device !== stat.dev || previous.inode !== stat.ino);
+    let offset = originalOffset;
+    const truncated = replacedAtSamePath || content.length < offset;
+    if (truncated) offset = 0;
+    this.identities.set(key, {
+      device: stat.dev,
+      inode: stat.ino,
+      path: file,
+    });
+
+    if (content.length <= offset) return { lines: [], offset, truncated };
+    const unread = content.subarray(offset);
+    const lastNewline = unread.lastIndexOf(0x0a);
+    if (lastNewline === -1) return { lines: [], offset, truncated };
+    return {
+      lines: unread.toString("utf8", 0, lastNewline + 1).split("\n").slice(0, -1),
+      offset: offset + lastNewline + 1,
+      truncated,
+    };
+  }
+}
+
 async function rolloutFiles(root: string): Promise<string[]> {
   const files: string[] = [];
   const visit = async (directory: string): Promise<void> => {
@@ -269,7 +323,7 @@ async function rolloutFiles(root: string): Promise<string[]> {
     for (const entry of entries) {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) await visit(path);
-      else if (/^rollout-.*\.jsonl$/.test(entry.name)) files.push(path);
+      else if (/^rollout-.*\.jsonl(?:\.zst)?$/.test(entry.name)) files.push(path);
     }
   };
   await visit(root);
@@ -279,13 +333,27 @@ async function rolloutFiles(root: string): Promise<string[]> {
 export function createCodexSource(options: CodexSourceOptions): TranscriptSource {
   const sessions = join(options.codexHome, "sessions");
   const archived = join(options.codexHome, "archived_sessions");
+  const reader = new CodexLineReader();
   return {
     id: "codex",
     watchPaths: () => [sessions, archived],
-    listFiles: async () => [
-      ...(await rolloutFiles(sessions)),
-      ...(await rolloutFiles(archived)),
-    ].sort(),
-    createParser: (file) => new CodexParser(file),
+    listFiles: async () => {
+      const files = [
+        ...(await rolloutFiles(sessions)),
+        ...(await rolloutFiles(archived)),
+      ];
+      const logical = new Map<string, string>();
+      for (const file of files) {
+        const key = logicalRolloutName(file);
+        const previous = logical.get(key);
+        if (!previous || (previous.endsWith(".zst") && !file.endsWith(".zst"))) {
+          logical.set(key, file);
+        }
+      }
+      return [...logical.values()].sort();
+    },
+    fileKey: logicalRolloutName,
+    readNewLines: (file, offset) => reader.read(file, offset),
+    createParser: (file) => new CodexParser(file.replace(/\.zst$/, "")),
   };
 }
