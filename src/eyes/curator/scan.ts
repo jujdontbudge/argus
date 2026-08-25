@@ -74,7 +74,6 @@ async function listFiles(directory: string, prefix = ""): Promise<string[]> {
 }
 
 async function walkSkills(
-  root: string,
   directory: string,
   relative: string,
   found: SkillCandidate[],
@@ -101,7 +100,6 @@ async function walkSkills(
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     if (!entry.isDirectory() || EXCLUDED_SKILL_DIRS.has(entry.name)) continue;
     await walkSkills(
-      root,
       join(directory, entry.name),
       relative.length > 0 ? `${relative}/${entry.name}` : entry.name,
       found,
@@ -111,7 +109,7 @@ async function walkSkills(
 
 export async function scanSkills(skillsDir: string): Promise<SkillCandidate[]> {
   const found: SkillCandidate[] = [];
-  await walkSkills(skillsDir, skillsDir, "", found);
+  await walkSkills(skillsDir, "", found);
   return found;
 }
 
