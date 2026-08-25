@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   createSandbox,
+  createScenarioRegistry,
   SimulationDriverRunner,
   type AgentSpawnRequest,
 } from "../src/harness/index.ts";
@@ -77,5 +78,31 @@ describe("fake-Johan harness", () => {
     } finally {
       await sandbox.teardown();
     }
+  });
+
+  test("registry exposes all ten core scenario slots and accepts future implementations", () => {
+    const registry = createScenarioRegistry();
+
+    expect(registry.list()).toEqual([
+      { number: 1, status: "unimplemented", title: "Autonomous batch, zero human input" },
+      { number: 2, status: "unimplemented", title: "Fake-Johan takeover" },
+      { number: 3, status: "unimplemented", title: "Rogue session" },
+      { number: 4, status: "unimplemented", title: "The poisoning test" },
+      { number: 5, status: "unimplemented", title: "Fault injection: the unlogged send" },
+      { number: 6, status: "unimplemented", title: "Watcher death" },
+      { number: 7, status: "unimplemented", title: "Signal paths" },
+      { number: 8, status: "unimplemented", title: "Self-learning loop" },
+      { number: 9, status: "unimplemented", title: "Semantic isolation" },
+      { number: 10, status: "unimplemented", title: "Blast-radius zero" },
+    ]);
+
+    registry.register(3, async () => {});
+
+    expect(registry.list()[2]).toEqual({
+      number: 3,
+      status: "implemented",
+      title: "Rogue session",
+    });
+    expect(registry.get(3)).toBeFunction();
   });
 });

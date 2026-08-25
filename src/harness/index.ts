@@ -166,3 +166,57 @@ export class SimulationDriverRunner {
     );
   }
 }
+
+const CORE_SCENARIOS = [
+  "Autonomous batch, zero human input",
+  "Fake-Johan takeover",
+  "Rogue session",
+  "The poisoning test",
+  "Fault injection: the unlogged send",
+  "Watcher death",
+  "Signal paths",
+  "Self-learning loop",
+  "Semantic isolation",
+  "Blast-radius zero",
+] as const;
+
+export type CoreScenarioNumber = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
+export type ScenarioHandler = () => Promise<void> | void;
+
+export interface ScenarioSlot {
+  number: CoreScenarioNumber;
+  status: "implemented" | "unimplemented";
+  title: (typeof CORE_SCENARIOS)[number];
+}
+
+export class ScenarioRegistry {
+  private readonly implementations = new Map<
+    CoreScenarioNumber,
+    ScenarioHandler
+  >();
+
+  get(number: CoreScenarioNumber): ScenarioHandler | undefined {
+    return this.implementations.get(number);
+  }
+
+  list(): ScenarioSlot[] {
+    return CORE_SCENARIOS.map((title, index) => {
+      const number = (index + 1) as CoreScenarioNumber;
+      return {
+        number,
+        status: this.implementations.has(number)
+          ? "implemented"
+          : "unimplemented",
+        title,
+      };
+    });
+  }
+
+  register(number: CoreScenarioNumber, scenario: ScenarioHandler): void {
+    this.implementations.set(number, scenario);
+  }
+}
+
+export function createScenarioRegistry(): ScenarioRegistry {
+  return new ScenarioRegistry();
+}
