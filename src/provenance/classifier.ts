@@ -4,9 +4,9 @@
  * the ONE classification mechanism all five eyes consume — no heuristics
  * elsewhere. `ProvenanceRecord` is the seam for tickets #30–#33.
  */
-import { derivedForms, hashText } from "../matching";
-import type { MessageEvent, TailEvent } from "../tailing";
-import type { SessionRecord } from "./registry";
+import { derivedForms, hashText, SendMatcher } from "../matching";
+import type { LifecycleEvent, MessageEvent, TailEvent } from "../tailing";
+import type { SendRecord, SessionRecord } from "./registry";
 
 export type Author = "johan" | "hermes" | "agent" | "system";
 
@@ -48,11 +48,18 @@ export interface ProvenanceRecord {
   event: MessageEvent;
 }
 
-/** Loud failure signals (§13 posture): registry problems are visible, never silent. */
-export type ProvenanceAuditEvent = {
-  type: "duplicate-session-registration";
-  sessionId: string;
-};
+/** Loud failure signals (§13 posture): provenance oddities are visible, never silent. */
+export type ProvenanceAuditEvent =
+  | { type: "duplicate-session-registration"; sessionId: string }
+  /** Johan attached to a registered session (first takeover message). */
+  | { type: "johan-attached"; sessionId: string; ts: string; text: string; uuid?: string }
+  /**
+   * A hash-miss equal to one line of a pending multi-line send — the signature
+   * of a newline-encoding bug in Hermes' adapter. Classification stays Johan.
+   */
+  | { type: "encoding-bug-suspect"; sessionId: string; sendId?: string; ts: string; text: string }
+  /** sends.jsonl names a session sessions.jsonl never registered. */
+  | { type: "send-into-unregistered-session"; sessionId: string; sendId?: string };
 
 export interface ClassifyOutput {
   /** Null for events that carry no message (session-meta, lifecycle). */
@@ -68,7 +75,11 @@ interface SessionState {
    * the clock skew between the registry row and the transcript.
    */
   dispatchHashes: Set<string> | null;
+  /** Registry-logged follow-up sends, matched under the §24 clock windows. */
+  matcher: SendMatcher;
   johanTouched: boolean;
+  /** The send-into-unregistered-session audit fires once per session. */
+  unregisteredSendAudited: boolean;
 }
 
 export class ProvenanceClassifier {
@@ -77,7 +88,13 @@ export class ProvenanceClassifier {
   private session(sessionId: string): SessionState {
     let state = this.sessions.get(sessionId);
     if (!state) {
-      state = { registration: undefined, dispatchHashes: null, johanTouched: false };
+      state = {
+        registration: undefined,
+        dispatchHashes: null,
+        matcher: new SendMatcher(),
+        johanTouched: false,
+        unregisteredSendAudited: false,
+      };
       this.sessions.set(sessionId, state);
     }
     return state;
@@ -94,12 +111,52 @@ export class ProvenanceClassifier {
     return [];
   }
 
-  handle(event: TailEvent): ClassifyOutput {
-    if (event.type !== "message") return { record: null, audits: [] };
-    return { record: this.classifyMessage(event), audits: [] };
+  /** Feed one sends.jsonl record (§5 rule 2). */
+  recordSend(record: SendRecord): ProvenanceAuditEvent[] {
+    const state = this.session(record.sessionId);
+    const audits: ProvenanceAuditEvent[] = [];
+    if (!state.registration && !state.unregisteredSendAudited) {
+      state.unregisteredSendAudited = true;
+      audits.push({
+        type: "send-into-unregistered-session",
+        sessionId: record.sessionId,
+        ...(record.id !== undefined && { sendId: record.id }),
+      });
+    }
+    state.matcher.addSend({
+      ts: record.ts,
+      text: record.text,
+      ...(record.kind !== undefined && { kind: record.kind }),
+      ...(record.id !== undefined && { id: record.id }),
+    });
+    return audits;
   }
 
-  private classifyMessage(event: MessageEvent): ProvenanceRecord {
+  handle(event: TailEvent): ClassifyOutput {
+    if (event.type === "lifecycle") {
+      this.handleLifecycle(event);
+      return { record: null, audits: [] };
+    }
+    if (event.type !== "message") return { record: null, audits: [] };
+    return this.classifyMessage(event);
+  }
+
+  private handleLifecycle(event: LifecycleEvent): void {
+    if (
+      event.kind !== "queue-enqueue" ||
+      event.sessionId === undefined ||
+      event.content === undefined ||
+      event.ts === undefined
+    ) {
+      return;
+    }
+    this.session(event.sessionId).matcher.onEnqueue({
+      content: event.content,
+      ts: event.ts,
+    });
+  }
+
+  private classifyMessage(event: MessageEvent): ClassifyOutput {
     const state = this.session(event.sessionId);
     const registration = state.registration;
     const base = {
@@ -114,20 +171,55 @@ export class ProvenanceClassifier {
       event,
     };
     if (event.role === "assistant") {
-      return { ...base, author: "agent", via: "assistant" };
+      return { record: { ...base, author: "agent", via: "assistant" }, audits: [] };
     }
     if (!event.candidate) {
-      return { ...base, author: "system", via: "non-candidate" };
-    }
-    if (!registration) {
-      return { ...base, author: "johan", via: "unregistered-session" };
+      return { record: { ...base, author: "system", via: "non-candidate" }, audits: [] };
     }
     const hash = hashText(event.text);
     if (state.dispatchHashes?.has(hash)) {
       state.dispatchHashes = null; // consumed: one deployment, one dispatch landing
-      return { ...base, author: "hermes", via: "dispatch-prompt" };
+      return {
+        record: { ...base, author: "hermes", via: "dispatch-prompt" },
+        audits: [],
+      };
     }
-    state.johanTouched = true;
-    return { ...base, author: "johan", via: "takeover", johanTouched: true };
+    // Registry-logged sends are provenance truth even when the session record
+    // is missing (audited at recordSend) — a matched landing is never Johan.
+    const match = state.matcher.classify({ text: event.text, ts: event.ts });
+    if (match.author === "hermes") {
+      return { record: { ...base, author: "hermes", via: "registry-send" }, audits: [] };
+    }
+    const audits: ProvenanceAuditEvent[] = [];
+    if (match.encodingBugSuspect) {
+      const sendId = match.encodingBugSuspect.id;
+      audits.push({
+        type: "encoding-bug-suspect",
+        sessionId: event.sessionId,
+        ...(sendId !== undefined && { sendId }),
+        ts: event.ts,
+        text: event.text,
+      });
+    }
+    if (!registration) {
+      return {
+        record: { ...base, author: "johan", via: "unregistered-session" },
+        audits,
+      };
+    }
+    if (!state.johanTouched) {
+      state.johanTouched = true;
+      audits.push({
+        type: "johan-attached",
+        sessionId: event.sessionId,
+        ts: event.ts,
+        text: event.text,
+        ...(event.uuid !== undefined && { uuid: event.uuid }),
+      });
+    }
+    return {
+      record: { ...base, author: "johan", via: "takeover", johanTouched: true },
+      audits,
+    };
   }
 }
