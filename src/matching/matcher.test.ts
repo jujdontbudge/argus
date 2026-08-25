@@ -8,6 +8,25 @@ const T0 = "2026-08-24T12:00:00.000Z";
 const t0 = Date.parse(T0);
 const at = (offsetMs: number) => t0 + offsetMs;
 
+describe("SendMatcher: oldest-first consumption", () => {
+  test("identical repeated sends resolve in timestamp order", () => {
+    const m = new SendMatcher();
+    // Registered out of order — the OLDER unconsumed send must win each match.
+    m.addSend({ ts: at(10_000), text: "continue", id: "later" });
+    m.addSend({ ts: T0, text: "continue", id: "earlier" });
+
+    const first = m.classify({ text: "continue", ts: at(11_000) });
+    expect(first.author).toBe("hermes");
+    expect(first.author === "hermes" && first.send.id).toBe("earlier");
+
+    const second = m.classify({ text: "continue", ts: at(12_000) });
+    expect(second.author).toBe("hermes");
+    expect(second.author === "hermes" && second.send.id).toBe("later");
+
+    expect(m.classify({ text: "continue", ts: at(13_000) }).author).toBe("johan");
+  });
+});
+
 describe("SendMatcher: basic classification", () => {
   test("registry-logged send landing in window is Hermes-authored", () => {
     const m = new SendMatcher();

@@ -56,14 +56,19 @@ export class SendMatcher {
   addSend(input: SendInput): void {
     const kind = input.kind ?? deriveKind(input.text);
     const forms = derivedForms(input.text, kind);
-    this.pending.push({
+    const send: PendingSend = {
       id: input.id,
       ts: toEpochMs(input.ts),
       text: input.text,
       kind,
       forms,
       hashes: forms.map(hashText),
-    });
+    };
+    // Keep pending oldest-first (stable for equal timestamps) so matching
+    // consumes the oldest unconsumed send even if entries arrive out of order.
+    let i = this.pending.length;
+    while (i > 0 && this.pending[i - 1]!.ts > send.ts) i--;
+    this.pending.splice(i, 0, send);
   }
 
   classify(msg: UserMessage): MatchResult {
