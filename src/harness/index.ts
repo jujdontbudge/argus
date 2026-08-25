@@ -24,6 +24,7 @@ import { createWatcherSpawner } from "../supervisor/daemon.ts";
 import {
   EYE_NAMES,
   WatcherSupervisor,
+  type SpawnWatcher,
   type SupervisorStatus,
 } from "../supervisor/runtime.ts";
 import { claudeProjectDir } from "../tailing/claude-code.ts";
@@ -48,6 +49,21 @@ export interface Sandbox {
 
 export interface SandboxOptions {
   checkout: string;
+}
+
+/**
+ * The watcher spawner for throwaway harness state.
+ *
+ * Production deliberately lets `createWatcherSpawner` inherit the daemon's
+ * environment. A harness watcher must instead receive its sandbox explicitly:
+ * omitting it makes the child resolve enrolment against the caller's real
+ * state and turns a correct refusal into an apparent restart storm.
+ */
+export function createSandboxWatcherSpawner(
+  commandPrefix: readonly string[],
+  sandbox: Pick<Sandbox, "env">,
+): SpawnWatcher {
+  return createWatcherSpawner(commandPrefix, sandbox.env);
 }
 
 export type TestAgent = "claude" | "codex";
@@ -395,10 +411,10 @@ export const watcherDeathScenario: ScenarioHandler = async ({ assert, sandbox })
   const supervisor = new WatcherSupervisor({
     registryPath: envPath(sandbox, "ARGUS_REPOS_FILE"),
     restartDelayMilliseconds: 25,
-    spawn: createWatcherSpawner([
-      process.execPath,
-      fileURLToPath(new URL("../cli.ts", import.meta.url)),
-    ], sandbox.env),
+    spawn: createSandboxWatcherSpawner(
+      [process.execPath, fileURLToPath(new URL("../cli.ts", import.meta.url))],
+      sandbox,
+    ),
     statusPath,
   });
   const observedPids = new Set<number>();

@@ -1,8 +1,10 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createSandbox } from "../../src/harness/index.ts";
-import { createWatcherSpawner } from "../../src/supervisor/daemon.ts";
+import {
+  createSandbox,
+  createSandboxWatcherSpawner,
+} from "../../src/harness/index.ts";
 import {
   EYE_NAMES,
   WatcherSupervisor,
@@ -15,9 +17,9 @@ const statusPath = join(sandbox.root, "state", "stability-status.json");
 const supervisor = new WatcherSupervisor({
   registryPath: sandbox.env.ARGUS_REPOS_FILE!,
   restartDelayMilliseconds: 25,
-  spawn: createWatcherSpawner(
+  spawn: createSandboxWatcherSpawner(
     [process.execPath, join(checkout, "src", "cli.ts")],
-    sandbox.env,
+    sandbox,
   ),
   statusPath,
 });
@@ -25,12 +27,14 @@ const controller = new AbortController();
 const pids = new Set<number>();
 const byEye = new Map(EYE_NAMES.map((eye) => [eye, new Set<number>()]));
 const startedAt = Date.now();
+const smoke = Bun.env.ARGUS_ACCEPTANCE_SMOKE === "1";
+const observationMilliseconds = smoke ? 350 : 3_000;
 let samples = 0;
 let parseFailures = 0;
 
 try {
   const running = supervisor.run(controller.signal, 50);
-  while (Date.now() - startedAt < 3_000) {
+  while (Date.now() - startedAt < observationMilliseconds) {
     await Bun.sleep(10);
     try {
       const status = (await Bun.file(statusPath).json()) as SupervisorStatus;
@@ -51,6 +55,7 @@ try {
         durationMs: Date.now() - startedAt,
         expectedEyes: EYE_NAMES.length,
         distinctPids: pids.size,
+        mode: smoke ? "smoke" : "full",
         pidsByEye: Object.fromEntries(
           [...byEye].map(([eye, values]) => [eye, values.size]),
         ),

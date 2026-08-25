@@ -16,11 +16,16 @@
  * ~/argus, ~/.claude, ~/.hermes, ~/.argus-repos, no real cmux.
  */
 import { appendFile, copyFile, mkdir, readdir } from "node:fs/promises";
-import { homedir } from "node:os";
 import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 
 import { createSandbox, type Sandbox } from "../../src/harness/index.ts";
+import {
+  CODEX_AUTH_FILE,
+  describeLiveAgentGate,
+  probeLiveAgents,
+  resolveLiveAgentGate,
+} from "../../src/harness/live-gate.ts";
 import {
   classifierFromRegistry,
   loadRegistry,
@@ -34,6 +39,9 @@ import { createCodexSource, Tailer } from "../../src/tailing/index.ts";
 import type { MessageEvent, SessionMetaEvent } from "../../src/tailing/index.ts";
 
 const CODEX_MODEL_ARGS = ["-c", "model_reasoning_effort=high"];
+const liveGate = resolveLiveAgentGate(probeLiveAgents());
+console.log(describeLiveAgentGate(liveGate));
+if (liveGate.codex.status !== "run") process.exit(0);
 
 const checks: Array<{ ok: boolean; what: string }> = [];
 function check(ok: boolean, what: string): void {
@@ -111,7 +119,7 @@ try {
   console.log(`argus up exit  ${sandbox.up.exitCode}`);
 
   await mkdir(codexHome, { recursive: true });
-  await copyFile(join(homedir(), ".codex/auth.json"), join(codexHome, "auth.json"));
+  await copyFile(CODEX_AUTH_FILE, join(codexHome, "auth.json"));
 
   const version = Bun.spawnSync(["codex", "--version"]).stdout.toString().trim();
   console.log(`codex CLI      ${version}`);
