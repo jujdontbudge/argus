@@ -1,4 +1,5 @@
-import { mkdir, rename } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, rename, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { readEnabledRepos } from "./registry.ts";
@@ -82,7 +83,14 @@ export class WatcherSupervisor {
           process,
           repo,
         });
-        void process.exited.then(() => this.#restartAfterExit(key, process));
+        void process.exited
+          .then(() => this.#restartAfterExit(key, process))
+          .catch((error: unknown) => {
+            console.error(
+              `argus supervisor: failed to handle ${eye} watcher exit for ${repo}`,
+              error,
+            );
+          });
       }
     }
 
@@ -121,9 +129,13 @@ export class WatcherSupervisor {
     // by `argus status` whenever a human asks — so it is written temp-then-
     // rename like every other polled surface in Argus. A plain write truncates
     // first, and a reader that lands in that window gets a torn file.
-    const temporary = `${this.#options.statusPath}.tmp`;
-    await Bun.write(temporary, `${JSON.stringify(status, null, 2)}\n`);
-    await rename(temporary, this.#options.statusPath);
+    const temporary = `${this.#options.statusPath}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      await Bun.write(temporary, `${JSON.stringify(status, null, 2)}\n`);
+      await rename(temporary, this.#options.statusPath);
+    } finally {
+      await rm(temporary, { force: true });
+    }
   }
 
   async #restartAfterExit(
