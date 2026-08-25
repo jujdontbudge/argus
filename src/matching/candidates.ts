@@ -51,6 +51,35 @@ const CODEX_SYNTHETIC_PREFIXES = [
   "<recommended_plugins>",
 ];
 
+/**
+ * The tag of a COMPLETE XML-ish envelope, or null when the text is not one.
+ *
+ * The shape, and only this shape: the FIRST line is an opening tag on its own
+ * — lowercase-initial name, no attributes, nothing after it — and the text
+ * ENDS with the matching closing tag. That is what an agent CLI writes when it
+ * injects context into a rollout as a user-role item; it is not what a person
+ * types at a prompt.
+ *
+ * Deliberately narrow, because a false positive here makes Argus deaf to Johan
+ * (§13.4 from the other direction):
+ * - `<Button onClick={x} />` — uppercase, attributes, unclosed: not an envelope.
+ * - `<bash-input>echo hi</bash-input>` — a REAL candidate (§2.3), and inline,
+ *   so the one-line form is excluded on purpose.
+ * - `<div>\n  hi\n</div>` IS the shape; the caller decides what to do about it
+ *   (see the classifier's leading-preamble window, which is the second gate).
+ */
+const ENVELOPE_OPEN = /^<([a-z][a-z0-9_-]*)>$/;
+
+export function syntheticEnvelopeTag(text: string): string | null {
+  const trimmed = text.trim();
+  const breakAt = trimmed.indexOf("\n");
+  if (breakAt === -1) return null;
+  const open = ENVELOPE_OPEN.exec(trimmed.slice(0, breakAt).trimEnd());
+  if (!open) return null;
+  const tag = open[1]!;
+  return trimmed.endsWith(`</${tag}>`) ? tag : null;
+}
+
 export function codexCandidateText(record: unknown): string | null {
   const rec = asRecord(record);
   if (!rec || rec.type !== "response_item") return null;
