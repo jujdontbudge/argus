@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -91,6 +92,18 @@ describe("archive search", () => {
       expect(longResult!.snippet).toContain("needle_at_the_end");
       expect(longResult!.snippet.length).toBeLessThanOrEqual(320);
 
+      const heldSnapshot = new Database(join(repo, ".argus/archive.db"), {
+        readonly: true,
+        strict: true,
+      });
+      heldSnapshot.exec("BEGIN");
+      expect(
+        heldSnapshot
+          .query<{ count: number }, []>(
+            "SELECT count(*) AS count FROM archive_messages",
+          )
+          .get()!.count,
+      ).toBe(2);
       await appendFile(
         transcript,
         line(
@@ -104,6 +117,16 @@ describe("archive search", () => {
         new Tailer(source, { cursors: eye.cursors() }),
         classifier(),
       );
+      // The held reader remains on its old snapshot while the WAL writer commits.
+      expect(
+        heldSnapshot
+          .query<{ count: number }, []>(
+            "SELECT count(*) AS count FROM archive_messages",
+          )
+          .get()!.count,
+      ).toBe(2);
+      heldSnapshot.exec("COMMIT");
+      heldSnapshot.close(false);
       expect(search.query("later commit")).toHaveLength(1);
 
       search.close();

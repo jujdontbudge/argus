@@ -21,6 +21,25 @@ async function run(command: string[], cwd: string) {
 }
 
 describe("argus search CLI", () => {
+  test("gives a clear repo-scoped empty state before an archive exists", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-search-empty-"));
+    const repo = join(root, "new-repo");
+    await mkdir(repo);
+    try {
+      expect((await run(["git", "init", "-q"], repo)).exitCode).toBe(0);
+      const result = await run(
+        [process.execPath, cli, "search", "anything"],
+        repo,
+      );
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("no archive exists for");
+      expect(result.stderr).toContain(repo);
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
   test("answers a seeded query from a past sandbox session from any repo subdir", async () => {
     const root = await mkdtemp(join(tmpdir(), "argus-search-cli-"));
     const repo = join(root, "sandbox-repo");
@@ -74,6 +93,22 @@ describe("argus search CLI", () => {
       expect(result.stdout).toContain("agent=codex");
       expect(result.stdout).toContain("ticket=#26");
       expect(result.stdout).toContain("retention_policy.ts");
+
+      const fromRepoRoot = await run(
+        [process.execPath, cli, "search", "seeded answer"],
+        repo,
+      );
+      expect(fromRepoRoot.exitCode).toBe(0);
+      expect(fromRepoRoot.stdout).toContain("past-cli-session");
+
+      const noMatch = await run(
+        [process.execPath, cli, "search", "definitely_absent_marker"],
+        nested,
+      );
+      expect(noMatch.exitCode).toBe(0);
+      expect(noMatch.stdout).toBe(
+        'No archived messages matched "definitely_absent_marker".\n',
+      );
     } finally {
       await rm(root, { force: true, recursive: true });
     }
