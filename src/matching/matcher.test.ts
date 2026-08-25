@@ -27,6 +27,46 @@ describe("SendMatcher: oldest-first consumption", () => {
   });
 });
 
+describe("SendMatcher: queue-operation enqueue bridge", () => {
+  // Claude Code stamps queued user records at DEQUEUE (= turn end), which can
+  // be arbitrarily late; the enqueue record near send time bridges the window
+  // (findings §3, §7 step "on claude queue-operation enqueue").
+  test("enqueue-bridged send matches past the +3600s window", () => {
+    const m = new SendMatcher();
+    m.addSend({ ts: T0, text: "queued while turn runs" });
+    m.onEnqueue({ content: "queued while turn runs", ts: at(150) });
+    const r = m.classify({ text: "queued while turn runs", ts: at(3_700_000) });
+    expect(r.author).toBe("hermes");
+  });
+
+  test("enqueue outside [send_ts - 5s, send_ts + 30s] does not bridge", () => {
+    const m = new SendMatcher();
+    m.addSend({ ts: T0, text: "stale enqueue" });
+    m.onEnqueue({ content: "stale enqueue", ts: at(31_000) });
+    expect(m.classify({ text: "stale enqueue", ts: at(3_700_000) }).author).toBe(
+      "johan",
+    );
+  });
+
+  test("enqueue with non-matching content does not bridge", () => {
+    const m = new SendMatcher();
+    m.addSend({ ts: T0, text: "the real send" });
+    m.onEnqueue({ content: "something else entirely", ts: at(150) });
+    expect(m.classify({ text: "the real send", ts: at(3_700_000) }).author).toBe(
+      "johan",
+    );
+  });
+
+  test("the bridge does not loosen the lower window bound", () => {
+    const m = new SendMatcher();
+    m.addSend({ ts: T0, text: "bridged but early" });
+    m.onEnqueue({ content: "bridged but early", ts: at(100) });
+    expect(m.classify({ text: "bridged but early", ts: at(-6_000) }).author).toBe(
+      "johan",
+    );
+  });
+});
+
 describe("SendMatcher: basic classification", () => {
   test("registry-logged send landing in window is Hermes-authored", () => {
     const m = new SendMatcher();

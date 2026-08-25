@@ -29,6 +29,16 @@ export interface PendingSend {
   /** Normalized transcript forms this send may land as, with their hashes. */
   readonly forms: readonly string[];
   readonly hashes: readonly string[];
+  /** True once a Claude queue-operation enqueue record bound this send (§7). */
+  readonly enqueueSeen: boolean;
+}
+
+type MutableSend = { -readonly [K in keyof PendingSend]: PendingSend[K] };
+
+/** A Claude Code queue-operation enqueue record (findings §2.1). */
+export interface EnqueueEvent {
+  content: string;
+  ts: Timestamp;
 }
 
 /** A candidate user-side transcript message (already filtered per §2.1/§2.2). */
@@ -44,6 +54,8 @@ export type MatchResult =
 /** Window bounds (findings §3): −5s scheduler-jitter guard, +3600s covers queued landings. */
 export const WINDOW_BEFORE_MS = 5_000;
 export const WINDOW_AFTER_MS = 3_600_000;
+/** An enqueue record binds a send only if stamped within [−5s, +30s] of it (§7). */
+export const ENQUEUE_BRIDGE_AFTER_MS = 30_000;
 
 /**
  * Per-session send↔transcript matcher (research/send-transcript-matching.md §7).
@@ -51,18 +63,19 @@ export const WINDOW_AFTER_MS = 3_600_000;
  * messages; nothing here touches the clock, filesystem, or any session.
  */
 export class SendMatcher {
-  private pending: PendingSend[] = [];
+  private pending: MutableSend[] = [];
 
   addSend(input: SendInput): void {
     const kind = input.kind ?? deriveKind(input.text);
     const forms = derivedForms(input.text, kind);
-    const send: PendingSend = {
+    const send: MutableSend = {
       id: input.id,
       ts: toEpochMs(input.ts),
       text: input.text,
       kind,
       forms,
       hashes: forms.map(hashText),
+      enqueueSeen: false,
     };
     // Keep pending oldest-first (stable for equal timestamps) so matching
     // consumes the oldest unconsumed send even if entries arrive out of order.
@@ -76,12 +89,30 @@ export class SendMatcher {
     const t = toEpochMs(msg.ts);
     for (let i = 0; i < this.pending.length; i++) {
       const send = this.pending[i]!;
-      if (t < send.ts - WINDOW_BEFORE_MS || t > send.ts + WINDOW_AFTER_MS) continue;
+      if (t < send.ts - WINDOW_BEFORE_MS) continue;
+      // A bridged send's queued record is stamped at dequeue, which a long
+      // turn can push past the window — the enqueue record vouches for it.
+      if (t > send.ts + WINDOW_AFTER_MS && !send.enqueueSeen) continue;
       const formIndex = send.hashes.indexOf(h);
       if (formIndex === -1) continue;
       this.pending.splice(i, 1); // consume: one send, at most one message
       return { author: "hermes", send, matchedForm: send.forms[formIndex]! };
     }
     return { author: "johan" };
+  }
+
+  /** Feed every Claude Code queue-operation enqueue record for this session. */
+  onEnqueue(evt: EnqueueEvent): void {
+    const h = hashText(evt.content);
+    const t = toEpochMs(evt.ts);
+    for (const send of this.pending) {
+      if (send.enqueueSeen) continue;
+      if (t < send.ts - WINDOW_BEFORE_MS || t > send.ts + ENQUEUE_BRIDGE_AFTER_MS) {
+        continue;
+      }
+      if (!send.hashes.includes(h)) continue;
+      send.enqueueSeen = true;
+      return;
+    }
   }
 }
