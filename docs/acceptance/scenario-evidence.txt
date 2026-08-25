@@ -1,0 +1,196 @@
+==============================================================================
+ARGUS §13 SCENARIO EVIDENCE — ticket #45 re-acceptance
+==============================================================================
+checkout /Users/johansardar/argus-worktrees/reaccept
+
+------------------------------------------------------------------------------
+1. Autonomous batch, zero human input  ->  PASSED  (9 assertions, 0 failed)
+  argus up exit 0 | teardown completed
+------------------------------------------------------------------------------
+  PASS  USER.md stayed byte-identical
+  PASS  MEMORY.md gained a project fact
+  PASS  the fact file exists beside the index
+  PASS  the session's digest was written with narrative
+  PASS  INDEX.md gained the session's one line
+  PASS  every autonomous-batch message reached the archive
+  PASS  archive grew during the autonomous batch
+  PASS  Hermes-side messages reached the normalized stream
+  PASS  Codex autonomous-session messages fed the normalized stream
+
+------------------------------------------------------------------------------
+2. Fake-Johan takeover  ->  PASSED  (40 assertions, 0 failed)
+  argus up exit 0 | teardown completed
+------------------------------------------------------------------------------
+  PASS  sandbox was converged by argus up
+  PASS  Johan is the observable Honcho peer
+  PASS  user-peer observation was logged
+  PASS  the dispatch prompt classifies Hermes
+  PASS  the logged mid-session nudge classifies Hermes
+  PASS  Johan's mid-session directive classifies Johan-authored via takeover
+  PASS  the takeover record itself carries johan_touched
+  PASS  johan_touched is set on the session after the takeover
+  PASS  the attach is surfaced as a johan-attached audit
+  PASS  USER.md learned from the takeover directive
+  PASS  the digest frontmatter carries johan_touched: true
+  PASS  the takeover directive is in the digest narrative
+  PASS  INDEX.md surfaces johan_touched=true
+  PASS  sandbox was converged by argus up
+  PASS  exactly one scope-drift retro was filed for the hijacked ticket session
+  PASS  the scope-drift retro reached the tracker
+  PASS  the tracker holds exactly one retro-labeled issue
+  PASS  it is a sub-issue of the ticket it drifted from (#7)
+  PASS  it is filed CLOSED as completed — the work already happened
+  PASS  its title says which ticket the work drifted out of
+  PASS  the body names the ticket and quotes its stated scope
+  PASS  the body describes the out-of-scope work concretely
+  PASS  the body names the session the drift came from
+  PASS  the in-scope refactor in ticket #9's session filed NOTHING
+  PASS  the in-scope work is not swept into the drift retro either
+  PASS  every gh call ran inside the sandbox
+  PASS  every gh call ran inside the sandbox
+  PASS  every gh call ran inside the sandbox
+  PASS  every gh call ran inside the sandbox
+  PASS  every gh call ran inside the sandbox
+  PASS  every gh call ran inside the sandbox
+  PASS  every gh call ran inside the sandbox
+  PASS  the same drift is not filed twice
+  PASS  the dispatch prompt classifies Hermes
+  PASS  the logged mid-session nudge classifies Hermes
+  PASS  Johan's mid-session directive classifies Johan-authored via takeover
+  PASS  the takeover record itself carries johan_touched
+  PASS  johan_touched is set on the session after the takeover
+  PASS  the attach is surfaced as a johan-attached audit
+  PASS  the takeover directive was logged as a Johan-peer observation
+
+------------------------------------------------------------------------------
+3. Rogue session  ->  PASSED  (24 assertions, 0 failed)
+  argus up exit 0 | teardown completed
+------------------------------------------------------------------------------
+  PASS  sandbox was converged by argus up
+  PASS  provenance classified exactly Johan's rogue prompt as Johan-authored
+  PASS  exactly one retro was filed for the rogue work
+  PASS  the retro reached the tracker
+  PASS  the tracker holds exactly one retro-labeled issue
+  PASS  the retro is titled `Retro: <what was done>`
+  PASS  the retro was filed CLOSED (no approval queue)
+  PASS  it is closed as completed — the work already happened
+  PASS  it is a sub-issue of the nearest plausible parent (#15)
+  PASS  the link went through the GitHub sub_issues API
+  PASS  the body reflects Johan's prompts
+  PASS  the body reflects the diff and cites the commit
+  PASS  the body names the session the work came from
+  PASS  the covered ticket-7 work is NOT in the retro
+  PASS  the registered ticket session's own work filed no retro
+  PASS  every gh call ran inside the sandbox
+  PASS  every gh call ran inside the sandbox
+  PASS  every gh call ran inside the sandbox
+  PASS  every gh call ran inside the sandbox
+  PASS  every gh call ran inside the sandbox
+  PASS  every gh call ran inside the sandbox
+  PASS  every gh call ran inside the sandbox
+  PASS  the same rogue work is not re-filed
+  PASS  rogue Codex session attributed to the sandbox repo
+
+------------------------------------------------------------------------------
+4. The poisoning test  ->  PASSED  (6 assertions, 0 failed)
+  argus up exit 0 | teardown completed
+------------------------------------------------------------------------------
+  PASS  the agent CLI's own injected preamble classifies system, never Johan
+  PASS  all four sent messages landed and were classified
+  PASS  every registry-logged send classifies Hermes-authored
+  PASS  no user-side message classified Johan — USER.md stays untouched
+  PASS  the session is not marked johan_touched by Hermes' own nudges
+  PASS  Hermes-authored assistant output never classifies Johan
+
+------------------------------------------------------------------------------
+5. Fault injection: the unlogged send  ->  PASSED  (4 assertions, 0 failed)
+  argus up exit 0 | teardown completed
+------------------------------------------------------------------------------
+  PASS  the unlogged landing is not silently absorbed as Hermes
+  PASS  the documented failure mode: an unlogged send reads as a Johan takeover
+  PASS  the misattribution is VISIBLE — a johan-attached audit fires
+  PASS  a logged send that never lands expires as a loud audit
+
+------------------------------------------------------------------------------
+6. Watcher death  ->  PASSED  (13 assertions, 0 failed)
+  argus up exit 0 | teardown completed
+------------------------------------------------------------------------------
+  PASS  sandbox was converged by argus up
+  PASS  all five real eye commands started
+  PASS  reviewer restarted after death
+  PASS  archiver restarted after death
+  PASS  honcho restarted after death
+  PASS  digest restarted after death
+  PASS  retro restarted after death
+  PASS  the replacement archiver observed a transcript written after restart
+  PASS  supervisor stopped every real eye command
+  PASS  two messages committed before watcher death
+  PASS  the killed batch contained two uncommitted messages
+  PASS  kill-before-commit backfill has the exact message count with no duplicates
+  PASS  a removed repo made its real watcher exit cleanly
+
+------------------------------------------------------------------------------
+7. Signal paths  ->  PASSED  (7 assertions, 0 failed)
+  argus up exit 0 | teardown completed
+------------------------------------------------------------------------------
+  PASS  no push event files exist — hooks are disabled
+  PASS  the pending batch was due within the digest cadence (the poll interval bound)
+  PASS  the finished session surfaced status=done in INDEX.md
+  PASS  the blocked session surfaced status=blocked in INDEX.md
+  PASS  both digests carry the flipped status in frontmatter
+  PASS  hooks promptly wrote finish and block event files
+  PASS  every mission-control send was logged before cmux
+
+------------------------------------------------------------------------------
+8. Self-learning loop  ->  PASSED  (9 assertions, 0 failed)
+  argus up exit 0 | teardown completed
+------------------------------------------------------------------------------
+  PASS  the novel procedure was written as a SKILL.md under .argus/skills
+  PASS  the first curator opportunity archived nothing
+  PASS  the curator only ever wrote inside the sandbox
+  PASS  the planted stale skill is gone from the live skills tree
+  PASS  the stale skill is recoverable under .archive/, never deleted
+  PASS  the learned skill was left untouched
+  PASS  the pinned skill was left untouched
+  PASS  a skill seen for the first time was seeded, not judged
+  PASS  the pass left a report under .argus/reports/curator/
+
+------------------------------------------------------------------------------
+9. Semantic isolation  ->  PASSED  (9 assertions, 0 failed)
+  argus up exit 0 | teardown completed
+------------------------------------------------------------------------------
+  PASS  primary sandbox was converged by argus up
+  PASS  peer sandbox was converged by argus up
+  PASS  repos bind separate Honcho workspaces
+  PASS  repos bind separate Hermes profiles
+  PASS  Hermes memories resolve only inside each repo
+  PASS  primary Johan reads exclude agent and peer-repo observations
+  PASS  peer Johan reads exclude primary-repo observations
+  PASS  Johan's representation contains only Johan-authored messages
+  PASS  agent and orchestration messages remain on their own peers
+
+------------------------------------------------------------------------------
+10. Blast-radius zero  ->  PASSED  (5 assertions, 0 failed)
+  argus up exit 0 | teardown completed
+------------------------------------------------------------------------------
+  PASS  primary sandbox was converged by argus up
+  PASS  peer sandbox was converged by argus up
+  PASS  primary .argus state was removed
+  PASS  peer .argus state stayed byte-identical
+  PASS  peer supervisor state stayed byte-identical
+
+==============================================================================
+SUMMARY
+==============================================================================
+  passed    9 assertions  1. Autonomous batch, zero human input
+  passed   40 assertions  2. Fake-Johan takeover
+  passed   24 assertions  3. Rogue session
+  passed    6 assertions  4. The poisoning test
+  passed    4 assertions  5. Fault injection: the unlogged send
+  passed   13 assertions  6. Watcher death
+  passed    7 assertions  7. Signal paths
+  passed    9 assertions  8. Self-learning loop
+  passed    9 assertions  9. Semantic isolation
+  passed    5 assertions  10. Blast-radius zero
+
+  10 scenarios, 126 assertions, 0 not passing, 5.4s
