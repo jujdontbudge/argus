@@ -54,7 +54,7 @@ describe("argus CLI", () => {
   });
 
   test("routes unfinished feature commands to explicit stubs", async () => {
-    for (const command of ["watch", "search"]) {
+    for (const command of ["watch"]) {
       const result = await runCli([command]);
 
       expect(result.exitCode).toBe(1);

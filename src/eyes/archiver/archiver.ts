@@ -91,7 +91,7 @@ export class ArchiverEye {
         content,
         content = 'archive_messages',
         content_rowid = 'id',
-        tokenize = "unicode61 tokenchars '_/'"
+        tokenize = "unicode61 tokenchars '_'"
       );
       CREATE TRIGGER IF NOT EXISTS archive_messages_after_insert AFTER INSERT ON archive_messages BEGIN
         INSERT INTO archive_messages_fts(rowid, content) VALUES (new.id, new.content);
