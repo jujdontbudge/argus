@@ -7,9 +7,11 @@ import {
   OFFLINE_BASE_URL,
   OFFLINE_PROVIDER,
   LIVE_HERMES_GATE,
+  describeHermesLiveGate,
   resolveHermesLiveGate,
   type HermesLiveProbe,
 } from "./hermes-live-gate.ts";
+import { liveHalfTitle, LIVE_HALF_BANNER } from "./live-gate.ts";
 
 const READY: HermesLiveProbe = {
   env: { [LIVE_HERMES_GATE]: "1" },
@@ -167,7 +169,12 @@ describe("the offline provider the scratch drive configures", () => {
     const refused = await Bun.connect({
       hostname: url.hostname,
       port: Number(url.port),
-      socket: { data: () => {}, open: (socket) => socket.end() },
+      socket: {
+        data: () => {},
+        open: (socket) => {
+          socket.end();
+        },
+      },
     }).then(
       () => false,
       () => true,
@@ -225,5 +232,67 @@ describe("a gate that opened but provisioned nothing", () => {
     expect(
       refineScratchVerdict(shut, { provisioningFailure: "ignored" }),
     ).toEqual(shut);
+  });
+});
+
+describe("the banner, which is a skip's only visible channel", () => {
+  const NOTHING = { cli: null, schemaVersion: null };
+
+  test("names BOTH halves with the gate shut — unlike #43, one of them can still run", () => {
+    // #43 collapses to a single line when its gate is shut because both of its
+    // halves then carry the same reason. Here they cannot: the real half is
+    // ungated, so on the default path it may genuinely run while the scratch
+    // half is skipped, and a banner that hid that would be lying.
+    const banner = describeHermesLiveGate(
+      resolveHermesLiveGate({ ...READY, env: {} }),
+      NOTHING,
+    );
+
+    expect(banner).toContain("scratch");
+    expect(banner).toContain("real");
+    expect(banner).toContain("SKIPPED");
+    expect(banner).toContain("NOT RUN");
+    expect(banner).toContain(LIVE_HERMES_GATE);
+  });
+
+  test("uses #43's status vocabulary rather than a second one", () => {
+    expect(
+      describeHermesLiveGate(resolveHermesLiveGate(READY), NOTHING),
+    ).toContain(LIVE_HALF_BANNER.run.trim());
+  });
+
+  test("says outright when nothing at all can run on this machine", () => {
+    expect(
+      describeHermesLiveGate(
+        resolveHermesLiveGate({ ...READY, hermesInstalled: false }),
+        NOTHING,
+      ),
+    ).toContain("NO live Hermes half can run on this machine");
+  });
+
+  test("records the version a run verified against, and only when one ran", () => {
+    // Requirement 3 of the ticket: a future upstream change that breaks the §7
+    // caveat has to be attributable to a version, and an unrun check has no
+    // version to attribute anything to.
+    const version = { cli: "Hermes Agent v0.16.0 (2026.6.5)", schemaVersion: 15 };
+
+    expect(
+      describeHermesLiveGate(resolveHermesLiveGate(READY), version),
+    ).toContain("verified against Hermes Agent v0.16.0 (2026.6.5)");
+    expect(
+      describeHermesLiveGate(resolveHermesLiveGate(READY), version),
+    ).toContain("state.db schema 15");
+    expect(
+      describeHermesLiveGate(resolveHermesLiveGate(READY), NOTHING),
+    ).not.toContain("verified against");
+  });
+});
+
+describe("#43's title helper, reused", () => {
+  test("titles this ticket's halves too, so both files read the same way", () => {
+    const gate = resolveHermesLiveGate({ ...READY, env: {} });
+
+    expect(liveHalfTitle("x", gate.scratch)).toStartWith("x — SKIPPED: ");
+    expect(liveHalfTitle("x", gate.real)).toStartWith("x — NOT RUN: ");
   });
 });

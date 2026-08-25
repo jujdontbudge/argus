@@ -30,7 +30,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import type { LiveHalfStatus } from "./live-gate.ts";
+import { LIVE_HALF_BANNER, type LiveHalfStatus } from "./live-gate.ts";
 
 /** Opt in with `ARGUS_LIVE_HERMES=1`, alongside #43's `ARGUS_LIVE_AGENTS`. */
 export const LIVE_HERMES_GATE = "ARGUS_LIVE_HERMES";
@@ -107,6 +107,53 @@ function realHalf(probe: HermesLiveProbe): HermesHalfVerdict {
     reason: `${probe.realProfile} holds an assistant row, and is opened read-only`,
     status: "run",
   };
+}
+
+export interface HermesVersionRecord {
+  /** `hermes --version`'s first line, or null if no half ran. */
+  cli: string | null;
+  /** `state.db`'s own `schema_version` — the anchor that outlives the CLI. */
+  schemaVersion: number | null;
+}
+
+/**
+ * The line the suite prints, whatever the gate says.
+ *
+ * `bun test` (1.3.12) prints no name for a skipped test — only an aggregate
+ * `N skip` — so a test name is not on its own a visible channel. This is.
+ *
+ * It names BOTH halves on every path, where #43 collapses to one line when its
+ * gate is shut. #43 can, because both of its halves then carry the same reason;
+ * these two never do. The real half is ungated, so on the default path it may
+ * genuinely run while the scratch half is skipped, and one line could not say
+ * that.
+ *
+ * The version is printed only when something ran, because an unrun check has no
+ * version to attribute anything to.
+ */
+export function describeHermesLiveGate(
+  gate: HermesLiveGate,
+  version: HermesVersionRecord,
+): string {
+  const halves = [gate.scratch, gate.real];
+  const head = gate.enabled
+    ? `${LIVE_HERMES_GATE}=1 — the live Hermes verification is ENABLED (it provisions and drives a scratch profile)`
+    : `argus: live Hermes verification — set ${LIVE_HERMES_GATE}=1 to provision and drive a scratch profile`;
+  const lines = halves.map(
+    (verdict) =>
+      `  ${verdict.half.padEnd(7)}  ${LIVE_HALF_BANNER[verdict.status]}  ${verdict.reason}`,
+  );
+  if (halves.every(({ status }) => status !== "run")) {
+    return [head, ...lines, "  NO live Hermes half can run on this machine"].join(
+      "\n",
+    );
+  }
+  const stamp = [
+    version.cli,
+    version.schemaVersion === null ? null : `state.db schema ${version.schemaVersion}`,
+  ].filter((part): part is string => part !== null);
+  if (stamp.length > 0) lines.push(`  verified against ${stamp.join(" · ")}`);
+  return [head, ...lines].join("\n");
 }
 
 export interface ScratchDriveOutcome {

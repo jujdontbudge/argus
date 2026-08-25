@@ -29,11 +29,23 @@ export type LiveHalfStatus =
   | "not-run"
   | "run";
 
-export interface LiveHalfVerdict {
-  agent: TestAgent;
+/**
+ * The part of a verdict the title and banner helpers actually read.
+ *
+ * ADDITIVE, #47: widened from `LiveHalfVerdict` so a half that is not an agent
+ * — the live Hermes verification's `scratch` and `real` halves — can reuse
+ * `liveHalfTitle` and `LIVE_HALF_BANNER` instead of growing a second, drifting
+ * vocabulary for the same three statuses. Every `LiveHalfVerdict` still
+ * satisfies it, so no existing call site changes.
+ */
+export interface LiveHalfOutcome {
   /** Plain English, and always populated — this is what the skip reports. */
   reason: string;
   status: LiveHalfStatus;
+}
+
+export interface LiveHalfVerdict extends LiveHalfOutcome {
+  agent: TestAgent;
 }
 
 export interface LiveAgentProbe {
@@ -101,7 +113,7 @@ function missingForCodex(probe: LiveAgentProbe): string | null {
  * test that was never written — and what distinguishes SKIPPED (nobody asked)
  * from NOT RUN (asked for, and a credential is missing).
  */
-export function liveHalfTitle(base: string, verdict: LiveHalfVerdict): string {
+export function liveHalfTitle(base: string, verdict: LiveHalfOutcome): string {
   switch (verdict.status) {
     case "gate-unset":
       return `${base} — SKIPPED: ${verdict.reason}`;
@@ -112,7 +124,8 @@ export function liveHalfTitle(base: string, verdict: LiveHalfVerdict): string {
   }
 }
 
-const BANNER_STATUS: Readonly<Record<LiveHalfStatus, string>> = {
+/** ADDITIVE, #47: exported so the live Hermes banner uses these exact words. */
+export const LIVE_HALF_BANNER: Readonly<Record<LiveHalfStatus, string>> = {
   "gate-unset": "SKIPPED",
   "not-run": "NOT RUN",
   run: "RUN    ",
@@ -139,7 +152,7 @@ export function describeLiveAgentGate(gate: LiveAgentGate): string {
   }
   const lines = halves.map(
     (verdict) =>
-      `  ${verdict.agent.padEnd(6)}  ${BANNER_STATUS[verdict.status]}  ${verdict.reason}`,
+      `  ${verdict.agent.padEnd(6)}  ${LIVE_HALF_BANNER[verdict.status]}  ${verdict.reason}`,
   );
   const head = `${LIVE_AGENT_GATE}=1 — live agent drives are ENABLED (this burns a subscription)`;
   if (halves.every(({ status }) => status !== "run")) {
