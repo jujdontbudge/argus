@@ -10,6 +10,8 @@ import type { ReadResult } from "./line-reader";
 export interface HermesSourceOptions {
   /** Configurable Hermes root. Production passes `~/.hermes`. */
   hermesRoot: string;
+  /** Optional profile allow-list used by one-repo watcher daemons. */
+  profiles?: readonly string[];
 }
 
 interface HermesRow {
@@ -226,7 +228,12 @@ export function createHermesSource(options: HermesSourceOptions): TranscriptSour
     listFiles: async () => {
       const entries = await readdir(profiles, { withFileTypes: true }).catch(() => []);
       return entries
-        .filter((entry) => entry.isDirectory() && entry.name.startsWith("argus-"))
+        .filter(
+          (entry) =>
+            entry.isDirectory() &&
+            entry.name.startsWith("argus-") &&
+            (options.profiles === undefined || options.profiles.includes(entry.name)),
+        )
         .map((entry) => join(profiles, entry.name, "state.db"))
         .filter((file) => Bun.file(file).size > 0)
         .sort();

@@ -142,6 +142,7 @@ export interface RetroEyeOptions {
   baseDelayMs?: number;
   maxDelayMs?: number;
   stuckAfterMs?: number;
+  signal?: AbortSignal;
 }
 
 /** The minimum a degradation needs to find a session's digest. */
@@ -545,6 +546,7 @@ export class RetroEye {
             stuckAfterMs: this.options.stuckAfterMs,
           }),
           now: this.now,
+          ...(this.options.signal !== undefined && { signal: this.options.signal }),
           ...(this.options.sleep !== undefined && { sleep: this.options.sleep }),
         },
       );
@@ -951,6 +953,7 @@ export interface OpenRetroOverrides {
   sleep?: (ms: number) => Promise<void>;
   onAlert?: (alert: StuckAlert) => void | Promise<void>;
   onAudit?: (audit: RetroAudit) => void | Promise<void>;
+  signal?: AbortSignal;
 }
 
 /**
@@ -983,5 +986,6 @@ export async function openRetro(
     ...(overrides.sleep !== undefined && { sleep: overrides.sleep }),
     ...(overrides.onAlert !== undefined && { onAlert: overrides.onAlert }),
     ...(overrides.onAudit !== undefined && { onAudit: overrides.onAudit }),
+    ...(overrides.signal !== undefined && { signal: overrides.signal }),
   });
 }

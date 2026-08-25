@@ -192,7 +192,7 @@ export class ArchiverEye {
           let occurrence = nextFallbackOccurrence.get(prefix);
           if (occurrence === undefined) {
             occurrence =
-              (startingCursors[record.event.file] ?? 0) > 0
+              (startingCursors[tailer.cursorKey(record.event.file)] ?? 0) > 0
                 ? fallbackCount.get(`${prefix}*`)!.count
                 : 0;
           }
@@ -231,4 +231,9 @@ export class ArchiverEye {
   close(): void {
     this.database.close(false);
   }
+}
+
+/** Production composition for the passive archive eye. */
+export function openArchiver(repo: string): Promise<ArchiverEye> {
+  return ArchiverEye.open({ repo });
 }

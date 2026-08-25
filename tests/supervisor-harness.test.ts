@@ -32,16 +32,15 @@ describe("supervisor harness acceptance", () => {
 
       expect(result.error).toBeNull();
       expect(result.status).toBe("passed");
-      expect(result.assertions).toEqual([
-        { description: "sandbox was converged by argus up", passed: true },
-        { description: "all five watcher fixtures started", passed: true },
-        { description: "reviewer restarted after death", passed: true },
-        { description: "archiver restarted after death", passed: true },
-        { description: "honcho restarted after death", passed: true },
-        { description: "digest restarted after death", passed: true },
-        { description: "retro restarted after death", passed: true },
-        { description: "supervisor stopped every watcher fixture", passed: true },
-      ]);
+      const descriptions = result.assertions.map(({ description }) => description);
+      expect(descriptions).toContain("all five real eye commands started");
+      for (const eye of ["reviewer", "archiver", "honcho", "digest", "retro"]) {
+        expect(descriptions).toContain(`${eye} restarted after death`);
+      }
+      expect(descriptions).toContain(
+        "the replacement archiver observed a transcript written after restart",
+      );
+      expect(descriptions).toContain("supervisor stopped every real eye command");
     } finally {
       await rm(reportDirectory, { force: true, recursive: true });
     }

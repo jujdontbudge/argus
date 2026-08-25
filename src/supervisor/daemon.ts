@@ -7,12 +7,14 @@ import {
 
 export function createWatcherSpawner(
   commandPrefix: readonly string[],
+  env?: Readonly<Record<string, string>>,
 ): SpawnWatcher {
   return ({ eye, repo }) => {
     const child = Bun.spawn(
       [...commandPrefix, "watch", eye, "--repo", repo],
       {
         cwd: repo,
+        ...(env !== undefined && { env }),
         stderr: "ignore",
         stdout: "ignore",
       },

@@ -101,9 +101,10 @@ export const archiverWatcherDeathScenario: ScenarioHandler = async ({
 }) => {
   const { file, source } = await transcriptFixture(sandbox.root);
   let eye = await ArchiverEye.open({ repo: sandbox.repo });
+  const baseline = eye.messageCount();
   const initial = await eye.catchUp(new Tailer(source), classifier());
   assert(
-    initial.inserted === 2 && eye.messageCount() === 2,
+    initial.inserted === 2 && eye.messageCount() === baseline + 2,
     "two messages committed before watcher death",
   );
 
@@ -144,7 +145,7 @@ export const archiverWatcherDeathScenario: ScenarioHandler = async ({
         backfill.inserted === 2 &&
         replay.received === 4 &&
         replay.inserted === 0 &&
-        eye.messageCount() === 4,
+        eye.messageCount() === baseline + 4,
       "kill-before-commit backfill has the exact message count with no duplicates",
     );
   } finally {

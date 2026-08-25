@@ -1,6 +1,8 @@
 export {
   HonchoEye,
   loadHonchoBinding,
+  openHoncho,
+  type OpenHonchoOverrides,
   type HonchoEyeOptions,
 } from "./honcho";
 export {

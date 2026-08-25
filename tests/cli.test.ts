@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { copyFile, mkdir, mkdtemp, readlink, rm } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readlink, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -53,13 +53,36 @@ describe("argus CLI", () => {
     expect(result.stderr).toContain("found 1.2.99");
   });
 
-  test("routes unfinished feature commands to explicit stubs", async () => {
-    for (const command of ["watch"]) {
-      const result = await runCli([command]);
+  test("watch rejects an unknown eye with the five valid names", async () => {
+    const result = await runCli(["watch", "cyclops", "--repo", checkout]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("unknown eye 'cyclops'");
+    for (const eye of ["reviewer", "digest", "retro", "archiver", "honcho"]) {
+      expect(result.stderr).toContain(eye);
+    }
+  });
+
+  test("watch refuses an unenrolled repo instead of entering a restart loop", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-watch-unenrolled-"));
+    const repo = join(root, "repo");
+    const registry = join(root, "argus-repos");
+    try {
+      await mkdir(repo);
+      await Bun.write(registry, "");
+
+      const result = await runCli(
+        ["watch", "reviewer", "--repo", repo],
+        [],
+        { ARGUS_REPOS_FILE: registry },
+      );
 
       expect(result.exitCode).toBe(1);
       expect(result.stdout).toBe("");
-      expect(result.stderr).toBe(`argus ${command}: not implemented yet\n`);
+      expect(result.stderr).toContain(`repo is not enrolled: ${await realpath(repo)}`);
+    } finally {
+      await rm(root, { force: true, recursive: true });
     }
   });
 

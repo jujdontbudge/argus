@@ -9,6 +9,7 @@ import type {
   HonchoPeerInput,
   HonchoSessionInput,
 } from "../../up/bindings";
+import { HttpHonchoClient } from "../../up/bindings";
 import {
   fileAlertEmitter,
   retryForever,
@@ -139,6 +140,7 @@ export class HonchoEye {
   readonly #retry: Omit<RetryForeverOptions, "eye" | "onAlert">;
   readonly #statePath: string;
   #flushPromise: Promise<void> | null = null;
+  #closed = false;
   #mutation: Promise<void> = Promise.resolve();
   #state: QueueState;
 
@@ -157,6 +159,13 @@ export class HonchoEye {
     this.#onAlert =
       options.onAlert ?? fileAlertEmitter(join(options.repo, ".argus/events"));
     this.#retry = options.retry ?? {};
+    this.#retry.signal?.addEventListener(
+      "abort",
+      () => {
+        this.#closed = true;
+      },
+      { once: true },
+    );
   }
 
   static async open(options: HonchoEyeOptions): Promise<HonchoEye> {
@@ -207,6 +216,7 @@ export class HonchoEye {
   }
 
   #startFlush(): void {
+    if (this.#closed) return;
     void this.flush().catch((error) => {
       console.error(
         `Honcho eye flush stopped: ${error instanceof Error ? error.message : String(error)}`,
@@ -219,7 +229,9 @@ export class HonchoEye {
     const running = this.#drain();
     this.#flushPromise = running.finally(() => {
       this.#flushPromise = null;
-      if (this.#autoFlush && this.#state.messages.length > 0) this.#startFlush();
+      if (!this.#closed && this.#autoFlush && this.#state.messages.length > 0) {
+        this.#startFlush();
+      }
     });
     return this.#flushPromise;
   }
@@ -279,4 +291,75 @@ export class HonchoEye {
       });
     }
   }
+
+  /** Stop scheduling retries; the durable queue remains for the next process. */
+  close(): void {
+    this.#closed = true;
+  }
+}
+
+export interface OpenHonchoOverrides {
+  client?: HonchoIngestionClient;
+  env?: Readonly<Record<string, string | undefined>>;
+  onAlert?: (alert: StuckAlert) => void | Promise<void>;
+  retry?: Omit<RetryForeverOptions, "eye" | "onAlert">;
+  signal?: AbortSignal;
+}
+
+async function honchoApiKey(
+  env: Readonly<Record<string, string | undefined>>,
+): Promise<string | null> {
+  const fromEnvironment = env.HONCHO_API_KEY?.trim();
+  if (fromEnvironment) return fromEnvironment;
+  const home = env.HOME;
+  if (!home) return null;
+  const path = env.HONCHO_CONFIG_FILE ?? join(home, ".honcho", "config.json");
+  try {
+    const config = (await Bun.file(path).json()) as { apiKey?: unknown };
+    return typeof config.apiKey === "string" && config.apiKey.trim() !== ""
+      ? config.apiKey.trim()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function unavailableHoncho(reason: string): HonchoIngestionClient {
+  const fail = async (): Promise<never> => {
+    throw new Error(reason);
+  };
+  return {
+    ensureWorkspace: fail,
+    ensurePeer: fail,
+    ensureSession: fail,
+    createMessages: fail,
+  };
+}
+
+/** Production composition: binding + credentials + durable retrying queue. */
+export async function openHoncho(
+  repo: string,
+  overrides: OpenHonchoOverrides = {},
+): Promise<HonchoEye> {
+  const binding = await loadHonchoBinding(repo);
+  const env = overrides.env ?? process.env;
+  const apiKey = await honchoApiKey(env);
+  if (overrides.client === undefined && apiKey === null) {
+    console.error(
+      "HONCHO DEGRADED: credentials unavailable; messages remain queued and the eye keeps retrying",
+    );
+  }
+  return HonchoEye.open({
+    repo,
+    client:
+      overrides.client ??
+      (apiKey === null
+        ? unavailableHoncho("Honcho credentials unavailable")
+        : new HttpHonchoClient(binding.url, apiKey)),
+    ...(overrides.onAlert !== undefined && { onAlert: overrides.onAlert }),
+    retry: {
+      ...(overrides.retry ?? {}),
+      ...(overrides.signal !== undefined && { signal: overrides.signal }),
+    },
+  });
 }
