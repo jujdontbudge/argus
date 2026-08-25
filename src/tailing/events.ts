@@ -37,6 +37,8 @@ export interface SessionMetaEvent {
   /** Source id, e.g. "claude-code". */
   agent: string;
   cwd?: string;
+  /** Canonical repository identity resolved from cwd while the path is live. */
+  repo?: string;
   version?: string;
   ts?: string;
   file: string;

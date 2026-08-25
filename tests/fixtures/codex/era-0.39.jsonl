@@ -1,0 +1,3 @@
+{"timestamp":"2025-09-20T10:00:00.000Z","type":"session_meta","payload":{"id":"00000000-0000-0000-0000-000000000039","cwd":"__CWD__","originator":"codex_cli_rs","cli_version":"0.39.0"}}
+{"timestamp":"2025-09-20T10:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"implement the rollout source"}]}}
+{"timestamp":"2025-09-20T10:00:02.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"implemented"}]}}
