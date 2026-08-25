@@ -1,7 +1,22 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, mkdtemp, readdir, readlink, rm } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readlink,
+  realpath,
+  rm,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+
+import {
+  convergeAgentBindings,
+  type HonchoClient,
+  type HonchoPeerInput,
+  type HonchoWorkspaceInput,
+} from "../up/bindings.ts";
 
 export interface CommandResult {
   exitCode: number;
@@ -68,8 +83,8 @@ export async function createSandbox(
 ): Promise<Sandbox> {
   const root = await mkdtemp(join(tmpdir(), "argus-harness-"));
   const home = join(root, "home");
-  const repo = join(root, "repo");
   const id = basename(root);
+  const repo = join(root, `scratch-${id}`);
   const state = {
     ARGUS_REPOS_FILE: join(root, "state/argus-repos"),
     CLAUDE_CONFIG_DIR: join(root, "state/claude"),
@@ -93,7 +108,10 @@ export async function createSandbox(
       value !== undefined &&
       !name.startsWith("CMUX_") &&
       name !== "CODEX_SESSION_ID" &&
-      name !== "CODEX_THREAD_ID"
+      name !== "CODEX_THREAD_ID" &&
+      name !== "HONCHO_API_KEY" &&
+      name !== "HONCHO_CONFIG_FILE" &&
+      name !== "HONCHO_URL"
     ) {
       env[name] = value;
     }
@@ -262,6 +280,8 @@ export class ScenarioRegistry {
 
 export function createScenarioRegistry(): ScenarioRegistry {
   const registry = new ScenarioRegistry();
+  registry.register(2, fakeJohanBindingScenario);
+  registry.register(9, semanticIsolationScenario);
   registry.register(10, blastRadiusZeroScenario);
   return registry;
 }
@@ -343,6 +363,165 @@ async function snapshotTree(root: string): Promise<string> {
   await visit(root);
   return JSON.stringify(entries);
 }
+
+class FixtureHoncho implements HonchoClient {
+  readonly #messages = new Map<
+    string,
+    Array<{ content: string; peer: string }>
+  >();
+  readonly #peers = new Map<string, Map<string, HonchoPeerInput>>();
+  readonly #workspaces = new Map<string, HonchoWorkspaceInput>();
+
+  async ensureWorkspace(
+    input: HonchoWorkspaceInput,
+  ): Promise<"created" | "existing"> {
+    const result = this.#workspaces.has(input.id) ? "existing" : "created";
+    this.#workspaces.set(input.id, input);
+    return result;
+  }
+
+  async ensurePeer(
+    workspace: string,
+    input: HonchoPeerInput,
+  ): Promise<"created" | "existing"> {
+    const peers = this.#peers.get(workspace) ?? new Map<string, HonchoPeerInput>();
+    const result = peers.has(input.id) ? "existing" : "created";
+    peers.set(input.id, input);
+    this.#peers.set(workspace, peers);
+    return result;
+  }
+
+  isObservable(workspace: string, peer: string): boolean {
+    const input = this.#peers.get(workspace)?.get(peer);
+    return input !== undefined && input.configuration?.observe_me !== false;
+  }
+
+  observe(workspace: string, peer: string, content: string): void {
+    if (!this.isObservable(workspace, peer)) {
+      throw new Error(`fixture peer ${peer} is not observable in ${workspace}`);
+    }
+    this.ingest(workspace, peer, content);
+  }
+
+  ingest(workspace: string, peer: string, content: string): void {
+    if (!this.#peers.get(workspace)?.has(peer)) {
+      throw new Error(`fixture peer ${peer} is missing from ${workspace}`);
+    }
+    const messages = this.#messages.get(workspace) ?? [];
+    messages.push({ content, peer });
+    this.#messages.set(workspace, messages);
+  }
+
+  messageCount(workspace: string): number {
+    return this.#messages.get(workspace)?.length ?? 0;
+  }
+
+  read(workspace: string, peer: string): readonly string[] {
+    if (!this.isObservable(workspace, peer)) return [];
+    return (this.#messages.get(workspace) ?? [])
+      .filter((message) => message.peer === peer)
+      .map((message) => message.content);
+  }
+}
+
+async function bindFixtureSandbox(
+  sandbox: Sandbox,
+  honcho: HonchoClient,
+) {
+  return convergeAgentBindings({
+    hermesRoot: envPath(sandbox, "HERMES_HOME"),
+    honcho,
+    honchoUrl: "http://honcho.fixture",
+    repo: sandbox.repo,
+  });
+}
+
+export const fakeJohanBindingScenario: ScenarioHandler = async ({
+  assert,
+  sandbox,
+}) => {
+  assert(sandbox.up.exitCode === 0, "sandbox was converged by argus up");
+  const honcho = new FixtureHoncho();
+  const binding = await bindFixtureSandbox(sandbox, honcho);
+  assert(
+    honcho.isObservable(binding.workspace, "johan"),
+    "Johan is the observable Honcho peer",
+  );
+  honcho.observe(binding.workspace, "johan", "Fake Johan attached mid-ticket");
+  assert(
+    honcho.read(binding.workspace, "johan").includes(
+      "Fake Johan attached mid-ticket",
+    ),
+    "user-peer observation was logged",
+  );
+};
+
+export const semanticIsolationScenario: ScenarioHandler = async ({
+  assert,
+  sandbox,
+}) => {
+  const peer = await sandbox.createPeer();
+  try {
+    assert(sandbox.up.exitCode === 0, "primary sandbox was converged by argus up");
+    assert(peer.up.exitCode === 0, "peer sandbox was converged by argus up");
+    const honcho = new FixtureHoncho();
+    const primaryBinding = await bindFixtureSandbox(sandbox, honcho);
+    const peerBinding = await bindFixtureSandbox(peer, honcho);
+
+    assert(
+      primaryBinding.workspace !== peerBinding.workspace,
+      "repos bind separate Honcho workspaces",
+    );
+    assert(
+      primaryBinding.profile !== peerBinding.profile,
+      "repos bind separate Hermes profiles",
+    );
+
+    const primaryMemories = join(
+      envPath(sandbox, "HERMES_HOME"),
+      "profiles",
+      primaryBinding.profile,
+      "memories",
+    );
+    const peerMemories = join(
+      envPath(peer, "HERMES_HOME"),
+      "profiles",
+      peerBinding.profile,
+      "memories",
+    );
+    const primaryTarget = resolve(
+      dirname(primaryMemories),
+      await readlink(primaryMemories),
+    );
+    const peerTarget = resolve(dirname(peerMemories), await readlink(peerMemories));
+    assert(
+      (await realpath(primaryTarget)) ===
+        (await realpath(join(sandbox.repo, ".argus", "memory"))) &&
+        (await realpath(peerTarget)) ===
+          (await realpath(join(peer.repo, ".argus", "memory"))) &&
+        primaryTarget !== peerTarget,
+      "Hermes memories resolve only inside each repo",
+    );
+
+    honcho.observe(primaryBinding.workspace, "johan", "primary-johan");
+    honcho.ingest(primaryBinding.workspace, "codex", "agent-decoy");
+    honcho.observe(peerBinding.workspace, "johan", "peer-johan");
+    assert(
+      JSON.stringify(honcho.read(primaryBinding.workspace, "johan")) ===
+        JSON.stringify(["primary-johan"]) &&
+        honcho.read(primaryBinding.workspace, "codex").length === 0 &&
+        honcho.messageCount(primaryBinding.workspace) === 2,
+      "primary Johan reads exclude agent and peer-repo observations",
+    );
+    assert(
+      JSON.stringify(honcho.read(peerBinding.workspace, "johan")) ===
+        JSON.stringify(["peer-johan"]),
+      "peer Johan reads exclude primary-repo observations",
+    );
+  } finally {
+    await peer.teardown();
+  }
+};
 
 export const blastRadiusZeroScenario: ScenarioHandler = async ({
   assert,

@@ -136,7 +136,7 @@ describe("argus up", () => {
         (
           await lstat(
             join(
-              env.HERMES_HOME,
+              env.HERMES_HOME!,
               "profiles",
               "argus-scratch-fake-honcho",
               "memories",

@@ -5,6 +5,7 @@ import {
   readFile,
   readlink,
   readdir,
+  realpath,
   rename,
   rm,
   symlink,
@@ -263,7 +264,7 @@ async function ensureHermesProfile(
     const metadata = await lstat(memories);
     if (metadata.isSymbolicLink()) {
       const target = resolve(dirname(memories), await readlink(memories));
-      if (target !== resolve(memoryDirectory)) {
+      if ((await realpath(target)) !== (await realpath(memoryDirectory))) {
         throw new Error(
           `argus up: Hermes memories already points to ${target}; refusing to replace it`,
         );

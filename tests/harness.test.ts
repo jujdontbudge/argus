@@ -100,14 +100,14 @@ describe("fake-Johan harness", () => {
 
     expect(registry.list()).toEqual([
       { number: 1, status: "unimplemented", title: "Autonomous batch, zero human input" },
-      { number: 2, status: "unimplemented", title: "Fake-Johan takeover" },
+      { number: 2, status: "implemented", title: "Fake-Johan takeover" },
       { number: 3, status: "unimplemented", title: "Rogue session" },
       { number: 4, status: "unimplemented", title: "The poisoning test" },
       { number: 5, status: "unimplemented", title: "Fault injection: the unlogged send" },
       { number: 6, status: "unimplemented", title: "Watcher death" },
       { number: 7, status: "unimplemented", title: "Signal paths" },
       { number: 8, status: "unimplemented", title: "Self-learning loop" },
-      { number: 9, status: "unimplemented", title: "Semantic isolation" },
+      { number: 9, status: "implemented", title: "Semantic isolation" },
       { number: 10, status: "implemented", title: "Blast-radius zero" },
     ]);
 
@@ -119,6 +119,8 @@ describe("fake-Johan harness", () => {
       title: "Rogue session",
     });
     expect(registry.get(3)).toBeFunction();
+    expect(registry.get(2)).toBeFunction();
+    expect(registry.get(9)).toBeFunction();
     expect(registry.get(10)).toBeFunction();
   });
 
@@ -243,6 +245,58 @@ describe("fake-Johan harness", () => {
         { description: "primary .argus state was removed", passed: true },
         { description: "peer .argus state stayed byte-identical", passed: true },
         { description: "peer supervisor state stayed byte-identical", passed: true },
+      ]);
+    } finally {
+      await rm(reportDirectory, { force: true, recursive: true });
+    }
+  });
+
+  test("scenario 2 logs a Fake-Johan observation against the user peer", async () => {
+    const reportDirectory = await mkdtemp(join(tmpdir(), "argus-reports-"));
+    const scenario = createScenarioRegistry().get(2);
+
+    try {
+      expect(scenario).toBeFunction();
+      const result = await runScenario({
+        checkout,
+        name: "fake-johan-binding",
+        reportDirectory,
+        scenario: scenario!,
+      });
+
+      expect(result.status).toBe("passed");
+      expect(result.assertions).toEqual([
+        { description: "sandbox was converged by argus up", passed: true },
+        { description: "Johan is the observable Honcho peer", passed: true },
+        { description: "user-peer observation was logged", passed: true },
+      ]);
+    } finally {
+      await rm(reportDirectory, { force: true, recursive: true });
+    }
+  });
+
+  test("scenario 9 keeps two repos' Honcho and Hermes semantics isolated", async () => {
+    const reportDirectory = await mkdtemp(join(tmpdir(), "argus-reports-"));
+    const scenario = createScenarioRegistry().get(9);
+
+    try {
+      expect(scenario).toBeFunction();
+      const result = await runScenario({
+        checkout,
+        name: "semantic-isolation",
+        reportDirectory,
+        scenario: scenario!,
+      });
+
+      expect(result.status).toBe("passed");
+      expect(result.assertions).toEqual([
+        { description: "primary sandbox was converged by argus up", passed: true },
+        { description: "peer sandbox was converged by argus up", passed: true },
+        { description: "repos bind separate Honcho workspaces", passed: true },
+        { description: "repos bind separate Hermes profiles", passed: true },
+        { description: "Hermes memories resolve only inside each repo", passed: true },
+        { description: "primary Johan reads exclude agent and peer-repo observations", passed: true },
+        { description: "peer Johan reads exclude primary-repo observations", passed: true },
       ]);
     } finally {
       await rm(reportDirectory, { force: true, recursive: true });
