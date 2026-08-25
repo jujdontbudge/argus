@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  appendFile,
   mkdir,
   mkdtemp,
   realpath,
@@ -121,15 +122,18 @@ describe("Codex rollout source", () => {
         rolloutDir,
         "rollout-2026-08-20T10-00-00-11111111-1111-1111-1111-111111111111.jsonl",
       );
-      await writeFile(
-        rollout,
-        fixture
-          .replaceAll("__START_CWD__", startRepo)
-          .replaceAll("__LATEST_CWD__", latestRepo)
-          .replaceAll("__PARENT_CWD__", parentRepo),
-      );
+      const rendered = fixture
+        .replaceAll("__START_CWD__", startRepo)
+        .replaceAll("__LATEST_CWD__", latestRepo)
+        .replaceAll("__PARENT_CWD__", parentRepo);
+      const [firstLine, ...resumeLines] = rendered.trimEnd().split("\n");
+      if (!firstLine) throw new Error("resume fixture is empty");
+      await writeFile(rollout, `${firstLine}\n`);
+      const tailer = new Tailer(createCodexSource({ codexHome }));
+      const initial = await tailer.catchUp();
+      await appendFile(rollout, `${resumeLines.join("\n")}\n`);
 
-      const events = await new Tailer(createCodexSource({ codexHome })).catchUp();
+      const events = [...initial, ...(await tailer.catchUp())];
       const metas = events.filter((event) => event.type === "session-meta");
 
       expect(metas).toEqual([
@@ -240,6 +244,39 @@ describe("Codex rollout source", () => {
       });
     } finally {
       await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  test("canonicalizes /tmp and /private/tmp aliases before comparing cwd", async () => {
+    const aliasRoot = await mkdtemp("/tmp/argus-codex-realpath-");
+    try {
+      const repo = join(aliasRoot, "repo");
+      await initializeRepo(repo);
+      const canonicalRepo = await realpath(repo);
+      const codexHome = join(aliasRoot, "codex");
+      const rolloutDir = join(codexHome, "sessions/2026/06/05");
+      await mkdir(rolloutDir, { recursive: true });
+      const rollout = join(
+        rolloutDir,
+        "rollout-2026-06-05T10-00-00-77777777-7777-7777-7777-777777777777.jsonl",
+      );
+      const fixture = await Bun.file(
+        join(fixtureRoot, "edge-realpath-alias.jsonl"),
+      ).text();
+      await writeFile(
+        rollout,
+        fixture
+          .replaceAll("__META_CWD__", repo)
+          .replaceAll("__TURN_CWD__", canonicalRepo),
+      );
+
+      const events = await new Tailer(createCodexSource({ codexHome })).catchUp();
+      const metas = events.filter((event) => event.type === "session-meta");
+
+      expect(metas).toHaveLength(1);
+      expect(metas[0]).toMatchObject({ cwd: canonicalRepo, repo: canonicalRepo });
+    } finally {
+      await rm(aliasRoot, { force: true, recursive: true });
     }
   });
 

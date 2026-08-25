@@ -1,0 +1,2 @@
+{"timestamp":"2026-06-05T10:00:00.000Z","type":"session_meta","payload":{"id":"77777777-7777-7777-7777-777777777777","cwd":"__META_CWD__","cli_version":"0.137.0"}}
+{"timestamp":"2026-06-05T10:00:01.000Z","type":"turn_context","payload":{"cwd":"__TURN_CWD__"}}
