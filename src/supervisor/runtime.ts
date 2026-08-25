@@ -26,6 +26,7 @@ export type SpawnWatcher = (request: WatcherSpawnRequest) => WatcherProcess;
 
 export interface WatcherSupervisorOptions {
   registryPath: string;
+  restartDelayMilliseconds?: number;
   spawn: SpawnWatcher;
   statusPath: string;
 }
@@ -79,11 +80,13 @@ export class WatcherSupervisor {
       for (const eye of EYE_NAMES) {
         const key = watcherKey(repo, eye);
         if (this.#children.has(key)) continue;
+        const process = this.#options.spawn({ eye, repo });
         this.#children.set(key, {
           eye,
-          process: this.#options.spawn({ eye, repo }),
+          process,
           repo,
         });
+        void process.exited.then(() => this.#restartAfterExit(key, process));
       }
     }
 
@@ -102,5 +105,16 @@ export class WatcherSupervisor {
     };
     await mkdir(dirname(this.#options.statusPath), { recursive: true });
     await Bun.write(this.#options.statusPath, `${JSON.stringify(status, null, 2)}\n`);
+  }
+
+  async #restartAfterExit(
+    key: string,
+    process: WatcherProcess,
+  ): Promise<void> {
+    if (this.#children.get(key)?.process !== process) return;
+    this.#children.delete(key);
+    await this.#writeStatus();
+    await Bun.sleep(this.#options.restartDelayMilliseconds ?? 1_000);
+    await this.reconcile();
   }
 }
