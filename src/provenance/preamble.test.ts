@@ -19,7 +19,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createCodexSource, Tailer, type TailEvent } from "../tailing";
-import { ProvenanceClassifier, type ProvenanceAuditEvent } from "./classifier";
+import {
+  ProvenanceClassifier,
+  type ProvenanceAuditEvent,
+  type ProvenanceRecord,
+} from "./classifier";
 
 const FIXTURE = fileURLToPath(
   new URL("../../tests/fixtures/codex/scenario-injected-preamble.jsonl", import.meta.url),
@@ -59,7 +63,7 @@ function classify(events: readonly TailEvent[]) {
     dispatchPrompt: DISPATCH,
   });
   const audits: ProvenanceAuditEvent[] = [];
-  const records = [];
+  const records: ProvenanceRecord[] = [];
   for (const event of events) {
     const output = classifier.handle(event);
     if (output.record) records.push(output.record);
