@@ -46,7 +46,12 @@ export {
   type Rejection,
   type RejectionReason,
 } from "./reviewer/outputs";
-export { ReviewerEye, type ReviewerEyeOptions } from "./reviewer/reviewer";
+export {
+  openReviewer,
+  ReviewerEye,
+  type OpenReviewerOverrides,
+  type ReviewerEyeOptions,
+} from "./reviewer/reviewer";
 export {
   normalizeSlug,
   parseVerdict,

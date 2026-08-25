@@ -6,7 +6,7 @@ import type { Brain, BrainRequest } from "../brain";
 import { createBrainCap } from "../cap";
 import type { StuckAlert } from "../backpressure";
 import type { MessageEvent, ProvenanceRecord } from "./reviewer";
-import { ReviewerEye } from "./reviewer";
+import { openReviewer, ReviewerEye } from "./reviewer";
 
 const CADENCE = { quietWindowSeconds: 30, maxWaitSeconds: 300 };
 const SECOND = 1_000;
@@ -294,6 +294,29 @@ describe("Reviewer eye — debounced/coalesced per-turn evaluation", () => {
       world.clock.set(30 * SECOND);
       await eye.tick();
       expect(await readdir(join(world.root, "slots"))).toEqual([]);
+    });
+  });
+
+  test("openReviewer wires .argus/config.yaml values into the eye (defaults in code)", async () => {
+    await withWorld(async (world) => {
+      await Bun.write(
+        join(world.repo, ".argus/config.yaml"),
+        "reviewer:\n  quiet_window_seconds: 5\n  max_wait_seconds: 60\n",
+      );
+      const scripted = scriptedBrain([verdictText([])]);
+      const eye = await openReviewer(world.repo, {
+        brain: scripted.brain,
+        capDirectory: join(world.root, "slots"),
+        now: world.clock.now,
+        sleep: async () => {},
+        onAlert: () => {},
+      });
+      await eye.ingest([record("uuid-1", "agent", "content")]);
+      // The configured 5s quiet window applies, not the 30s default.
+      expect(eye.dueAt()).toBe(5 * SECOND);
+      world.clock.set(5 * SECOND);
+      expect(await eye.tick()).toBe(true);
+      expect(scripted.requests.length).toBe(1);
     });
   });
 

@@ -13,10 +13,10 @@
 import { mkdir, rename } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileAlertEmitter, retryForever, type StuckAlert } from "../backpressure";
-import type { Brain } from "../brain";
-import type { BrainCap } from "../cap";
+import { createCodexBrain, type Brain } from "../brain";
+import { createBrainCap, defaultBrainSlotsDirectory, type BrainCap } from "../cap";
 import { Coalescer, type CoalesceWindow } from "../coalesce";
-import type { CadenceConfig } from "../config";
+import { loadEyesConfig, type CadenceConfig } from "../config";
 import { applyFindings, foldHermesEntries, repairMemoryIndex } from "./outputs";
 import { parseVerdict, REVIEWER_OUTPUT_SCHEMA, type Verdict } from "./schema";
 
@@ -230,4 +230,44 @@ export class ReviewerEye {
     );
     await rename(temporary, this.statePath);
   }
+}
+
+/** Pieces `openReviewer` composes from config that a caller may substitute. */
+export interface OpenReviewerOverrides {
+  brain?: Brain;
+  /** Brain-slot directory; defaults machine-wide per `defaultBrainSlotsDirectory`. */
+  capDirectory?: string;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+  onAlert?: (alert: StuckAlert) => void | Promise<void>;
+}
+
+/**
+ * The production composition (the wiring #34's supervisor calls): cadence,
+ * model/effort and the machine cap all come from `.argus/config.yaml` with
+ * defaults in code, the brain is the real codex CLI, and the cap directory
+ * is the machine-shared one.
+ */
+export async function openReviewer(
+  repo: string,
+  overrides: OpenReviewerOverrides = {},
+): Promise<ReviewerEye> {
+  const config = await loadEyesConfig(repo);
+  return ReviewerEye.open({
+    repo,
+    brain:
+      overrides.brain ??
+      createCodexBrain({
+        model: config.brain.model,
+        reasoningEffort: config.brain.reasoningEffort,
+      }),
+    cap: createBrainCap({
+      directory: overrides.capDirectory ?? defaultBrainSlotsDirectory(),
+      maxConcurrency: config.brain.maxConcurrency,
+    }),
+    cadence: config.reviewer,
+    ...(overrides.now !== undefined && { now: overrides.now }),
+    ...(overrides.sleep !== undefined && { sleep: overrides.sleep }),
+    ...(overrides.onAlert !== undefined && { onAlert: overrides.onAlert }),
+  });
 }
