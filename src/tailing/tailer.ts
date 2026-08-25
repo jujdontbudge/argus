@@ -73,6 +73,11 @@ export class Tailer {
     return Object.fromEntries(this.offsets);
   }
 
+  /** Persisted key corresponding to an event's physical source file. */
+  cursorKey(file: string): string {
+    return this.source.fileKey?.(file) ?? file;
+  }
+
   /**
    * Continuously deliver new events. Returns an async stop function that
    * resolves once the in-flight poll (if any) has completed — a batch in

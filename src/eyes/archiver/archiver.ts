@@ -192,7 +192,7 @@ export class ArchiverEye {
           let occurrence = nextFallbackOccurrence.get(prefix);
           if (occurrence === undefined) {
             occurrence =
-              (startingCursors[record.event.file] ?? 0) > 0
+              (startingCursors[tailer.cursorKey(record.event.file)] ?? 0) > 0
                 ? fallbackCount.get(`${prefix}*`)!.count
                 : 0;
           }

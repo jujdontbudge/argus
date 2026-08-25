@@ -121,7 +121,11 @@ describe("ArchiverEye", () => {
     await writeFile(transcript, repeated + repeated);
 
     try {
-      const source = createClaudeCodeSource({ dir: transcripts });
+      const physical = createClaudeCodeSource({ dir: transcripts });
+      const source = {
+        ...physical,
+        fileKey: () => "logical-session-26",
+      };
       const eye = await ArchiverEye.open({ repo });
       expect((await eye.catchUp(new Tailer(source), classifier())).inserted).toBe(2);
 
