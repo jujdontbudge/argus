@@ -114,4 +114,42 @@ describe("watcher supervisor", () => {
       false,
     );
   });
+
+  test("the daemon observes registry removal and terminates every child on shutdown", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-supervisor-"));
+    roots.push(root);
+    const registryPath = join(root, "repos");
+    const repo = join(root, "repo");
+    await Bun.write(registryPath, `${repo}\n`);
+    let nextPid = 300;
+    const spawned: FakeProcess[] = [];
+    const supervisor = new WatcherSupervisor({
+      registryPath,
+      spawn: () => {
+        const process = new FakeProcess(nextPid++);
+        spawned.push(process);
+        return process;
+      },
+      statusPath: join(root, "status.json"),
+    });
+    const controller = new AbortController();
+    const running = supervisor.run(controller.signal, 5);
+    for (let attempt = 0; spawned.length < 5 && attempt < 20; attempt += 1) {
+      await Bun.sleep(5);
+    }
+
+    await Bun.write(registryPath, "");
+    for (
+      let attempt = 0;
+      spawned.some((process) => !process.killed) && attempt < 20;
+      attempt += 1
+    ) {
+      await Bun.sleep(5);
+    }
+    controller.abort();
+    await running;
+
+    expect(spawned).toHaveLength(5);
+    expect(spawned.every((process) => process.killed)).toBe(true);
+  });
 });

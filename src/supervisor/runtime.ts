@@ -89,6 +89,23 @@ export class WatcherSupervisor {
     await this.#writeStatus();
   }
 
+  async run(signal: AbortSignal, pollMilliseconds = 1_000): Promise<void> {
+    try {
+      while (!signal.aborted) {
+        await this.reconcile();
+        await Bun.sleep(pollMilliseconds);
+      }
+    } finally {
+      await this.stop();
+    }
+  }
+
+  async stop(): Promise<void> {
+    for (const child of this.#children.values()) child.process.kill("SIGTERM");
+    this.#children.clear();
+    await this.#writeStatus();
+  }
+
   async #writeStatus(): Promise<void> {
     const watchers = [...this.#children.values()]
       .map(({ eye, process, repo }) => ({ eye, pid: process.pid, repo, state: "running" as const }))
