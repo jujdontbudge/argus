@@ -99,6 +99,17 @@ const DEFAULT_MAX_SEEN = 1_000;
 const FIELD_FORMAT = "%x1f";
 const FIELD = "\u001f";
 
+/**
+ * Argus' own state is not work. `.argus/` holds the eyes' cursors, digests
+ * and registry — all of it changing constantly and none of it a retro — so
+ * the scan is blind to it whether or not the repo remembered to gitignore it.
+ */
+const ARGUS_DIR = ".argus";
+
+function isArgusState(path: string): boolean {
+  return path === ARGUS_DIR || path.startsWith(`${ARGUS_DIR}/`);
+}
+
 function truncate(diff: string, limit: number): string {
   if (diff.length <= limit) return diff;
   return `${diff.slice(0, limit)}\n… diff truncated at ${limit} bytes …\n`;
@@ -124,7 +135,9 @@ async function readCommit(
     ts,
     subject,
     body: body.trimEnd(),
-    files: names.stdout.split("\n").filter((line) => line.trim().length > 0),
+    files: names.stdout
+      .split("\n")
+      .filter((line) => line.trim().length > 0 && !isArgusState(line)),
     diff: truncate(diff.stdout, maxDiffBytes),
   };
 }
@@ -180,12 +193,13 @@ async function workingTreeOf(
     const code = line.slice(0, 2);
     // Renames read `R  old -> new`; the new path is what the diff shows.
     const path = line.slice(3).split(" -> ").at(-1)!.replace(/^"|"$/g, "");
+    if (isArgusState(path)) continue;
     files.push(path);
     if (code === "??") untracked.push(path);
   }
   if (files.length === 0) return null;
 
-  const tracked = await run(["diff", "HEAD"], dir);
+  const tracked = await run(["diff", "HEAD", "--", ".", `:(exclude)${ARGUS_DIR}`], dir);
   const parts = tracked.exitCode === 0 ? [tracked.stdout] : [];
   for (const path of untracked) {
     // `--no-index` exits 1 when the files differ: that IS the success case.
@@ -198,8 +212,12 @@ async function workingTreeOf(
   };
 }
 
-/** Symlinked temp dirs (macOS `/var` → `/private/var`) must compare equal. */
-async function resolve(path: string): Promise<string> {
+/**
+ * Symlinked directories (macOS temp dirs are `/var` → `/private/var`) must
+ * compare equal: git reports resolved paths, so everything joined against a
+ * checkout — registry workspaces, observed session cwds — is resolved too.
+ */
+export async function resolvePath(path: string): Promise<string> {
   try {
     return await realpath(path);
   } catch {
@@ -222,14 +240,14 @@ async function listRoots(
     const dirs: string[] = [];
     for (const line of listed.stdout.split("\n")) {
       const match = line.match(/^worktree (.+)$/);
-      if (match) dirs.push(await resolve(match[1]!));
+      if (match) dirs.push(await resolvePath(match[1]!));
     }
     if (dirs.length > 0) return { repoRoot: dirs[0]!, dirs };
   }
   // No worktree support (or a bare/odd layout): the checkout is its own root.
   const toplevel = await run(["rev-parse", "--show-toplevel"], from);
   if (toplevel.exitCode !== 0) return null;
-  const dir = await resolve(toplevel.stdout.trim());
+  const dir = await resolvePath(toplevel.stdout.trim());
   return { repoRoot: dir, dirs: [dir] };
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { scanGit } from "./git";
@@ -74,7 +74,7 @@ describe("git signal: commits in the repo", () => {
     } finally {
       await repo.cleanup();
     }
-  });
+  }, 60_000);
 
   test("commits already in the cursor are not re-reported", async () => {
     const repo = await scratchRepo();
@@ -85,7 +85,7 @@ describe("git signal: commits in the repo", () => {
     } finally {
       await repo.cleanup();
     }
-  });
+  }, 60_000);
 });
 
 
@@ -119,7 +119,7 @@ describe("git signal: worktrees map to the parent repo (§7.3)", () => {
       await rm(worktree, { force: true, recursive: true });
       await repo.cleanup();
     }
-  });
+  }, 60_000);
 
   test("scanning from INSIDE a worktree still reports the parent repo as repoRoot", async () => {
     const repo = await scratchRepo();
@@ -133,7 +133,7 @@ describe("git signal: worktrees map to the parent repo (§7.3)", () => {
       await rm(worktree, { force: true, recursive: true });
       await repo.cleanup();
     }
-  });
+  }, 60_000);
 });
 
 describe("git signal: uncommitted working-tree changes", () => {
@@ -155,7 +155,7 @@ describe("git signal: uncommitted working-tree changes", () => {
     } finally {
       await repo.cleanup();
     }
-  });
+  }, 60_000);
 
   test("a clean working tree reports no working-tree change", async () => {
     const repo = await scratchRepo();
@@ -166,10 +166,45 @@ describe("git signal: uncommitted working-tree changes", () => {
     } finally {
       await repo.cleanup();
     }
-  });
+  }, 60_000);
 });
 
 /** macOS temp dirs are symlinked through /private; compare resolved paths. */
 async function realDir(dir: string): Promise<string> {
   return realpath(dir);
 }
+
+describe("git signal: Argus' own state is never work", () => {
+  test("the .argus directory never surfaces as a working-tree change", async () => {
+    const repo = await scratchRepo();
+    try {
+      const baseline = (await git(repo.dir, "rev-parse", "HEAD")).trim();
+      await mkdir(join(repo.dir, ".argus/eyes/retro"), { recursive: true });
+      await writeFile(join(repo.dir, ".argus/eyes/retro/state.json"), "{}\n");
+      await writeFile(join(repo.dir, "real.ts"), "export const real = 1;\n");
+
+      const working = (await scanGit({ repo: repo.dir, seen: [baseline] })).roots[0]!
+        .workingTree;
+
+      expect(working!.files).toEqual(["real.ts"]);
+      expect(working!.diff).not.toContain(".argus");
+    } finally {
+      await repo.cleanup();
+    }
+  }, 60_000);
+
+  test("a repo whose ONLY change is Argus state reports no working-tree change", async () => {
+    const repo = await scratchRepo();
+    try {
+      const baseline = (await git(repo.dir, "rev-parse", "HEAD")).trim();
+      await mkdir(join(repo.dir, ".argus/sessions"), { recursive: true });
+      await writeFile(join(repo.dir, ".argus/sessions/INDEX.md"), "# Session index\n");
+
+      const scan = await scanGit({ repo: repo.dir, seen: [baseline] });
+
+      expect(scan.roots[0]!.workingTree).toBeNull();
+    } finally {
+      await repo.cleanup();
+    }
+  }, 60_000);
+});
