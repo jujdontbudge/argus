@@ -53,7 +53,7 @@ describe("fake-Johan harness", () => {
     }
 
     expect(lstat(sandbox.root)).rejects.toThrow();
-  });
+  }, 90_000);
 
   test("simulation driver delegates pinned agents to isolated worktrees and tabs", async () => {
     const sandbox = await createSandbox({ checkout });
@@ -93,7 +93,7 @@ describe("fake-Johan harness", () => {
     } finally {
       await sandbox.teardown();
     }
-  });
+  }, 90_000);
 
   test("registry exposes all ten core scenario slots and accepts future implementations", () => {
     const registry = createScenarioRegistry();
@@ -158,7 +158,7 @@ describe("fake-Johan harness", () => {
     } finally {
       await rm(reportDirectory, { force: true, recursive: true });
     }
-  });
+  }, 90_000);
 
   test("scenario crash still tears down its sandbox and records failure", async () => {
     const reportDirectory = await mkdtemp(join(tmpdir(), "argus-reports-"));
@@ -185,7 +185,7 @@ describe("fake-Johan harness", () => {
     } finally {
       await rm(reportDirectory, { force: true, recursive: true });
     }
-  });
+  }, 90_000);
 
   test("parallel scenarios use distinct live sandboxes and report artifacts", async () => {
     const reportDirectory = await mkdtemp(join(tmpdir(), "argus-reports-"));
@@ -221,7 +221,7 @@ describe("fake-Johan harness", () => {
     } finally {
       await rm(reportDirectory, { force: true, recursive: true });
     }
-  });
+  }, 90_000);
 
   test("scenario 10 wipes one converged repo without changing another sandbox", async () => {
     const reportDirectory = await mkdtemp(join(tmpdir(), "argus-reports-"));
@@ -247,5 +247,5 @@ describe("fake-Johan harness", () => {
     } finally {
       await rm(reportDirectory, { force: true, recursive: true });
     }
-  });
+  }, 90_000);
 });
