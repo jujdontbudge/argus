@@ -1,4 +1,3 @@
-import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -198,10 +197,4 @@ export function formatSupervisorStatus(rows: readonly ProcessStatusRow[]): strin
         .trimEnd(),
     )
     .join("\n")}\n`;
-}
-
-export async function ensureStatusDirectory(
-  configuration = supervisorConfiguration(),
-): Promise<void> {
-  await mkdir(join(configuration.job.statusPath, ".."), { recursive: true });
 }
