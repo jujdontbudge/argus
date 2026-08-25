@@ -43,6 +43,12 @@ const CODEX_SYNTHETIC_PREFIXES = [
   "<user_instructions>",
   "<environment_context>",
   "<ide_context>",
+  // codex-cli 0.149.1 injects its plugin catalogue as a user-role item too.
+  // Missing it is not cosmetic: a user message in a REGISTERED session that
+  // matches no logged send is a Johan takeover (§5), so the catalogue would
+  // land in USER.md and flip `johan_touched` on every Codex session Argus
+  // ever watches. Found by running a live Codex sol high session in #36.
+  "<recommended_plugins>",
 ];
 
 export function codexCandidateText(record: unknown): string | null {
