@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { ArchiverEye } from "../eyes/archiver/archiver";
 import { ProvenanceClassifier } from "../provenance";
 import { createClaudeCodeSource, Tailer } from "../tailing";
-import { openArchiveSearch } from "./search";
+import { openArchiveSearch } from "./index";
 
 const SESSION = "past-sandbox-session";
 const T0 = "2026-08-24T12:00:00.000Z";

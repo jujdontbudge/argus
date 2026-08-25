@@ -5,6 +5,14 @@
  * eye itself under ./reviewer.
  */
 export {
+  ArchiverEye,
+  archiveAutonomousBatchScenario,
+  archiverWatcherDeathScenario,
+  registerArchiverScenarios,
+  type ArchiveBatchResult,
+  type ArchiverEyeOptions,
+} from "./archiver";
+export {
   fileAlertEmitter,
   retryForever,
   type RetryForeverOptions,

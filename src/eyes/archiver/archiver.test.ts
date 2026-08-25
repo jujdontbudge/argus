@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { ProvenanceClassifier } from "../../provenance";
 import { createClaudeCodeSource, Tailer } from "../../tailing";
-import { ArchiverEye } from "./archiver";
+import { ArchiverEye } from "./index";
 
 const T0 = "2026-08-24T10:00:00.000Z";
 

@@ -96,7 +96,7 @@ async function search(args: string[]): Promise<number> {
     return 1;
   }
 
-  const { openArchiveSearch } = await import("./search/search.ts");
+  const { openArchiveSearch } = await import("./search/index.ts");
   const archive = openArchiveSearch({ repo });
   try {
     const results = archive.query(query);
