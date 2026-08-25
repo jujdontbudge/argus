@@ -29,7 +29,8 @@ export interface AgentBindingOptions {
 }
 
 export interface AgentBindingReport {
-  honcho: "created" | "existing";
+  honcho: "created" | "existing" | "unavailable";
+  honchoError: string | null;
   profile: string;
   workspace: string;
 }
@@ -73,13 +74,20 @@ export async function convergeAgentBindings(
     honchoBinding(options.honchoUrl, workspace),
   );
 
-  const honcho = await options.honcho.ensureWorkspace({
-    id: workspace,
-    metadata: { repo: options.repo },
-  });
-  for (const peer of PEERS) {
-    await options.honcho.ensurePeer(workspace, peer);
+  let honcho: AgentBindingReport["honcho"];
+  let honchoError: string | null = null;
+  try {
+    honcho = await options.honcho.ensureWorkspace({
+      id: workspace,
+      metadata: { repo: options.repo },
+    });
+    for (const peer of PEERS) {
+      await options.honcho.ensurePeer(workspace, peer);
+    }
+  } catch (error) {
+    honcho = "unavailable";
+    honchoError = error instanceof Error ? error.message : String(error);
   }
 
-  return { honcho, profile: workspace, workspace };
+  return { honcho, honchoError, profile: workspace, workspace };
 }

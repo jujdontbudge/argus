@@ -91,4 +91,29 @@ peers:
 `,
     );
   });
+
+  test("reports Honcho unavailability while preserving the local binding", async () => {
+    const { repo, root } = await scratchRepo("Offline Repo");
+    const honcho: HonchoClient = {
+      ensurePeer: async () => "created",
+      ensureWorkspace: async () => {
+        throw new Error("connect ECONNREFUSED 127.0.0.1:8000");
+      },
+    };
+
+    const report = await convergeAgentBindings({
+      hermesRoot: join(root, "hermes"),
+      honcho,
+      honchoUrl: "http://localhost:8000",
+      repo,
+    });
+
+    expect(report.honcho).toBe("unavailable");
+    expect(report.honchoError).toBe(
+      "connect ECONNREFUSED 127.0.0.1:8000",
+    );
+    expect(await Bun.file(join(repo, ".argus", "honcho.yaml")).exists()).toBe(
+      true,
+    );
+  });
 });
