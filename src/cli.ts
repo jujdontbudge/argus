@@ -13,7 +13,33 @@ Commands:
   install  install argus from this checkout
 `;
 
+export const MINIMUM_BUN_VERSION = "1.3.12";
+
+function isVersionAtLeast(actual: string, minimum: string): boolean {
+  const actualParts = actual.split("-", 1)[0]?.split(".").map(Number) ?? [];
+  const minimumParts = minimum.split(".").map(Number);
+
+  if (actualParts.length < 3 || actualParts.some(Number.isNaN)) {
+    return false;
+  }
+
+  for (let index = 0; index < minimumParts.length; index += 1) {
+    const difference = (actualParts[index] ?? 0) - (minimumParts[index] ?? 0);
+    if (difference !== 0) return difference > 0;
+  }
+
+  return true;
+}
+
 export async function main(args: string[]): Promise<number> {
+  const bunVersion = process.versions.bun;
+  if (!bunVersion || !isVersionAtLeast(bunVersion, MINIMUM_BUN_VERSION)) {
+    console.error(
+      `argus requires Bun >= ${MINIMUM_BUN_VERSION}; found ${bunVersion ?? "unknown"}`,
+    );
+    return 1;
+  }
+
   if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
     console.log(HELP);
     return 0;
