@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 
 const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 const roots: string[] = [];
+
+setDefaultTimeout(30_000);
 
 async function run(command: string[], cwd: string, env: Record<string, string>) {
   const child = Bun.spawn([process.execPath, cli, ...command], {
@@ -56,6 +58,10 @@ if (args[0] === "bootout") await rm(Bun.env.FAKE_LAUNCHCTL_STATE!, { force: true
     ARGUS_SUPERVISOR_STATUS_FILE: join(root, "state", "status.json"),
     FAKE_LAUNCHCTL_LOG: join(root, "launchctl.jsonl"),
     FAKE_LAUNCHCTL_STATE: join(root, "launchctl.loaded"),
+    GIT_AUTHOR_EMAIL: "supervisor-test@invalid.example",
+    GIT_AUTHOR_NAME: "Supervisor Test",
+    GIT_COMMITTER_EMAIL: "supervisor-test@invalid.example",
+    GIT_COMMITTER_NAME: "Supervisor Test",
     HOME: join(root, "home"),
   };
   return { env, repoA, repoB, root };
@@ -66,6 +72,27 @@ afterEach(async () => {
 });
 
 describe("argus supervisor CLI", () => {
+  test("up enrolls the repo and immediately bootstraps the supervisor", async () => {
+    const { env, repoA } = await setup();
+
+    const result = await run(["up"], repoA, env);
+
+    expect(result.exitCode).toBe(0);
+    expect(await Bun.file(env.ARGUS_REPOS_FILE).text()).toBe(`${repoA}\n`);
+    expect(await Bun.file(env.ARGUS_SUPERVISOR_PLIST).text()).toContain(
+      `<string>${env.ARGUS_REPOS_FILE}</string>`,
+    );
+    const calls = (await Bun.file(env.FAKE_LAUNCHCTL_LOG).text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as string[]);
+    expect(calls).toEqual([
+      ["print", "gui/424242/dev.argus.scratch-cli"],
+      ["bootstrap", "gui/424242", env.ARGUS_SUPERVISOR_PLIST],
+      ["kickstart", "-k", "gui/424242/dev.argus.scratch-cli"],
+    ]);
+  });
+
   test("status prints every enabled repo and eye as a readable process table", async () => {
     const { env, repoA, repoB } = await setup();
     await mkdir(join(env.ARGUS_REPOS_FILE, ".."), { recursive: true });
