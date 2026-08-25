@@ -89,6 +89,7 @@ function peerFor(record: ProvenanceRecord): HonchoPeerId | null {
     return "claude-code";
   }
   if (record.agent === "codex") return "codex";
+  if (record.agent === "hermes") return "hermes";
   throw new Error(
     `Honcho cannot route agent-authored message for '${record.agent ?? "unknown"}'`,
   );

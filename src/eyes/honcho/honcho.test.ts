@@ -133,6 +133,7 @@ describe("Honcho eye", () => {
       record("Hermes nudge", "hermes", { agent: "claude", via: "registry-send" }),
       record("Claude output", "agent", { agent: "claude" }),
       record("Codex output", "agent", { agent: "codex" }),
+      record("Hermes output", "agent", { agent: "hermes" }),
     ]);
     await eye.flush();
 
@@ -178,12 +179,14 @@ describe("Honcho eye", () => {
       "hermes",
       "claude-code",
       "codex",
+      "hermes",
     ]);
     expect(sent.messages.map(({ content }) => content)).toEqual([
       "Johan directive",
       "Hermes nudge",
       "Claude output",
       "Codex output",
+      "Hermes output",
     ]);
     for (const message of sent.messages) {
       expect(message.metadata).toMatchObject({
