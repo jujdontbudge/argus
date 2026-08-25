@@ -36,7 +36,7 @@ import { createBrainCap, defaultBrainSlotsDirectory, type BrainCap } from "../ca
 import { Coalescer, type CoalesceWindow } from "../coalesce";
 import { loadEyesConfig, type CadenceConfig } from "../config";
 import { applyDigestUpdate, listDigests } from "../digest/outputs";
-import { referencedTickets, attributeChanges } from "./attribution";
+import { attributeChanges, referencedTickets } from "./attribution";
 import { composeRetro, type RetroPrompt } from "./compose";
 import { resolvePath, scanGit, type GitRunner, type GitScan } from "./git";
 import { detectTracker, type GhRunner, type Tracker, type TrackerIssue } from "./gh";
@@ -131,16 +131,23 @@ interface PersistedState {
   primed: boolean;
 }
 
-const EMPTY_STATE: PersistedState = {
-  prompts: [],
-  window: null,
-  seen: [],
-  judged: {},
-  filedSessions: [],
-  sessionDirs: {},
-  workingTrees: {},
-  primed: false,
-};
+/**
+ * A FUNCTION, never a shared constant: the eye mutates its state in place, so
+ * a shared default object would let two eyes in one process (two repos, or a
+ * restart in the same process) alias each other's cursors and filed ledgers.
+ */
+function emptyState(): PersistedState {
+  return {
+    prompts: [],
+    window: null,
+    seen: [],
+    judged: {},
+    filedSessions: [],
+    sessionDirs: {},
+    workingTrees: {},
+    primed: false,
+  };
+}
 
 /** The default audit sink's wording: what a human tailing the watcher reads. */
 export function describeAudit(audit: RetroAudit): string {
@@ -282,7 +289,7 @@ export class RetroEye {
 
   static async open(options: RetroEyeOptions): Promise<RetroEye> {
     const statePath = join(options.repo, ".argus/eyes/retro/state.json");
-    let state = EMPTY_STATE;
+    let state = emptyState();
     const file = Bun.file(statePath);
     if (await file.exists()) {
       try {
@@ -389,6 +396,13 @@ export class RetroEye {
    */
   async scan(): Promise<RetroFiling[]> {
     if (this.scanning) return [];
+    // A watcher that starts ticking without priming must not accuse the repo
+    // of its own history: the first scan anchors the cursor and reports
+    // nothing, exactly as an explicit prime() would.
+    if (!this.state.primed) {
+      await this.prime();
+      return [];
+    }
     this.scanning = true;
     try {
       const scan = await scanGit({
@@ -432,10 +446,7 @@ export class RetroEye {
         return [];
       }
 
-      const tracker = await detectTracker(
-        this.options.repo,
-        ...(this.options.gh !== undefined ? ([this.options.gh] as const) : ([] as const)),
-      );
+      const tracker = await detectTracker(this.options.repo, this.options.gh);
       const candidates = tracker ? await tracker.openTickets() : [];
       const verdict = await retryForever(
         () => this.evaluateOnce(signals, candidates),

@@ -531,3 +531,51 @@ describe("rogue work in a worktree belongs to the parent repo (§7.3)", () => {
     }
   }, 60_000);
 });
+
+describe("a first scan primes instead of accusing the whole repo", () => {
+  test("scanning before prime() anchors the cursor and files nothing", async () => {
+    const place = await scratch();
+    const gh = createFakeGh({ repo: "JohanSardar/argus" });
+    try {
+      await place.commit("src/old.ts", "export const old = 1;\n", "ancient history");
+      const { eye } = await openEye(place, gh);
+
+      // No prime() call: the watcher loop just starts ticking.
+      expect(await eye.scan()).toEqual([]);
+      expect(gh.issues).toHaveLength(0);
+
+      await place.commit("src/new.ts", "export const fresh = 1;\n", "new work");
+      expect(await eye.scan()).toHaveLength(1);
+      expect(filedIssue(gh)!.title).toBe("Retro: new work");
+    } finally {
+      await place.cleanup();
+    }
+  }, 60_000);
+});
+
+describe("two eyes in one process never share state", () => {
+  test("priming one repo's eye leaves another repo's eye unprimed", async () => {
+    const first = await scratch();
+    const second = await scratch();
+    const gh = createFakeGh({ repo: "JohanSardar/argus" });
+    try {
+      const one = (await openEye(first, gh)).eye;
+      await one.prime();
+      await first.commit("src/a.ts", "export const a = 1;\n", "first repo work");
+
+      const two = (await openEye(second, gh)).eye;
+      await second.commit("src/b.ts", "export const b = 1;\n", "second repo work");
+
+      // The second eye has never primed: its first scan anchors, files nothing.
+      expect(await two.scan()).toEqual([]);
+      // The first eye's own cursor is untouched by any of that.
+      const filings = await one.scan();
+      expect(filings.map((filing) => filing.title)).toEqual([
+        "Retro: first repo work",
+      ]);
+    } finally {
+      await first.cleanup();
+      await second.cleanup();
+    }
+  }, 60_000);
+});
