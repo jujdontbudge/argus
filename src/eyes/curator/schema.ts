@@ -69,14 +69,18 @@ export const CURATOR_OUTPUT_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["from", "into", "reason"],
+        // `body` is optional in spirit but REQUIRED here: strict structured
+        // output rejects a schema whose `required` omits any property, so the
+        // optionality rides the null union instead (caught by the live test).
+        required: ["from", "into", "reason", "body"],
         properties: {
           from: { type: "string", description: "skill folded in and archived" },
           into: { type: "string", description: "umbrella skill that absorbs it" },
           reason: REASONED,
           body: {
-            type: "string",
-            description: "merged SKILL.md body for the umbrella, if it changes",
+            type: ["string", "null"],
+            description:
+              "merged SKILL.md body for the umbrella, or null when it does not change",
           },
         },
       },

@@ -83,6 +83,16 @@ describe("the curator brain's output contract", () => {
     expect(parsed!.summary).toBe("x");
   });
 
+  test("a null body means the umbrella's own text is unchanged", () => {
+    const parsed = parseCuratorVerdict(
+      verdict({
+        summary: "x",
+        consolidations: [{ from: "a", into: "b", reason: "r", body: null }],
+      }),
+    );
+    expect(parsed!.consolidations[0]!.body).toBeUndefined();
+  });
+
   test("the schema rides codex exec --output-schema", () => {
     expect(CURATOR_OUTPUT_SCHEMA.required).toContain("summary");
     expect(Object.keys(CURATOR_OUTPUT_SCHEMA.properties).sort()).toEqual([
@@ -91,5 +101,28 @@ describe("the curator brain's output contract", () => {
       "prunings",
       "summary",
     ]);
+  });
+
+  test("every property is in its object's `required` — strict mode rejects less", () => {
+    const walk = (node: Record<string, unknown>, path: string): void => {
+      if (node.type === "object") {
+        const properties = Object.keys(
+          (node.properties ?? {}) as Record<string, unknown>,
+        ).sort();
+        expect([path, [...((node.required as string[] | undefined) ?? [])].sort()]).toEqual([
+          path,
+          properties,
+        ]);
+        for (const [key, child] of Object.entries(
+          (node.properties ?? {}) as Record<string, Record<string, unknown>>,
+        )) {
+          walk(child, `${path}.${key}`);
+        }
+      }
+      if (node.type === "array" && node.items) {
+        walk(node.items as Record<string, unknown>, `${path}[]`);
+      }
+    };
+    walk(CURATOR_OUTPUT_SCHEMA as unknown as Record<string, unknown>, "root");
   });
 });
