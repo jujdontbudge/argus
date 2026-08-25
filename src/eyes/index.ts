@@ -2,7 +2,8 @@
  * Shared eye plumbing (ticket #30; SPEC §5): the pieces every eye (#31–#33)
  * composes — config knobs, coalesced cadence, the codex brain seam, the
  * machine-wide brain cap, and never-drop backpressure — plus the Reviewer
- * eye under ./reviewer and the Digest eye (#31) under ./digest.
+ * eye under ./reviewer, the Digest eye (#31) under ./digest and the Retro eye
+ * (#33) under ./retro.
  */
 export {
   fileAlertEmitter,
@@ -48,7 +49,10 @@ export {
 export {
   applyDigestUpdate,
   digestFileName,
+  listDigests,
+  readDigest,
   updateIndex,
+  type StoredDigest,
   type DigestFrontmatter,
   type DigestPatch,
   type DigestSeed,
@@ -97,3 +101,74 @@ export {
   reviewerTakeoverScenario,
   selfLearningScenario,
 } from "./reviewer/scenarios";
+export {
+  attributeChanges,
+  referencedTickets,
+  type Attribution,
+  type AttributedChanges,
+  type AttributionContext,
+  type Coverage,
+  type RogueChanges,
+} from "./retro/attribution";
+export {
+  composeRetro,
+  MAX_BODY_BYTES,
+  type ComposeRetroInput,
+  type RetroComposition,
+  type RetroPrompt,
+} from "./retro/compose";
+export { createFakeGh, type FakeGh, type FakeGhIssue } from "./retro/fake-gh";
+export { fixtureRetroBrain } from "./retro/fixture-brain";
+export {
+  resolvePath,
+  scanGit,
+  type GitCommit,
+  type GitRunner,
+  type GitScan,
+  type RootScan,
+  type WorkingTreeChange,
+} from "./retro/git";
+export {
+  detectTracker,
+  type FiledRetro,
+  type GhRunner,
+  type RetroIssueRequest,
+  type Tracker,
+  type TrackerIssue,
+} from "./retro/gh";
+export {
+  resolveParent,
+  type ParentInput,
+  type ParentResolution,
+  type ParentRule,
+} from "./retro/parent";
+export {
+  describeAudit,
+  openRetro,
+  RetroEye,
+  type OpenRetroOverrides,
+  type RetroAudit,
+  type RetroEyeOptions,
+  type RetroFiling,
+  type SessionObservation,
+} from "./retro/retro";
+export {
+  createFixtureRogueDriver,
+  registerRetroScenarios,
+  rogueSessionScenario,
+  type RogueSessionDriver,
+  type RogueSessionHandle,
+} from "./retro/scenarios";
+export {
+  parseRetroVerdict,
+  RETRO_OUTPUT_SCHEMA,
+  type RetroJudgment,
+  type RetroVerdict,
+} from "./retro/schema";
+export {
+  buildSignals,
+  type BuildSignalsInput,
+  type RetroSignal,
+  type RetroSignalSession,
+  type SignalSource,
+} from "./retro/signal";
