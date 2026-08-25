@@ -391,13 +391,33 @@ a **simulation driver** agent that plays Johan: it types into deployed sessions 
 untracked implementation edits, and drops preference statements mid-run. Every feature
 ships with its scenario; pass/fail is asserted by the harness, never eyeballed.
 
-**Test agents and isolation (Johan directive, 2026-08-24):** all testing of the system
-— the simulation driver, the sessions under test, and any per-ticket test run — uses
-**Claude Opus 5** (`claude --model claude-opus-5`) for the Claude side and **Codex sol
-high** (`codex -c model_reasoning_effort=high`, gpt-5.6-sol) for the Codex side, each
-running **in isolation**: the throwaway sandbox repo and scratch tabs/worktrees only,
-never the production dispatcher, live worker sessions, or the real `~/argus` state.
-No test run touches a non-sandbox session.
+**Test agents and isolation (Johan directive, amended 2026-08-25):** live testing of
+the system — the simulation driver, sessions under test and per-ticket live drives —
+uses **Codex sol high** (`codex -c model_reasoning_effort=high`, gpt-5.6-sol) in
+isolation. Its one permitted credential touchpoint is copying `auth.json` into the
+scratch `CODEX_HOME`.
+
+The Claude half is run with **Claude Opus 5** (`claude --model claude-opus-5`) only
+when the caller already has a separately provisioned `CLAUDE_CODE_OAUTH_TOKEN`.
+The harness injects that token into the Claude child environment only; it never
+persists it, reads a Keychain secret, copies `~/.claude/.credentials.json`, invokes
+`claude setup-token`, or points Claude at the real config. Anthropic documents this
+token as the supported subscription-auth mechanism for scripts and CI. The existing
+interactive subscription credential has no supported read-only export operation: on
+macOS it is Keychain-backed, and copying its rotating access/refresh credential into
+a second config risks revoking the credential used by live sessions. The automation
+token must instead be provisioned separately, out of band.
+
+As of 2026-08-25 this machine has no pre-provisioned `CLAUDE_CODE_OAUTH_TOKEN`, so
+**Codex sol high is the only live test-agent policy enforceable here**. Claude cases
+must be reported **NOT RUN**, never rounded up from fixtures or Codex results. The
+residual risk is explicit: `src/tailing/claude-code.ts` has not met a real Opus 5
+transcript, so live-only synthetic user-role content or transcript-shape drift could
+still poison provenance classification.
+
+Every agent that does run uses the throwaway sandbox repo and scratch tabs/worktrees
+only, never the production dispatcher, live worker sessions, real `~/argus` state,
+or a non-sandbox session.
 
 Core scenario suite (each maps to an eye or a provenance edge):
 

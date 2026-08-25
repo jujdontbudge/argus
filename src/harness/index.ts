@@ -9,7 +9,7 @@ import {
   realpath,
   rm,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Database } from "bun:sqlite";
@@ -62,10 +62,71 @@ export interface AgentSpawnRequest {
 
 export interface AgentSpawnResult {
   exitCode: number;
+  stderr?: string;
+  stdout?: string;
 }
 
 export interface AgentSpawner {
   spawn(request: AgentSpawnRequest): Promise<AgentSpawnResult>;
+}
+
+export interface IsolatedAgentSpawnerOptions {
+  /**
+   * A long-lived inference-only token generated out of band by
+   * `claude setup-token`. The harness never provisions, prints or persists it.
+   */
+  claudeOauthToken: string;
+  /** Override command resolution, chiefly to bypass local shell wrappers. */
+  executables?: Partial<Record<TestAgent, string>>;
+}
+
+/**
+ * Real subprocess implementation of the harness seam. Claude subscription
+ * auth is injected only into the child environment; the scratch
+ * `CLAUDE_CONFIG_DIR` never points at or copies the user's live config.
+ */
+export function createIsolatedAgentSpawner(
+  options: IsolatedAgentSpawnerOptions,
+): AgentSpawner {
+  return {
+    async spawn(request) {
+      const env: Record<string, string> = { ...request.env };
+      if (request.agent === "claude") {
+        const scratchHome = env.HOME;
+        const scratchConfig = env.CLAUDE_CONFIG_DIR;
+        if (
+          scratchHome === undefined ||
+          scratchConfig === undefined ||
+          isWithin(homedir(), scratchHome) ||
+          isWithin(homedir(), scratchConfig)
+        ) {
+          throw new Error(
+            "isolated Claude HOME and CLAUDE_CONFIG_DIR must be outside the real home",
+          );
+        }
+        // These outrank CLAUDE_CODE_OAUTH_TOKEN in Claude's documented auth
+        // precedence, so inherited values must not silently change providers.
+        delete env.ANTHROPIC_API_KEY;
+        delete env.ANTHROPIC_AUTH_TOKEN;
+        env.CLAUDE_CODE_OAUTH_TOKEN = options.claudeOauthToken;
+      }
+      const executable = options.executables?.[request.agent] ?? request.command[0];
+      if (executable === undefined) throw new Error("agent command is empty");
+      const child = Bun.spawn([executable, ...request.command.slice(1)], {
+        cwd: request.cwd,
+        env,
+        stderr: "pipe",
+        stdin: "ignore",
+        stdout: "pipe",
+      });
+      const [exitCode, stdout, stderr] = await Promise.all([
+        child.exited,
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+      ]);
+      return { exitCode, stderr, stdout };
+    },
+  };
 }
 
 async function run(
@@ -117,6 +178,9 @@ export async function createSandbox(
     if (
       value !== undefined &&
       !name.startsWith("CMUX_") &&
+      name !== "ANTHROPIC_API_KEY" &&
+      name !== "ANTHROPIC_AUTH_TOKEN" &&
+      name !== "CLAUDE_CODE_OAUTH_TOKEN" &&
       name !== "CODEX_SESSION_ID" &&
       name !== "CODEX_THREAD_ID" &&
       name !== "HONCHO_API_KEY" &&
