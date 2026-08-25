@@ -57,6 +57,13 @@ export class ArchiverEye {
     database.exec("PRAGMA journal_mode = WAL");
     database.exec("PRAGMA synchronous = NORMAL");
     database.exec("PRAGMA busy_timeout = 5000");
+    const ftsExists =
+      database
+        .query<{ present: number }, []>(`
+          SELECT 1 AS present FROM sqlite_master
+          WHERE type = 'table' AND name = 'archive_messages_fts'
+        `)
+        .get() !== null;
     database.exec(`
       CREATE TABLE IF NOT EXISTS archive_messages (
         id INTEGER PRIMARY KEY,
@@ -80,7 +87,30 @@ export class ArchiverEye {
         file TEXT PRIMARY KEY,
         offset INTEGER NOT NULL CHECK (offset >= 0)
       );
+      CREATE VIRTUAL TABLE IF NOT EXISTS archive_messages_fts USING fts5(
+        content,
+        content = 'archive_messages',
+        content_rowid = 'id',
+        tokenize = "unicode61 tokenchars '_/'"
+      );
+      CREATE TRIGGER IF NOT EXISTS archive_messages_after_insert AFTER INSERT ON archive_messages BEGIN
+        INSERT INTO archive_messages_fts(rowid, content) VALUES (new.id, new.content);
+      END;
+      CREATE TRIGGER IF NOT EXISTS archive_messages_after_delete AFTER DELETE ON archive_messages BEGIN
+        INSERT INTO archive_messages_fts(archive_messages_fts, rowid, content)
+        VALUES ('delete', old.id, old.content);
+      END;
+      CREATE TRIGGER IF NOT EXISTS archive_messages_after_update AFTER UPDATE ON archive_messages BEGIN
+        INSERT INTO archive_messages_fts(archive_messages_fts, rowid, content)
+        VALUES ('delete', old.id, old.content);
+        INSERT INTO archive_messages_fts(rowid, content) VALUES (new.id, new.content);
+      END;
     `);
+    if (!ftsExists) {
+      database.exec(
+        "INSERT INTO archive_messages_fts(archive_messages_fts) VALUES ('rebuild')",
+      );
+    }
     return new ArchiverEye(database);
   }
 
@@ -128,11 +158,12 @@ export class ArchiverEye {
     const sessionAgent = this.database.query<{ agent: string }, [string]>(
       "SELECT agent FROM archive_sessions WHERE session_id = ?",
     );
-    const insertMessage = this.database.query<unknown, (string | null)[]>(`
+    const insertMessage = this.database.query<{ id: number }, (string | null)[]>(`
       INSERT OR IGNORE INTO archive_messages (
         ingest_key, session_id, agent, role, provenance, provenance_via,
         ts, ticket, source_file, source_uuid, content
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      RETURNING id
     `);
     const writeCursor = this.database.query<unknown, [string, number]>(`
       INSERT INTO archive_cursors (file, offset) VALUES (?, ?)
@@ -147,8 +178,8 @@ export class ArchiverEye {
       for (const record of records) {
         const agent =
           record.agent ?? sessionAgent.get(record.sessionId)?.agent ?? null;
-        inserted += Number(
-          insertMessage.run(
+        if (
+          insertMessage.get(
             ingestKey(record),
             record.sessionId,
             agent,
@@ -160,8 +191,10 @@ export class ArchiverEye {
             record.event.file,
             record.event.uuid ?? null,
             record.text,
-          ).changes,
-        );
+          ) !== null
+        ) {
+          inserted += 1;
+        }
       }
       for (const [file, offset] of Object.entries(tailer.cursors())) {
         writeCursor.run(file, offset);
