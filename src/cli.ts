@@ -107,6 +107,11 @@ export async function main(args: string[]): Promise<number> {
     return status();
   }
 
+  if (args[0] === "supervisor") {
+    const { runSupervisorDaemon } = await import("./supervisor/daemon.ts");
+    return runSupervisorDaemon();
+  }
+
   if (STUB_COMMANDS.has(args[0] ?? "")) {
     console.error(`argus ${args[0]}: not implemented yet`);
     return 1;

@@ -16,7 +16,7 @@ export type EyeName = (typeof EYE_NAMES)[number];
 export interface WatcherProcess {
   readonly exited: Promise<number>;
   readonly pid: number;
-  kill(signal?: number | string): void;
+  kill(signal?: NodeJS.Signals | number): void;
 }
 
 export interface WatcherSpawnRequest {
