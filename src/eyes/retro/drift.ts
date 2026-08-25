@@ -32,7 +32,11 @@
 import { hashText } from "../../matching";
 import type { AttributedChanges } from "./attribution";
 import type { GitCommit, WorkingTreeChange } from "./git";
+import type { TicketScope } from "./gh";
 import type { DriftJudgment } from "./schema";
+
+/** The stated scope, as ./gh.ts reads it back — one definition, one seam. */
+export type { TicketScope } from "./gh";
 
 /** One checkout's slice of a candidate's work. */
 export interface DriftWork {
@@ -52,15 +56,6 @@ export interface DriftCandidate {
   /** Sessions observed doing the work, for the retro body. */
   sessionIds: string[];
   work: DriftWork[];
-}
-
-/** A ticket's STATED scope, read back from the tracker (title + body). */
-export interface TicketScope {
-  number: string;
-  title: string;
-  body: string;
-  /** Closed mid-session is normal; it never changes what the ticket asked. */
-  state: "open" | "closed";
 }
 
 /**

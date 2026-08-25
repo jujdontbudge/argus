@@ -110,6 +110,19 @@ export function createFakeGh(options: FakeGhOptions = {}): FakeGh {
       );
     }
 
+    if (command === "issue" && subcommand === "view") {
+      const issue = issues.find((entry) => entry.number === args[2]);
+      if (!issue) return err(`could not resolve to an Issue: ${args[2]}`);
+      return ok(
+        JSON.stringify({
+          number: Number(issue.number),
+          title: issue.title,
+          body: issue.body,
+          state: issue.state.toUpperCase(),
+        }),
+      );
+    }
+
     if (command === "issue" && subcommand === "create") {
       if (options.failCreate) return err(options.failCreate);
       const labels: string[] = [];
