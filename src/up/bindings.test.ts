@@ -147,6 +147,18 @@ peers:
     observe_me: false
 `,
     );
+    expect(
+      await Bun.file(
+        join(root, "hermes", "profiles", "argus-widget-kit", "config.yaml"),
+      ).text(),
+    ).toBe(
+      `memory:
+  memory_char_limit: 12000
+  user_char_limit: 6000
+curator:
+  enabled: false
+`,
+    );
   });
 
   test("reports Honcho unavailability while preserving the local binding", async () => {
@@ -294,6 +306,43 @@ custom_setting: keep-me
     );
     expect((await lstat(join(profileMemories, "USER.md"))).isSymbolicLink()).toBe(
       false,
+    );
+  });
+
+  test("raises cloned default limits and disables an enabled native curator", async () => {
+    const { repo, root } = await scratchRepo("Managed Safety");
+    const hermesRoot = join(root, "hermes");
+    await mkdir(hermesRoot, { recursive: true });
+    await Bun.write(
+      join(hermesRoot, "config.yaml"),
+      `memory:
+  memory_char_limit: 2200
+  user_char_limit: 1375
+curator:
+  enabled: true
+  interval_hours: 24
+`,
+    );
+
+    await convergeAgentBindings({
+      hermesRoot,
+      honcho: new FakeHoncho(),
+      honchoUrl: "http://honcho.test:8000",
+      repo,
+    });
+
+    expect(
+      await Bun.file(
+        join(hermesRoot, "profiles", "argus-managed-safety", "config.yaml"),
+      ).text(),
+    ).toBe(
+      `memory:
+  memory_char_limit: 12000
+  user_char_limit: 6000
+curator:
+  enabled: false
+  interval_hours: 24
+`,
     );
   });
 });

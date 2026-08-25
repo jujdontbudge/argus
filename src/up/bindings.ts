@@ -124,21 +124,21 @@ peers:
 `;
 }
 
-function addMissingYamlValues(
+function convergeYamlValues(
   source: string,
   section: string,
   values: Readonly<Record<string, string>>,
+  shouldReplace: (key: string, currentValue: string) => boolean = () => false,
 ): string {
   const hadTrailingNewline = source.endsWith("\n");
-  const lines = source.split("\n");
+  const lines = source.length === 0 ? [] : source.split("\n");
   if (hadTrailingNewline) lines.pop();
   const sectionIndex = lines.findIndex(
     (line) => line.trimEnd() === `${section}:`,
   );
 
   if (sectionIndex === -1) {
-    if (lines.length > 0 && lines.at(-1) !== "") lines.push(`${section}:`);
-    else lines.push(`${section}:`);
+    lines.push(`${section}:`);
     for (const [key, value] of Object.entries(values)) {
       lines.push(`  ${key}: ${value}`);
     }
@@ -154,15 +154,24 @@ function addMissingYamlValues(
   ) {
     sectionEnd += 1;
   }
-  const sectionLines = lines.slice(sectionIndex + 1, sectionEnd);
-  const missing = Object.entries(values).filter(
-    ([key]) =>
-      !sectionLines.some((line) =>
-        new RegExp(`^\\s+${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:`).test(
-          line,
-        ),
-      ),
-  );
+  const missing: Array<[string, string]> = [];
+  for (const [key, value] of Object.entries(values)) {
+    const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const valuePattern = new RegExp(
+      `^(\\s+)${escapedKey}\\s*:\\s*([^#]*?)(?:\\s+#.*)?$`,
+    );
+    let found = false;
+    for (let index = sectionIndex + 1; index < sectionEnd; index += 1) {
+      const match = lines[index]?.match(valuePattern);
+      if (!match) continue;
+      found = true;
+      if (shouldReplace(key, match[2]?.trim() ?? "")) {
+        lines[index] = `${match[1]}${key}: ${value}`;
+      }
+      break;
+    }
+    if (!found) missing.push([key, value]);
+  }
   lines.splice(
     sectionEnd,
     0,
@@ -246,14 +255,24 @@ async function ensureHermesProfile(
   const config = (await exists(configPath))
     ? await readFile(configPath, "utf8")
     : "";
-  const withMemoryLimits = addMissingYamlValues(config, "memory", {
+  const memoryLimits = {
     memory_char_limit: "12000",
     user_char_limit: "6000",
-  });
-  const withCuratorDisabled = addMissingYamlValues(
+  } as const;
+  const withMemoryLimits = convergeYamlValues(
+    config,
+    "memory",
+    memoryLimits,
+    (key, currentValue) => {
+      const current = Number(currentValue);
+      return Number.isFinite(current) && current < Number(memoryLimits[key as keyof typeof memoryLimits]);
+    },
+  );
+  const withCuratorDisabled = convergeYamlValues(
     withMemoryLimits,
     "curator",
     { enabled: "false" },
+    (_key, currentValue) => currentValue !== "false",
   );
   if (withCuratorDisabled !== config) {
     await Bun.write(configPath, withCuratorDisabled);
