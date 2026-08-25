@@ -4,8 +4,6 @@ import { lstat, mkdir, readlink, symlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { convergeUp } from "./up.ts";
-
 const HELP = `Argus — orchestration and self-learning toolkit
 
 Usage: argus <command>
@@ -95,6 +93,7 @@ export async function main(args: string[]): Promise<number> {
   }
 
   if (args[0] === "up") {
+    const { convergeUp } = await import("./up.ts");
     return convergeUp();
   }
 
