@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createCodexBrain } from "../brain";
 import { DEFAULT_EYES_CONFIG } from "../config";
+import { loadScaledMs } from "../test-budget";
 import {
   buildDriftCandidates,
   buildDriftPrompt,
@@ -27,6 +28,16 @@ import {
  * is not involved, only the brain seam.
  */
 const codexAvailable = Bun.which("codex") !== null;
+
+/**
+ * Per-test budget. One real `codex exec` round trip each, measured at 6.98s in
+ * #36 — and timing out against a 240s budget in the same run, because a second
+ * live drive was running alongside. Nothing inside `../brain.ts` sets a
+ * timeout, so this number is the ONLY hang detector for a stuck `codex exec`:
+ * it stretches to 600s (86x the measured round trip) and no further, so a hang
+ * still reports in ten minutes. 240s on an idle machine, unchanged.
+ */
+const BUDGET_MS = loadScaledMs(240_000, 600_000);
 
 /** The shape ./retro.ts builds: signal blocks, then the candidate tickets. */
 const PROMPT = [
@@ -106,7 +117,7 @@ describe.skipIf(!codexAvailable)("live luna brain (retro integration)", () => {
         await rm(sandboxRepo, { force: true, recursive: true });
       }
     },
-    240_000,
+    BUDGET_MS,
   );
 });
 
@@ -236,6 +247,6 @@ describe.skipIf(!codexAvailable)("live luna brain (scope-drift integration)", ()
         await rm(sandboxRepo, { force: true, recursive: true });
       }
     },
-    240_000,
+    BUDGET_MS,
   );
 });
