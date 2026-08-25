@@ -1,6 +1,8 @@
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
+import { readEnabledRepos } from "./registry.ts";
+
 export const EYE_NAMES = [
   "reviewer",
   "archiver",
@@ -43,12 +45,6 @@ export interface SupervisorStatus {
   watchers: WatcherStatus[];
 }
 
-async function enabledRepos(registryPath: string): Promise<string[]> {
-  const file = Bun.file(registryPath);
-  if (!(await file.exists())) return [];
-  return [...new Set((await file.text()).split(/\r?\n/).map((line) => line.trim()).filter(Boolean))];
-}
-
 function watcherKey(repo: string, eye: EyeName): string {
   return JSON.stringify([repo, eye]);
 }
@@ -65,7 +61,7 @@ export class WatcherSupervisor {
   }
 
   async reconcile(): Promise<void> {
-    const repos = await enabledRepos(this.#options.registryPath);
+    const repos = await readEnabledRepos(this.#options.registryPath);
     const desired = new Set(
       repos.flatMap((repo) => EYE_NAMES.map((eye) => watcherKey(repo, eye))),
     );
