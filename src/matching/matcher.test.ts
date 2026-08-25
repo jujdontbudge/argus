@@ -67,6 +67,53 @@ describe("SendMatcher: queue-operation enqueue bridge", () => {
   });
 });
 
+describe("SendMatcher: expiry and audit events", () => {
+  // Findings §4/§7: an unconsumed non-slash send past the window is loud —
+  // audit event, never silence (SPEC §13 scenario 5's visibility principle).
+  test("unconsumed prompt send past expiry emits one audit event and retires", () => {
+    const m = new SendMatcher();
+    m.addSend({ ts: T0, text: "never landed", id: "s1" });
+    expect(m.sweepExpired(at(3_600_000))).toEqual([]); // not yet expired
+    const events = m.sweepExpired(at(3_600_001));
+    expect(events).toHaveLength(1);
+    expect(events[0]!.type).toBe("send-expired");
+    expect(events[0]!.send.id).toBe("s1");
+    expect(m.sweepExpired(at(3_700_000))).toEqual([]); // retired: audited once
+  });
+
+  test("zero-landing slash send expires silently", () => {
+    const m = new SendMatcher();
+    m.addSend({ ts: T0, text: "/help" });
+    expect(m.sweepExpired(at(3_600_001))).toEqual([]);
+    // and it is really retired, not still pending:
+    expect(m.pendingCount()).toBe(0);
+  });
+
+  test("bang sends are not slash: expiry is loud", () => {
+    const m = new SendMatcher();
+    m.addSend({ ts: T0, text: "!echo probe" });
+    expect(m.sweepExpired(at(3_600_001))).toHaveLength(1);
+  });
+
+  test("a consumed send never expires", () => {
+    const m = new SendMatcher();
+    m.addSend({ ts: T0, text: "landed fine" });
+    m.classify({ text: "landed fine", ts: at(1_000) });
+    expect(m.sweepExpired(at(3_600_001))).toEqual([]);
+  });
+
+  test("an enqueue-bridged send is exempt from expiry", () => {
+    const m = new SendMatcher();
+    m.addSend({ ts: T0, text: "long turn ahead" });
+    m.onEnqueue({ content: "long turn ahead", ts: at(200) });
+    expect(m.sweepExpired(at(3_600_001))).toEqual([]);
+    // still matchable afterwards — the dequeued record may land arbitrarily late
+    expect(m.classify({ text: "long turn ahead", ts: at(4_000_000) }).author).toBe(
+      "hermes",
+    );
+  });
+});
+
 describe("SendMatcher: basic classification", () => {
   test("registry-logged send landing in window is Hermes-authored", () => {
     const m = new SendMatcher();

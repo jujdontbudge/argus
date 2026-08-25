@@ -51,6 +51,17 @@ export type MatchResult =
   | { author: "hermes"; send: PendingSend; matchedForm: string }
   | { author: "johan" };
 
+/**
+ * Loud failure signals (findings §4): an unconsumed non-slash send past the
+ * window means Hermes' message never visibly landed — never silent.
+ */
+export interface AuditEvent {
+  type: "send-expired";
+  send: PendingSend;
+  /** The sweep time that declared the expiry, epoch ms. */
+  at: number;
+}
+
 /** Window bounds (findings §3): −5s scheduler-jitter guard, +3600s covers queued landings. */
 export const WINDOW_BEFORE_MS = 5_000;
 export const WINDOW_AFTER_MS = 3_600_000;
@@ -99,6 +110,28 @@ export class SendMatcher {
       return { author: "hermes", send, matchedForm: send.forms[formIndex]! };
     }
     return { author: "johan" };
+  }
+
+  /**
+   * Retire sends whose window has passed with no landing. Non-slash sends
+   * produce an audit event; slash sends retire silently (zero landings are
+   * normal for local commands, findings §2.3). Enqueue-bridged sends stay
+   * pending — their dequeued record may land arbitrarily late.
+   */
+  sweepExpired(now: Timestamp): AuditEvent[] {
+    const t = toEpochMs(now);
+    const events: AuditEvent[] = [];
+    this.pending = this.pending.filter((send) => {
+      if (send.enqueueSeen || t <= send.ts + WINDOW_AFTER_MS) return true;
+      if (send.kind !== "slash") events.push({ type: "send-expired", send, at: t });
+      return false;
+    });
+    return events;
+  }
+
+  /** Number of unconsumed, unretired sends. */
+  pendingCount(): number {
+    return this.pending.length;
   }
 
   /** Feed every Claude Code queue-operation enqueue record for this session. */
