@@ -1,0 +1,109 @@
+==============================================================================
+ARGUS LIVE HERMES VERIFICATION — ticket #47
+==============================================================================
+run on         2026-08-25, this machine
+gate           ARGUS_LIVE_HERMES=1
+hermes CLI     Hermes Agent v0.16.0 (2026.6.5) · upstream 9e484f05
+state.db       schema_version 15
+real profile   ~/.hermes/profiles does not exist — the `real` half is NOT RUN
+
+Recorded because a version is what makes a future break attributable. If the
+§7 caveat ever stops holding, the run that says so will print its own version
+line the same way, and the two can be compared.
+
+------------------------------------------------------------------------------
+1. provision — `argus up`'s OWN binding, against a sandbox HERMES_HOME
+------------------------------------------------------------------------------
+  sandbox repo   /var/…/T/argus-harness-PrddPy/scratch-argus-harness-PrddPy
+  scratch root   /var/…/T/argus-harness-PrddPy/state/hermes
+  profile        …/state/hermes/profiles/argus-scratch-argus-harness-prddpy
+  binding        7ms   (convergeAgentBindings, Honcho seam doubled)
+
+  The profile is not a directory invented for the test. It is the one
+  `convergeAgentBindings` creates on a real deployment — config.yaml with the
+  raised memory limits and curator disabled, memories symlinked at the repo's
+  .argus/memory — and the installed Hermes accepted it as a profile.
+
+------------------------------------------------------------------------------
+2. drive — one real `hermes chat -q`, credential-free
+------------------------------------------------------------------------------
+  command   hermes chat -q "<prompt>" -Q --provider argus-offline -m gpt-4o-mini
+  prompt    Ticket #47 scratch drive. Reply with exactly the word ACKNOWLEDGED.
+  env       HERMES_HOME=<profile>  HOME=<sandbox home>
+            every credential-shaped variable stripped (hermesDriveEnv)
+  provider  http://127.0.0.1:1/v1 — loopback, privileged port, nothing listens
+  wall      28.3s   (sandbox 1.7s + binding 7ms + drive)
+
+  exit 1
+  out| ⚠ tirith security scanner enabled but not available — command scanning
+  out|   will use pattern matching only
+  out| API call failed after 3 retries: Connection error.
+  err| session_id: 20260825_173954_63fdb3
+
+  Exit 1 is the expected outcome and not a failure of this check: the drive is
+  meant to reach a provider that does not answer. That is what makes it free.
+
+------------------------------------------------------------------------------
+3. what landed in state.db
+------------------------------------------------------------------------------
+  messages by role   user 1        <- persisted
+                     assistant 0   <- research §7's caveat, still holding
+                     tool 0
+
+  messages columns   id, session_id, role, content, tool_call_id, tool_calls,
+                     tool_name, timestamp, token_count, finish_reason,
+                     reasoning, reasoning_content, reasoning_details,
+                     codex_reasoning_items, codex_message_items,
+                     platform_message_id, observed, active
+
+------------------------------------------------------------------------------
+4. tail — the UNMODIFIED production source over that state.db
+------------------------------------------------------------------------------
+  createHermesSource({ hermesRoot }) -> Tailer.catchUp()
+
+  session-meta  sessionId 20260825_173954_63fdb3
+                agent     hermes
+                cwd       /private/var/…/scratch-argus-harness-PrddPy
+                model     gpt-4o-mini
+                ts        2026-08-25T22:39:56.453Z
+
+  message       role      user
+                text      Ticket #47 scratch drive. Reply with exactly the
+                          word ACKNOWLEDGED.
+                candidate true
+                ts        2026-08-25T22:39:57.392Z
+
+  message       role      assistant   — NONE. This is the assertion.
+
+------------------------------------------------------------------------------
+5. what this run does NOT reach, and why that is a NOT RUN
+------------------------------------------------------------------------------
+An assistant row requires an inference provider that answers, and the only
+providers that would answer on this machine are Johan's — his ChatGPT
+subscription through openai-codex, or a key out of ~/.hermes/.env. Spending one
+to make a test green is not in this ticket's gift, so the drive is built so it
+CANNOT: the child environment carries no credential and the endpoint is a dead
+loopback port.
+
+So assistant-row persistence still rests on code-path plus live-DB evidence,
+exactly as research §7 left it, and the `real` half stays NOT RUN until a real
+profile exists. That half is the one that retires the caveat, and it starts
+running by itself the first time Johan deploys Argus on a repo.
+
+The scratch half asserts the caveat in its negative form — no assistant row
+from a credential-free drive — which is falsifiable and was verified to fail:
+substituting a Hermes that persists an assistant row without a provider turns
+this red, and the failure diff carries the version string that changed the
+answer.
+
+------------------------------------------------------------------------------
+6. the real ~/.hermes
+------------------------------------------------------------------------------
+  ~/.hermes/profiles      did not exist before the run, does not exist after
+  written                 nothing
+  read                    the installed Hermes code under ~/.hermes/hermes-agent
+                          (which is what "the INSTALLED Hermes" means)
+  .env / auth.json        never opened, never printed
+
+Enforced, not promised: the scratch test snapshots the real profiles listing
+before the drive and asserts it is unchanged after.

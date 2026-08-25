@@ -150,9 +150,12 @@ export interface ScratchDriveOptions {
 export async function driveScratchProfile(
   options: ScratchDriveOptions,
 ): Promise<ScratchDrive> {
-  const sandbox: Sandbox = await createSandbox({ checkout: options.checkout });
-  const teardown = () => sandbox.teardown();
+  let sandbox: Sandbox | undefined;
+  const teardown = async () => {
+    await sandbox?.teardown();
+  };
   try {
+    sandbox = await createSandbox({ checkout: options.checkout });
     const hermesRoot = sandbox.env.HERMES_HOME!;
     const report = await convergeAgentBindings({
       hermesRoot,
@@ -210,7 +213,23 @@ export async function driveScratchProfile(
       transcript,
     };
   } catch (error) {
-    await teardown();
-    throw error;
+    // Never a throw. This runs at module load, where a throw takes the whole
+    // file down as an unhandled error and the three distinguished skips are
+    // never printed at all — the silent disappearance this ticket exists to
+    // end, wearing a different hat. The paths below are empty because nothing
+    // reads them: they are only reachable once `provisioningFailure` is null.
+    return {
+      cli: null,
+      exitCode: -1,
+      hermesRoot: "",
+      profile: "",
+      provisioningFailure: `the drive failed before Hermes ran: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      schemaVersion: null,
+      stateDb: "",
+      teardown,
+      transcript: "",
+    };
   }
 }
