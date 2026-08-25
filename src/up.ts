@@ -30,6 +30,15 @@ const DEFAULT_CONFIG = `# Argus per-repo overrides. Uncomment only values that d
 #   max_wait_seconds: 120
 `;
 
+const AGENTS_POINTER_BLOCK = `<!-- argus:begin -->
+## Argus project memory and skills
+
+- Read project-specific user context from \`.argus/memory/USER.md\`.
+- Read durable project facts from \`.argus/memory/MEMORY.md\` and neighboring fact files.
+- Use canonical per-repo skills from \`.argus/skills/\`.
+- Search archived transcripts with \`argus search "<query>"\`.
+<!-- argus:end -->`;
+
 interface CommandResult {
   exitCode: number;
   stderr: string;
@@ -166,6 +175,51 @@ async function migrateClaudeMemory(
   await symlink(destination, source);
 }
 
+async function ensureClaudeSkillsAdapter(repo: string): Promise<void> {
+  const claudeDirectory = join(repo, ".claude");
+  const adapter = join(claudeDirectory, "skills");
+  await mkdir(claudeDirectory, { recursive: true });
+  try {
+    const metadata = await lstat(adapter);
+    if (
+      metadata.isSymbolicLink() &&
+      (await readlink(adapter)) === "../.argus/skills"
+    ) {
+      return;
+    }
+    if (!metadata.isDirectory()) {
+      throw new Error(`argus up: ${adapter} exists and is not a directory`);
+    }
+    const canonicalSkills = join(repo, ".argus", "skills");
+    const importDirectory = await availableImportDirectory(
+      adapter,
+      canonicalSkills,
+    );
+    await mergeDirectory(adapter, canonicalSkills, importDirectory);
+    await rm(adapter, { recursive: true });
+  } catch (error) {
+    if (!isMissing(error)) throw error;
+  }
+  await symlink("../.argus/skills", adapter);
+}
+
+async function ensureAgentsPointer(repo: string): Promise<void> {
+  const agentsPath = join(repo, "AGENTS.md");
+  const file = Bun.file(agentsPath);
+  const existing = (await file.exists()) ? await file.text() : "";
+  const managedBlock = /<!-- argus:begin -->[\s\S]*?<!-- argus:end -->/g;
+  let inserted = false;
+  const refreshed = existing.replace(managedBlock, () => {
+    if (inserted) return "";
+    inserted = true;
+    return AGENTS_POINTER_BLOCK;
+  });
+  const next = inserted
+    ? refreshed
+    : `${existing.trimEnd()}${existing.trim().length > 0 ? "\n\n" : ""}${AGENTS_POINTER_BLOCK}\n`;
+  if (next !== existing) await Bun.write(agentsPath, next);
+}
+
 export async function convergeUp(cwd = process.cwd()): Promise<number> {
   const repo = await gitRoot(cwd);
   if (!repo) {
@@ -182,6 +236,8 @@ export async function convergeUp(cwd = process.cwd()): Promise<number> {
   const config = Bun.file(join(argusDirectory, "config.yaml"));
   if (!(await config.exists())) await Bun.write(config, DEFAULT_CONFIG);
   await migrateClaudeMemory(repo, join(argusDirectory, "memory"));
+  await ensureClaudeSkillsAdapter(repo);
+  await ensureAgentsPointer(repo);
   await ensureIgnoreEntry(repo);
 
   console.log(`Argus converged ${repo}`);

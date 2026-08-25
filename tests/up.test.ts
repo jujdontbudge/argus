@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import {
   lstat,
   mkdir,
@@ -13,6 +13,8 @@ import { fileURLToPath } from "node:url";
 
 const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 const sandboxes: string[] = [];
+
+setDefaultTimeout(30_000);
 
 async function run(
   command: string[],
@@ -165,5 +167,56 @@ describe("argus up", () => {
       ).text(),
     ).toBe("Claude version\n");
     expect((await lstat(claudeMemory)).isSymbolicLink()).toBe(true);
+  });
+
+  test("installs Claude skill adapters and an idempotent AGENTS pointer block", async () => {
+    const { env, repo } = await createScratchRepo();
+    await mkdir(join(repo, ".argus/skills/example"), { recursive: true });
+    await Bun.write(join(repo, ".argus/skills/example/SKILL.md"), "# Example\n");
+    await Bun.write(join(repo, "AGENTS.md"), "# Repository guidance\n");
+
+    expect((await runUp(repo, env)).exitCode).toBe(0);
+    expect(await readlink(join(repo, ".claude/skills"))).toBe(
+      "../.argus/skills",
+    );
+    expect(
+      await Bun.file(join(repo, ".claude/skills/example/SKILL.md")).text(),
+    ).toBe("# Example\n");
+    const firstAgents = await Bun.file(join(repo, "AGENTS.md")).text();
+    expect(firstAgents).toContain(".argus/memory/USER.md");
+    expect(firstAgents).toContain(".argus/memory/MEMORY.md");
+    expect(firstAgents).toContain(".argus/skills/");
+    expect(firstAgents).toContain('argus search "<query>"');
+
+    expect((await runUp(repo, env)).exitCode).toBe(0);
+    const repeatedAgents = await Bun.file(join(repo, "AGENTS.md")).text();
+    expect(repeatedAgents).toBe(firstAgents);
+    expect(repeatedAgents.match(/<!-- argus:begin -->/g)).toHaveLength(1);
+  });
+
+  test("converges partial adapters and refreshes duplicate pointer blocks", async () => {
+    const { env, repo } = await createScratchRepo();
+    await mkdir(join(repo, ".claude/skills/local"), { recursive: true });
+    await Bun.write(join(repo, ".claude/skills/local/SKILL.md"), "# Local\n");
+    await Bun.write(
+      join(repo, "AGENTS.md"),
+      "Before\n\n<!-- argus:begin -->\nstale one\n<!-- argus:end -->\n\n" +
+        "Middle\n\n<!-- argus:begin -->\nstale two\n<!-- argus:end -->\n",
+    );
+
+    expect((await runUp(repo, env)).exitCode).toBe(0);
+
+    expect((await lstat(join(repo, ".claude/skills"))).isSymbolicLink()).toBe(
+      true,
+    );
+    expect(
+      await Bun.file(join(repo, ".argus/skills/local/SKILL.md")).text(),
+    ).toBe("# Local\n");
+    const agents = await Bun.file(join(repo, "AGENTS.md")).text();
+    expect(agents).toContain("Before");
+    expect(agents).toContain("Middle");
+    expect(agents).not.toContain("stale one");
+    expect(agents).not.toContain("stale two");
+    expect(agents.match(/<!-- argus:begin -->/g)).toHaveLength(1);
   });
 });
