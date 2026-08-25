@@ -1,0 +1,14 @@
+{
+  "durationMs": 3022,
+  "expectedEyes": 5,
+  "distinctPids": 5,
+  "pidsByEye": {
+    "reviewer": 1,
+    "archiver": 1,
+    "honcho": 1,
+    "digest": 1,
+    "retro": 1
+  },
+  "samples": 260,
+  "parseFailures": 0
+}

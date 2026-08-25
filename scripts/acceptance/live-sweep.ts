@@ -55,6 +55,43 @@ async function argus(
   return invocation;
 }
 
+/**
+ * `argus watch <eye>` is a DAEMON since #39 — it is supposed to stay up, so
+ * `argus()` above (which awaits exit) would hang here forever. That helper was
+ * written when watch was a stub that exited 1 immediately; a run that returns
+ * promptly is now the failure, not the pass. Observe the child for a window,
+ * record whether it is still alive, then stop it and report how it took the
+ * signal (#39 claims SIGTERM is clean even mid-backoff).
+ */
+async function watchDaemon(
+  argv: string[],
+  cwd: string,
+  env: Record<string, string>,
+  observeMilliseconds = 1_500,
+): Promise<Invocation & { alive: boolean; pid: number; signalled: boolean }> {
+  const child = Bun.spawn([process.execPath, cli, ...argv], {
+    cwd,
+    env,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const pid = child.pid;
+  const early = await Promise.race([
+    child.exited.then((code) => ({ code, exited: true })),
+    Bun.sleep(observeMilliseconds).then(() => ({ code: null, exited: false })),
+  ]);
+  const alive = !early.exited;
+  if (alive) child.kill("SIGTERM");
+  const exitCode = await child.exited;
+  const [stdout, stderr] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  const invocation = { argv, cwd, exitCode, stderr, stdout };
+  transcript.push(invocation);
+  return { ...invocation, alive, pid, signalled: alive };
+}
+
 function show(label: string, invocation: Invocation): void {
   console.log(`\n$ argus ${invocation.argv.join(" ")}      # ${label}`);
   console.log(`  exit ${invocation.exitCode}`);
@@ -263,9 +300,37 @@ try {
   console.log("\n" + "-".repeat(78));
   console.log("7. argus watch <eye>  — for each of the five eyes");
   console.log("-".repeat(78));
+  console.log(
+    "  (a real daemon MUST still be alive after the observation window;",
+  );
+  console.log("   #36 measured all five as `exit 1 — not implemented yet`)");
   for (const eye of EYE_NAMES) {
-    show(`watch ${eye}`, await argus(["watch", eye, "--repo", sandbox.repo], sandbox.repo, env));
+    const daemon = await watchDaemon(
+      ["watch", eye, "--repo", sandbox.repo],
+      sandbox.repo,
+      env,
+    );
+    show(`watch ${eye}`, daemon);
+    console.log(
+      `  ==> pid ${daemon.pid} ${
+        daemon.alive
+          ? `ALIVE after the window, then exited ${daemon.exitCode} on SIGTERM`
+          : `DIED on its own with exit ${daemon.exitCode}  <-- NOT a daemon`
+      }`,
+    );
   }
+
+  console.log("\n  the two legible refusals #39 claims (these DO exit on their own):");
+  show(
+    "watch with an unknown eye",
+    await argus(["watch", "nosuchteye", "--repo", sandbox.repo], sandbox.repo, env),
+  );
+  const unenrolled = join(sandbox.root, "unenrolled-repo");
+  await mkdir(unenrolled, { recursive: true });
+  show(
+    "watch an unenrolled repo",
+    await argus(["watch", "reviewer", "--repo", unenrolled], unenrolled, env),
+  );
 
   console.log("\n" + "-".repeat(78));
   console.log("7b. the REAL supervisor daemon spawning those same `argus watch` children");
@@ -278,7 +343,14 @@ try {
   const supervisor = new WatcherSupervisor({
     registryPath: env.ARGUS_REPOS_FILE!,
     restartDelayMilliseconds: 50,
-    spawn: createWatcherSpawner([process.execPath, cli]),
+    // The sandbox env is REQUIRED now that watch is real. In production the
+    // daemon omits it so children inherit the daemon's own environment, which
+    // is the real one; here that would point them at the real ~/.argus-repos,
+    // where the sandbox repo is not enrolled, so each child refuses and the
+    // supervisor restarts it forever. That reads as a restart storm but is an
+    // artifact of the sweep, not of the supervisor — see scenarios 6 and the
+    // watch-stability probe, which both pass sandbox.env.
+    spawn: createWatcherSpawner([process.execPath, cli], sandbox.env),
     statusPath,
   });
   // The supervisor restarts dying children from an un-awaited handler, so its

@@ -1,15 +1,15 @@
 ==============================================================================
 ARGUS LIVE COMMAND SWEEP — ticket #36
 ==============================================================================
-checkout        /Users/johansardar/argus-worktrees/acceptance
-sandbox root    /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC
-sandbox repo    /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC
-scratch HOME    /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/home
-scratch registry /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/argus-repos
-scratch CLAUDE  /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/claude
-scratch HERMES  /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/hermes
-scratch CODEX   /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/codex
-scratch cmux    /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/cmux/cmux.sock
+checkout        /Users/johansardar/argus-worktrees/reaccept
+sandbox root    /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP
+sandbox repo    /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP
+scratch HOME    /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/home
+scratch registry /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/state/argus-repos
+scratch CLAUDE  /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/state/claude
+scratch HERMES  /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/state/hermes
+scratch CODEX   /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/state/codex
+scratch cmux    /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/state/cmux/cmux.sock
 
 ------------------------------------------------------------------------------
 1. argus --help
@@ -33,10 +33,10 @@ $ argus --help      # help
 
 $ argus up      # up #1 (fresh repo)
   exit 0
-  out| Hermes profile: argus-scratch-argus-harness-tgwktc
+  out| Hermes profile: argus-scratch-argus-harness-nknajp
   out| Push hooks: Claude Stop + Codex notify
   out| cmux hooks: pending #7 (soft check)
-  out| Argus converged /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC
+  out| Argus converged /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP
   err| TRACKER-LESS MODE: no GitHub remote; skipped GitHub labels and tracker checks
   err| HONCHO DEGRADED: http://localhost:8000 unavailable (HONCHO_API_KEY and ~/.honcho/config.json apiKey are both missing); local bindings converged
 
@@ -46,10 +46,10 @@ $ argus up      # up #1 (fresh repo)
 
 $ argus up      # up #2 (idempotent)
   exit 0
-  out| Hermes profile: argus-scratch-argus-harness-tgwktc
+  out| Hermes profile: argus-scratch-argus-harness-nknajp
   out| Push hooks: Claude Stop + Codex notify
   out| cmux hooks: pending #7 (soft check)
-  out| Argus converged /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC
+  out| Argus converged /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP
   err| TRACKER-LESS MODE: no GitHub remote; skipped GitHub labels and tracker checks
   err| HONCHO DEGRADED: http://localhost:8000 unavailable (HONCHO_API_KEY and ~/.honcho/config.json apiKey are both missing); local bindings converged
 
@@ -59,7 +59,7 @@ $ argus up      # up #2 (idempotent)
   ~/.argus-repos byte-identical (no dupe rows) ... YES
   .claude/settings.local.json byte-identical ..... YES
   $CODEX_HOME/config.toml byte-identical ......... YES
-  registry rows: "/private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC\n"
+  registry rows: "/private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP\n"
 
 ------------------------------------------------------------------------------
 4. argus up  (from a nested subdirectory — repo-root resolution)
@@ -67,10 +67,10 @@ $ argus up      # up #2 (idempotent)
 
 $ argus up      # up from subdir
   exit 0
-  out| Hermes profile: argus-scratch-argus-harness-tgwktc
+  out| Hermes profile: argus-scratch-argus-harness-nknajp
   out| Push hooks: Claude Stop + Codex notify
   out| cmux hooks: pending #7 (soft check)
-  out| Argus converged /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC
+  out| Argus converged /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP
   err| TRACKER-LESS MODE: no GitHub remote; skipped GitHub labels and tracker checks
   err| HONCHO DEGRADED: http://localhost:8000 unavailable (HONCHO_API_KEY and ~/.honcho/config.json apiKey are both missing); local bindings converged
 
@@ -81,11 +81,11 @@ $ argus up      # up from subdir
 $ argus status      # status (repo enrolled)
   exit 0
   out| REPO                                                                                                        EYE       STATE    PID
-  out| /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC  reviewer  stopped  -
-  out| /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC  archiver  stopped  -
-  out| /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC  honcho    stopped  -
-  out| /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC  digest    stopped  -
-  out| /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC  retro     stopped  -
+  out| /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP  reviewer  stopped  -
+  out| /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP  archiver  stopped  -
+  out| /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP  honcho    stopped  -
+  out| /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP  digest    stopped  -
+  out| /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP  retro     stopped  -
 
 ------------------------------------------------------------------------------
 6. argus search  (against seeded archive content)
@@ -93,7 +93,7 @@ $ argus status      # status (repo enrolled)
 
 $ argus search torn      # search with no archive
   exit 1
-  err| argus search: no archive exists for /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC
+  err| argus search: no archive exists for /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP
   archived 2/2 messages into .argus/archive.db
 
   seeded 45056 bytes of .argus/archive.db
@@ -121,26 +121,39 @@ $ argus search      # search with no query
 ------------------------------------------------------------------------------
 7. argus watch <eye>  — for each of the five eyes
 ------------------------------------------------------------------------------
+  (a real daemon MUST still be alive after the observation window;
+   #36 measured all five as `exit 1 — not implemented yet`)
 
-$ argus watch reviewer --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC      # watch reviewer
-  exit 1
-  err| argus watch: not implemented yet
+$ argus watch reviewer --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP      # watch reviewer
+  exit 0
+  ==> pid 85535 ALIVE after the window, then exited 0 on SIGTERM
 
-$ argus watch archiver --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC      # watch archiver
-  exit 1
-  err| argus watch: not implemented yet
+$ argus watch archiver --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP      # watch archiver
+  exit 0
+  ==> pid 85605 ALIVE after the window, then exited 0 on SIGTERM
 
-$ argus watch honcho --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC      # watch honcho
-  exit 1
-  err| argus watch: not implemented yet
+$ argus watch honcho --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP      # watch honcho
+  exit 0
+  err| HONCHO DEGRADED: credentials unavailable; messages remain queued and the eye keeps retrying
+  ==> pid 85650 ALIVE after the window, then exited 0 on SIGTERM
 
-$ argus watch digest --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC      # watch digest
-  exit 1
-  err| argus watch: not implemented yet
+$ argus watch digest --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP      # watch digest
+  exit 0
+  ==> pid 85732 ALIVE after the window, then exited 0 on SIGTERM
 
-$ argus watch retro --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC      # watch retro
+$ argus watch retro --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP      # watch retro
+  exit 0
+  ==> pid 85788 ALIVE after the window, then exited 0 on SIGTERM
+
+  the two legible refusals #39 claims (these DO exit on their own):
+
+$ argus watch nosuchteye --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP      # watch with an unknown eye
   exit 1
-  err| argus watch: not implemented yet
+  err| argus watch: unknown eye 'nosuchteye'; expected one of reviewer, archiver, honcho, digest, retro
+
+$ argus watch reviewer --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/unenrolled-repo      # watch an unenrolled repo
+  exit 1
+  err| argus watch reviewer: repo is not enrolled: /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/unenrolled-repo
 
 ------------------------------------------------------------------------------
 7b. the REAL supervisor daemon spawning those same `argus watch` children
@@ -149,54 +162,20 @@ $ argus watch retro --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argu
    createWatcherSpawner([bunPath, cliPath]) -> `argus watch <eye> --repo <repo>`)
 
   after 3s of real supervision of 5 eyes:
-    distinct watcher PIDs spawned .. 272
-    verdict ........................ RESTART LOOP — every `argus watch` child exits 1 immediately
-    supervisor's own failures ...... 214
-    of which ENOENT on status.tmp .. 214  <-- #writeStatus renames a FIXED temp path; concurrent writers collide
-    e.g. Error: ENOENT: no such file or directory, rename '/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/live-sweep-supervisor.json.tmp' -> '/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/live-sweep-supervisor.json'
+    distinct watcher PIDs spawned .. 5
+    verdict ........................ watchers stayed up
+    supervisor's own failures ...... 0
+    of which ENOENT on status.tmp .. 0
 
 ------------------------------------------------------------------------------
 8. argus down, then argus status
 ------------------------------------------------------------------------------
-121 |     // by `argus status` whenever a human asks — so it is written temp-then-
-122 |     // rename like every other polled surface in Argus. A plain write truncates
-123 |     // first, and a reader that lands in that window gets a torn file.
-124 |     const temporary = `${this.#options.statusPath}.tmp`;
-125 |     await Bun.write(temporary, `${JSON.stringify(status, null, 2)}\n`);
-126 |     await rename(temporary, this.#options.statusPath);
-                ^
-ENOENT: no such file or directory, rename '/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/live-sweep-supervisor.json.tmp' -> '/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/live-sweep-supervisor.json'
-    path: "/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/live-sweep-supervisor.json.tmp",
-    dest: "/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/live-sweep-supervisor.json",
- syscall: "rename",
-   errno: -2,
-    code: "ENOENT"
-
-      at async #writeStatus (/Users/johansardar/argus-worktrees/acceptance/src/supervisor/runtime.ts:126:11)
-      at async reconcile (/Users/johansardar/argus-worktrees/acceptance/src/supervisor/runtime.ts:89:16)
-      at async #restartAfterExit (/Users/johansardar/argus-worktrees/acceptance/src/supervisor/runtime.ts:137:16)
 
 $ argus down      # down
   exit 0
-  out| Argus stopped /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC
+  out| Argus stopped /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP
   out| Supervisor unloaded (no enabled repos)
   registry after down: ""
-121 |     // by `argus status` whenever a human asks — so it is written temp-then-
-122 |     // rename like every other polled surface in Argus. A plain write truncates
-123 |     // first, and a reader that lands in that window gets a torn file.
-124 |     const temporary = `${this.#options.statusPath}.tmp`;
-125 |     await Bun.write(temporary, `${JSON.stringify(status, null, 2)}\n`);
-126 |     await rename(temporary, this.#options.statusPath);
-                ^
-ENOENT: no such file or directory, rename '/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/live-sweep-supervisor.json.tmp' -> '/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/live-sweep-supervisor.json'
-    path: "/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/live-sweep-supervisor.json.tmp",
-    dest: "/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/state/live-sweep-supervisor.json",
- syscall: "rename",
-   errno: -2,
-    code: "ENOENT"
-
-      at async #writeStatus (/Users/johansardar/argus-worktrees/acceptance/src/supervisor/runtime.ts:126:11)
-      at async #restartAfterExit (/Users/johansardar/argus-worktrees/acceptance/src/supervisor/runtime.ts:135:16)
 
 $ argus status      # status (after down)
   exit 0
@@ -208,14 +187,14 @@ $ argus status      # status (after down)
 
 $ argus install      # install (fresh scratch HOME)
   exit 0
-  out| Installed argus at /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/install-home/.local/bin/argus
-  /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/install-home/.local/bin/argus -> /Users/johansardar/argus-worktrees/acceptance/src/cli.ts
+  out| Installed argus at /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/install-home/.local/bin/argus
+  /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/install-home/.local/bin/argus -> /Users/johansardar/argus-worktrees/reaccept/src/cli.ts
 
 $ argus install      # install (second run — idempotent)
   exit 0
-  out| Argus is already installed at /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/install-home/.local/bin/argus
+  out| Argus is already installed at /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/install-home/.local/bin/argus
 
-$ /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/install-home/.local/bin/argus --help      # the installed launcher actually runs
+$ /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/install-home/.local/bin/argus --help      # the installed launcher actually runs
   exit 0
   out| Argus — orchestration and self-learning toolkit
   out| Usage: argus <command>
@@ -260,11 +239,13 @@ SWEEP SUMMARY
   exit   0  argus search temp-then-rename
   exit   0  argus search zzz-nothing-matches-this
   exit   1  argus search
-  exit   1  argus watch reviewer --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC
-  exit   1  argus watch archiver --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC
-  exit   1  argus watch honcho --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC
-  exit   1  argus watch digest --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC
-  exit   1  argus watch retro --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-tgwktC/scratch-argus-harness-tgwktC
+  exit   0  argus watch reviewer --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP
+  exit   0  argus watch archiver --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP
+  exit   0  argus watch honcho --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP
+  exit   0  argus watch digest --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP
+  exit   0  argus watch retro --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP
+  exit   1  argus watch nosuchteye --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP
+  exit   1  argus watch reviewer --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/unenrolled-repo
   exit   0  argus down
   exit   0  argus status
   exit   0  argus install
@@ -273,5 +254,3 @@ SWEEP SUMMARY
   exit   1  argus up
 
 sandbox torn down.
-
-Bun v1.3.12 (macOS arm64)
