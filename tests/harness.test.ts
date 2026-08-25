@@ -1,11 +1,12 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { lstat, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { lstat, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
   createSandbox,
+  createIsolatedAgentSpawner,
   createScenarioRegistry,
   mechanicsScenario,
   runScenario,
@@ -55,6 +56,33 @@ describe("fake-Johan harness", () => {
     expect(lstat(sandbox.root)).rejects.toThrow();
   }, 90_000);
 
+  test("sandbox strips ambient Claude credentials until the isolated spawner needs them", async () => {
+    const names = [
+      "ANTHROPIC_API_KEY",
+      "ANTHROPIC_AUTH_TOKEN",
+      "CLAUDE_CODE_OAUTH_TOKEN",
+    ] as const;
+    const previous = new Map(names.map((name) => [name, Bun.env[name]]));
+    for (const name of names) Bun.env[name] = `fixture-${name}`;
+
+    let sandbox: Awaited<ReturnType<typeof createSandbox>> | undefined;
+    try {
+      sandbox = await createSandbox({ checkout });
+      expect(names.map((name) => sandbox?.env[name])).toEqual([
+        undefined,
+        undefined,
+        undefined,
+      ]);
+    } finally {
+      if (sandbox !== undefined) await sandbox.teardown();
+      for (const name of names) {
+        const value = previous.get(name);
+        if (value === undefined) delete Bun.env[name];
+        else Bun.env[name] = value;
+      }
+    }
+  }, 90_000);
+
   test("simulation driver delegates pinned agents to isolated worktrees and tabs", async () => {
     const sandbox = await createSandbox({ checkout });
     const requests: AgentSpawnRequest[] = [];
@@ -94,6 +122,76 @@ describe("fake-Johan harness", () => {
       await sandbox.teardown();
     }
   }, 90_000);
+
+  test("isolated spawner injects only the provisioned Claude OAuth token into the scratch session", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-live-spawner-"));
+    const home = join(root, "home");
+    const claudeConfig = join(root, "state/claude");
+    const probe = join(root, "probe.ts");
+    await writeFile(
+      probe,
+      `console.log(JSON.stringify({
+        apiKey: Bun.env.ANTHROPIC_API_KEY ?? null,
+        authToken: Bun.env.ANTHROPIC_AUTH_TOKEN ?? null,
+        claudeConfig: Bun.env.CLAUDE_CONFIG_DIR,
+        home: Bun.env.HOME,
+        oauthTokenPresent: Bun.env.CLAUDE_CODE_OAUTH_TOKEN === "fixture-oauth-token",
+      }));\n`,
+    );
+    const spawner = createIsolatedAgentSpawner({
+      claudeOauthToken: "fixture-oauth-token",
+      executables: { claude: process.execPath },
+    });
+
+    try {
+      const result = await spawner.spawn({
+        agent: "claude",
+        command: ["claude", probe],
+        cwd: root,
+        env: {
+          ANTHROPIC_API_KEY: "must-not-win-auth-precedence",
+          ANTHROPIC_AUTH_TOKEN: "must-not-win-auth-precedence",
+          CLAUDE_CONFIG_DIR: claudeConfig,
+          HOME: home,
+          PATH: process.env.PATH ?? "",
+        },
+        tab: "argus-test-fixture-claude",
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(JSON.parse(result.stdout ?? "")).toEqual({
+        apiKey: null,
+        authToken: null,
+        claudeConfig,
+        home,
+        oauthTokenPresent: true,
+      });
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  test("isolated spawner refuses a Claude child pointed at the real home or config", async () => {
+    const spawner = createIsolatedAgentSpawner({
+      claudeOauthToken: "fixture-oauth-token",
+      executables: { claude: "/must-not-run" },
+    });
+
+    expect(
+      spawner.spawn({
+        agent: "claude",
+        command: ["claude", "-p", "must not run"],
+        cwd: tmpdir(),
+        env: {
+          CLAUDE_CONFIG_DIR: join(homedir(), ".claude"),
+          HOME: homedir(),
+          PATH: process.env.PATH ?? "",
+        },
+        tab: "argus-test-refusal-claude",
+      }),
+    ).rejects.toThrow("outside the real home");
+  });
 
   test("registry exposes all ten core scenario slots and accepts future implementations", () => {
     const registry = createScenarioRegistry();
