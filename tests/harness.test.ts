@@ -9,6 +9,7 @@ import {
   createScenarioRegistry,
   mechanicsScenario,
   runScenario,
+  runScenarios,
   SimulationDriverRunner,
   type AgentSpawnRequest,
 } from "../src/harness/index.ts";
@@ -173,6 +174,42 @@ describe("fake-Johan harness", () => {
         status: "failed",
         teardown: "completed",
       });
+    } finally {
+      await rm(reportDirectory, { force: true, recursive: true });
+    }
+  });
+
+  test("parallel scenarios use distinct live sandboxes and report artifacts", async () => {
+    const reportDirectory = await mkdtemp(join(tmpdir(), "argus-reports-"));
+    const liveRoots: string[] = [];
+    let release: (() => void) | undefined;
+    const bothStarted = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const scenario = async ({ sandbox }: { sandbox: { root: string } }) => {
+      liveRoots.push(sandbox.root);
+      if (liveRoots.length === 2) release?.();
+      await bothStarted;
+      expect((await lstat(sandbox.root)).isDirectory()).toBe(true);
+    };
+
+    try {
+      const results = await runScenarios({
+        checkout,
+        reportDirectory,
+        scenarios: [
+          { name: "parallel-a", scenario },
+          { name: "parallel-b", scenario },
+        ],
+      });
+
+      expect(results.map(({ status }) => status)).toEqual(["passed", "passed"]);
+      expect(new Set(results.map(({ sandboxRoot }) => sandboxRoot)).size).toBe(2);
+      expect(new Set(results.map(({ reportPath }) => reportPath)).size).toBe(2);
+      for (const result of results) {
+        expect(lstat(result.sandboxRoot)).rejects.toThrow();
+        expect(await Bun.file(result.reportPath).exists()).toBe(true);
+      }
     } finally {
       await rm(reportDirectory, { force: true, recursive: true });
     }

@@ -354,3 +354,24 @@ export async function runScenario(
 
   return { ...report, reportPath };
 }
+
+export interface ScenarioBatchOptions {
+  checkout: string;
+  reportDirectory: string;
+  scenarios: Array<Pick<ScenarioRunOptions, "name" | "scenario">>;
+}
+
+export function runScenarios(
+  options: ScenarioBatchOptions,
+): Promise<ScenarioRunResult[]> {
+  return Promise.all(
+    options.scenarios.map(({ name, scenario }) =>
+      runScenario({
+        checkout: options.checkout,
+        name,
+        reportDirectory: options.reportDirectory,
+        scenario,
+      }),
+    ),
+  );
+}
