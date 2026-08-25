@@ -72,7 +72,7 @@ class HermesParser implements SourceParser {
         agent: "hermes",
         ...(row.cwd !== null && { cwd: row.cwd }),
         ...(row.parentSessionId !== null && { parentSessionId: row.parentSessionId }),
-        ...(row.model !== null && { version: row.model }),
+        ...(row.model !== null && { model: row.model }),
         ...(row.startedAt !== null && { ts: new Date(row.startedAt * 1000).toISOString() }),
         file: this.file,
       });
@@ -161,6 +161,28 @@ class HermesDatabaseReader {
       constants.SQLITE_OPEN_READONLY | constants.SQLITE_OPEN_URI,
     );
     try {
+      if (offset > 0 && !this.sequences.has(file)) {
+        const baseline = db.query<HermesRow, [number]>(
+          `SELECT
+             messages.id AS id,
+             messages.session_id AS sessionId,
+             messages.role AS role,
+             messages.content AS content,
+             messages.timestamp AS timestamp,
+             sessions.parent_session_id AS parentSessionId,
+             sessions.started_at AS startedAt,
+             sessions.cwd AS cwd,
+             sessions.model AS model
+           FROM messages
+           LEFT JOIN sessions ON sessions.id = messages.session_id
+           WHERE messages.id <= ?
+             AND messages.active = 1
+             AND messages.content IS NOT NULL
+             AND messages.role IN ('user', 'assistant')
+           ORDER BY messages.id`,
+        ).all(offset);
+        this.unreplayed(file, baseline);
+      }
       const rows = db.query<HermesRow, [number]>(
         `SELECT
            messages.id AS id,
@@ -176,6 +198,7 @@ class HermesDatabaseReader {
          LEFT JOIN sessions ON sessions.id = messages.session_id
          WHERE messages.id > ?
            AND messages.active = 1
+           AND messages.content IS NOT NULL
            AND messages.role IN ('user', 'assistant')
          ORDER BY messages.id`,
       ).all(offset);

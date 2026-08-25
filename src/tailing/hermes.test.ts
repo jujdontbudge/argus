@@ -57,7 +57,7 @@ describe("Hermes state.db source", () => {
           sessionId: "session-a",
           agent: "hermes",
           cwd: "/repo/widget",
-          version: "test-model",
+          model: "test-model",
           ts: "2026-04-24T03:06:40.000Z",
           file,
         },
@@ -106,8 +106,12 @@ describe("Hermes state.db source", () => {
       insert.run("session-rewrite", "user", "original prompt", 1_777_100_001, 1);
       insert.run("session-rewrite", "assistant", "original answer", 1_777_100_002, 1);
 
-      const tailer = new Tailer(createHermesSource({ hermesRoot: root }));
-      const initial = await tailer.catchUp();
+      const firstTailer = new Tailer(createHermesSource({ hermesRoot: root }));
+      const initial = await firstTailer.catchUp();
+      const tailer = new Tailer(createHermesSource({ hermesRoot: root }), {
+        cursors: firstTailer.cursors(),
+      });
+      expect(await tailer.catchUp()).toEqual([]);
 
       db.transaction(() => {
         db.run("DELETE FROM messages WHERE session_id = ?", ["session-rewrite"]);
