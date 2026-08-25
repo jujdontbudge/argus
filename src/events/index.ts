@@ -27,6 +27,10 @@ export {
   type EventKind,
 } from "./schema.ts";
 export {
+  eventSignalPathsScenario,
+  registerEventScenarios,
+} from "./scenarios.ts";
+export {
   writeEvent,
   type EventInput,
   type EventWriterOptions,
