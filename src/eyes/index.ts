@@ -217,13 +217,27 @@ export {
 } from "./retro/attribution";
 export {
   composeRetro,
+  composeScopeDrift,
   MAX_BODY_BYTES,
   type ComposeRetroInput,
+  type ComposeScopeDriftInput,
   type RetroComposition,
   type RetroPrompt,
 } from "./retro/compose";
+export {
+  buildDriftCandidates,
+  buildDriftPrompt,
+  decideDrift,
+  isJudgeableScope,
+  type BuildDriftCandidatesInput,
+  type DriftCandidate,
+  type DriftDecision,
+  type DriftQuestion,
+  type DriftWork,
+  type TicketScope,
+} from "./retro/drift";
 export { createFakeGh, type FakeGh, type FakeGhIssue } from "./retro/fake-gh";
-export { fixtureRetroBrain } from "./retro/fixture-brain";
+export { fixtureDriftAnswer, fixtureRetroBrain } from "./retro/fixture-brain";
 export {
   resolvePath,
   scanGit,
@@ -255,18 +269,24 @@ export {
   type RetroAudit,
   type RetroEyeOptions,
   type RetroFiling,
+  type RetroKind,
   type SessionObservation,
 } from "./retro/retro";
 export {
   createFixtureRogueDriver,
   registerRetroScenarios,
   rogueSessionScenario,
+  scopeDriftScenario,
   type RogueSessionDriver,
   type RogueSessionHandle,
 } from "./retro/scenarios";
 export {
+  DRIFT_OUTPUT_SCHEMA,
+  parseDriftVerdict,
   parseRetroVerdict,
   RETRO_OUTPUT_SCHEMA,
+  type DriftJudgment,
+  type DriftVerdict,
   type RetroJudgment,
   type RetroVerdict,
 } from "./retro/schema";
