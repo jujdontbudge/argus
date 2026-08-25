@@ -6,6 +6,7 @@ import {
   readlink,
   realpath,
   rm,
+  chmod,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -218,5 +219,148 @@ describe("argus up", () => {
     expect(agents).not.toContain("stale one");
     expect(agents).not.toContain("stale two");
     expect(agents.match(/<!-- argus:begin -->/g)).toHaveLength(1);
+  });
+
+  test("checks the remote with gh, creates only missing Argus labels, and wires tracker docs", async () => {
+    const { env, repo, root } = await createScratchRepo();
+    expect(
+      (
+        await run(
+          ["git", "remote", "add", "origin", "git@github.com:acme/widgets.git"],
+          repo,
+          env,
+        )
+      ).exitCode,
+    ).toBe(0);
+    const bin = join(root, "bin");
+    const ghLog = join(root, "gh.jsonl");
+    const gh = join(bin, "gh");
+    await mkdir(bin);
+    await Bun.write(
+      gh,
+      `#!/usr/bin/env bun
+import { appendFile } from "node:fs/promises";
+const args = Bun.argv.slice(2);
+await appendFile(Bun.env.GH_FAKE_LOG!, JSON.stringify(args) + "\\n");
+if (args[0] === "repo" && args[1] === "view") console.log(JSON.stringify({ nameWithOwner: "acme/widgets" }));
+if (args[0] === "label" && args[1] === "list") console.log(JSON.stringify([{ name: "retro" }]));
+`,
+    );
+    await chmod(gh, 0o755);
+
+    const result = await runUp(repo, {
+      ...env,
+      GH_FAKE_LOG: ghLog,
+      PATH: `${bin}:${Bun.env.PATH ?? ""}`,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("GitHub tracker: acme/widgets");
+    const calls = (await Bun.file(ghLog).text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as string[]);
+    expect(calls[0]).toEqual([
+      "repo",
+      "view",
+      "acme/widgets",
+      "--json",
+      "nameWithOwner",
+    ]);
+    expect(calls[1]).toEqual([
+      "label",
+      "list",
+      "--repo",
+      "acme/widgets",
+      "--limit",
+      "100",
+      "--json",
+      "name",
+    ]);
+    expect(
+      calls
+        .filter(([group, action]) => group === "label" && action === "create")
+        .map((call) => call[2]),
+    ).toEqual([
+      "wayfinder:map",
+      "wayfinder:research",
+      "wayfinder:prototype",
+      "wayfinder:grilling",
+      "wayfinder:task",
+    ]);
+    expect(await Bun.file(join(repo, "docs/agents/issue-tracker.md")).text()).toContain(
+      "acme/widgets",
+    );
+    expect(await Bun.file(join(repo, "docs/agents/triage-labels.md")).text()).toContain(
+      "ready-for-agent",
+    );
+    expect(await Bun.file(join(repo, "docs/agents/domain.md")).text()).toContain(
+      "single-context",
+    );
+    expect(await Bun.file(join(repo, "AGENTS.md")).text()).toContain(
+      "## Agent skills",
+    );
+  });
+
+  test("announces tracker-less mode without calling gh when no GitHub remote exists", async () => {
+    const { env, repo, root } = await createScratchRepo();
+    const bin = join(root, "bin");
+    await mkdir(bin);
+    await Bun.write(join(bin, "gh"), "#!/bin/sh\nexit 99\n");
+    await chmod(join(bin, "gh"), 0o755);
+
+    const result = await runUp(repo, {
+      ...env,
+      PATH: `${bin}:${Bun.env.PATH ?? ""}`,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain("TRACKER-LESS MODE");
+    expect(result.stderr).toContain("skipped GitHub labels and tracker checks");
+  });
+
+  test("enrolls the repo once in the configurable supervisor registry and reports soft cmux status", async () => {
+    const { env, repo } = await createScratchRepo();
+
+    const first = await runUp(repo, env);
+    const headAfterFirst = (
+      await run(["git", "rev-parse", "HEAD"], repo, env)
+    ).stdout;
+    const registryAfterFirst = await Bun.file(env.ARGUS_REPOS_FILE!).text();
+    const agentsAfterFirst = await Bun.file(join(repo, "AGENTS.md")).text();
+    const configAfterFirst = await Bun.file(join(repo, ".argus/config.yaml")).text();
+    const second = await runUp(repo, env);
+
+    expect(first.exitCode).toBe(0);
+    expect(first.stdout).toContain("cmux hooks: pending #7 (soft check)");
+    expect(registryAfterFirst).toBe(`${repo}\n`);
+    expect(second.exitCode).toBe(0);
+    expect(await Bun.file(env.ARGUS_REPOS_FILE!).text()).toBe(registryAfterFirst);
+    expect(await Bun.file(join(repo, "AGENTS.md")).text()).toBe(agentsAfterFirst);
+    expect(await Bun.file(join(repo, ".argus/config.yaml")).text()).toBe(
+      configAfterFirst,
+    );
+    expect((await run(["git", "rev-parse", "HEAD"], repo, env)).stdout).toBe(
+      headAfterFirst,
+    );
+  });
+
+  test("refuses a non-git directory without creating local or supervisor state", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-up-non-git-"));
+    sandboxes.push(root);
+    const home = join(root, "home");
+    const supervisor = join(root, "state", "argus-repos");
+    await mkdir(home);
+
+    const result = await runUp(root, {
+      ARGUS_REPOS_FILE: supervisor,
+      CLAUDE_CONFIG_DIR: join(root, "state", "claude"),
+      HOME: home,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("not inside a git repository");
+    expect(await Bun.file(join(root, ".argus/config.yaml")).exists()).toBe(false);
+    expect(await Bun.file(supervisor).exists()).toBe(false);
   });
 });
