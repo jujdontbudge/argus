@@ -323,6 +323,7 @@ export const watcherDeathScenario: ScenarioHandler = async ({ assert, sandbox })
     ], sandbox.env),
     statusPath,
   });
+  const observedPids = new Set<number>();
 
   try {
     await supervisor.reconcile();
@@ -336,6 +337,7 @@ export const watcherDeathScenario: ScenarioHandler = async ({ assert, sandbox })
       }
     }
     const initial = await supervisorSnapshot(statusPath);
+    for (const watcher of initial.watchers) observedPids.add(watcher.pid);
     assert(
       initial.watchers.length === EYE_NAMES.length &&
         initial.watchers.every(({ pid }) => processIsAlive(pid)),
@@ -363,6 +365,7 @@ export const watcherDeathScenario: ScenarioHandler = async ({ assert, sandbox })
         if (replacement) break;
       }
       assert(replacement !== undefined, `${eye} restarted after death`);
+      if (replacement !== undefined) observedPids.add(replacement.pid);
       if (eye === "archiver") replacementArchiver = replacement;
     }
 
@@ -420,10 +423,15 @@ export const watcherDeathScenario: ScenarioHandler = async ({ assert, sandbox })
     );
   } finally {
     await supervisor.stop();
+    for (let attempt = 0; attempt < 1_500; attempt += 1) {
+      if ([...observedPids].every((pid) => !processIsAlive(pid))) break;
+      await Bun.sleep(20);
+    }
   }
 
   assert(
-    (await supervisorSnapshot(statusPath)).watchers.length === 0,
+    (await supervisorSnapshot(statusPath)).watchers.length === 0 &&
+      [...observedPids].every((pid) => !processIsAlive(pid)),
     "supervisor stopped every real eye command",
   );
 };

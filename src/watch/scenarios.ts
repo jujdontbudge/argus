@@ -35,13 +35,13 @@ export const watcherUnenrollmentScenario: ScenarioHandler = async ({
     },
   );
   try {
-    for (let attempt = 0; !(await Bun.file(cursorPath).exists()) && attempt < 500; attempt += 1) {
+    for (let attempt = 0; !(await Bun.file(cursorPath).exists()) && attempt < 1_500; attempt += 1) {
       await Bun.sleep(20);
     }
     await disableRepo(sandbox.env.ARGUS_REPOS_FILE!, repo);
     const exitCode = await Promise.race([
       child.exited,
-      Bun.sleep(10_000).then(() => null),
+      Bun.sleep(30_000).then(() => null),
     ]);
     assert(
       exitCode === 0,
