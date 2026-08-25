@@ -390,11 +390,21 @@ export function rogueSessionScenario(
   };
 }
 
-/** Register scenario 3 into the §13 harness registry (slot 3). */
+/**
+ * Register scenario 3 into the §13 harness registry (slot 3), EXTENDING what
+ * is already there. Slot 3 has halves from more than one ticket — the Codex
+ * source registers its own rogue-session attribution half — and a scenario
+ * silently replaced is a scenario silently lost.
+ */
 export function registerRetroScenarios(
   registry: ScenarioRegistry,
   driver: ProvenanceScenarioDriver = createFixtureProvenanceDriver(),
   rogueDriver: RogueSessionDriver = createFixtureRogueDriver(),
 ): void {
-  registry.register(3, rogueSessionScenario(driver, rogueDriver));
+  const existing = registry.get(3);
+  const retroHalf = rogueSessionScenario(driver, rogueDriver);
+  registry.register(3, async (context) => {
+    if (existing !== undefined) await existing(context);
+    await retroHalf(context);
+  });
 }

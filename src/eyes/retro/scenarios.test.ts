@@ -53,3 +53,23 @@ describe("§13 retro scenarios in the harness registry", () => {
     expect(result.assertions.every(({ passed }) => passed)).toBe(true);
   }, 300_000);
 });
+
+describe("slot 3 composes with halves other tickets register", () => {
+  test("a scenario 3 already in the registry still runs, then the retro half", async () => {
+    const registry = createScenarioRegistry();
+    let priorRan = false;
+    registry.register(3, () => {
+      priorRan = true;
+    });
+
+    registerRetroScenarios(registry);
+    const composed = registry.get(3)!;
+    const result = await runInSandbox("retro-composed-slot-3", composed);
+
+    expect(priorRan).toBe(true);
+    expect(result.status).toBe("passed");
+    expect(result.assertions.map(({ description }) => description)).toContain(
+      "exactly one retro was filed for the rogue work",
+    );
+  }, 300_000);
+});
