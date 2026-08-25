@@ -3,7 +3,37 @@ import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createWatcherSpawner } from "../src/supervisor/daemon.ts";
-import { WatcherSupervisor } from "../src/supervisor/runtime.ts";
+import {
+  WatcherSupervisor,
+  type WatcherProcess,
+} from "../src/supervisor/runtime.ts";
+
+class CrashableWatcher implements WatcherProcess {
+  readonly exited: Promise<number>;
+  #exit!: (code: number) => void;
+
+  constructor(
+    readonly pid: number,
+    onBackgroundFailure: (error: unknown) => void,
+  ) {
+    const exited = new Promise<number>((resolve) => {
+      this.#exit = resolve;
+    });
+    const then = exited.then.bind(exited);
+    exited.then = ((...arguments_: Parameters<typeof exited.then>) => {
+      const handled = then(...arguments_);
+      void handled.catch(onBackgroundFailure);
+      return handled;
+    }) as typeof exited.then;
+    this.exited = exited;
+  }
+
+  crash(): void {
+    this.#exit(1);
+  }
+
+  kill(): void {}
+}
 
 /**
  * The supervisor's status file is a POLLED surface: §13 scenario 6 reads it
@@ -21,6 +51,80 @@ import { WatcherSupervisor } from "../src/supervisor/runtime.ts";
  * behind, which holds only if it renames one into place.
  */
 describe("supervisor status writes are atomic", () => {
+  test("concurrent reconciliation and crash restarts never collide or expose torn status", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-status-concurrent-"));
+    const statusPath = join(root, "state", "status.json");
+    const registryPath = join(root, "argus-repos");
+    const repo = join(root, "repo");
+    await mkdir(repo, { recursive: true });
+    await Bun.write(registryPath, `${repo}\n`);
+
+    let nextPid = 1_000;
+    const spawned: CrashableWatcher[] = [];
+    const backgroundFailures: unknown[] = [];
+    const supervisor = new WatcherSupervisor({
+      registryPath,
+      restartDelayMilliseconds: 0,
+      spawn: () => {
+        const watcher = new CrashableWatcher(nextPid++, (error) => {
+          backgroundFailures.push(error);
+        });
+        spawned.push(watcher);
+        return watcher;
+      },
+      statusPath,
+    });
+
+    let polling = true;
+    const parseFailures: unknown[] = [];
+    let snapshotsRead = 0;
+
+    try {
+      await supervisor.reconcile();
+      const reader = (async () => {
+        while (polling) {
+          try {
+            const status = JSON.parse(await Bun.file(statusPath).text()) as {
+              watchers?: unknown;
+            };
+            if (!Array.isArray(status.watchers)) {
+              throw new Error("status snapshot has no complete watchers array");
+            }
+            snapshotsRead += 1;
+          } catch (error) {
+            parseFailures.push(error);
+          }
+          await Bun.sleep(0);
+        }
+      })();
+
+      for (const watcher of spawned.slice(0, 5)) watcher.crash();
+      const reconciliations = await Promise.allSettled(
+        Array.from({ length: 64 }, () => supervisor.reconcile()),
+      );
+      await Bun.sleep(25);
+      polling = false;
+      await reader;
+
+      const foregroundFailures = reconciliations.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : [],
+      );
+      const writeFailures = [...foregroundFailures, ...backgroundFailures];
+      expect(
+        writeFailures.filter(
+          (error) => error instanceof Error && error.message.includes("ENOENT"),
+        ),
+      ).toHaveLength(0);
+      expect(writeFailures).toEqual([]);
+      expect(parseFailures).toEqual([]);
+      expect(snapshotsRead).toBeGreaterThan(0);
+    } finally {
+      polling = false;
+      await supervisor.stop().catch(() => {});
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
   test("the status file is renamed into place, leaving no temp file behind", async () => {
     const root = await mkdtemp(join(tmpdir(), "argus-status-atomic-"));
     const statusDirectory = join(root, "state");
