@@ -1,5 +1,13 @@
-import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import {
+  lstat,
+  mkdir,
+  readdir,
+  readlink,
+  rename,
+  rm,
+  symlink,
+} from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 
 const ARGUS_DIRECTORIES = [
   "registry",
@@ -66,6 +74,98 @@ async function ensureIgnoreEntry(repo: string): Promise<void> {
   if (committed.exitCode !== 0) throw new Error(committed.stderr.trim());
 }
 
+function isMissing(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return true;
+  } catch (error) {
+    if (isMissing(error)) return false;
+    throw error;
+  }
+}
+
+async function availableImportDirectory(
+  source: string,
+  destination: string,
+): Promise<string> {
+  for (let suffix = 1; ; suffix += 1) {
+    const name = suffix === 1 ? "claude-imported" : `claude-imported-${suffix}`;
+    if (
+      !(await pathExists(join(source, name))) &&
+      !(await pathExists(join(destination, name)))
+    ) {
+      return join(destination, name);
+    }
+  }
+}
+
+async function mergeDirectory(
+  source: string,
+  destination: string,
+  importDirectory: string,
+  relativePath: string[] = [],
+): Promise<void> {
+  for (const entry of await readdir(source, { withFileTypes: true })) {
+    const sourceEntry = join(source, entry.name);
+    const destinationEntry = join(destination, entry.name);
+    if (!(await pathExists(destinationEntry))) {
+      await rename(sourceEntry, destinationEntry);
+      continue;
+    }
+
+    const destinationMetadata = await lstat(destinationEntry);
+    if (entry.isDirectory() && destinationMetadata.isDirectory()) {
+      await mergeDirectory(sourceEntry, destinationEntry, importDirectory, [
+        ...relativePath,
+        entry.name,
+      ]);
+      await rm(sourceEntry, { recursive: true });
+      continue;
+    }
+
+    const importedEntry = join(importDirectory, ...relativePath, entry.name);
+    await mkdir(dirname(importedEntry), { recursive: true });
+    await rename(sourceEntry, importedEntry);
+  }
+}
+
+async function migrateClaudeMemory(
+  repo: string,
+  destination: string,
+): Promise<void> {
+  const home = process.env.HOME;
+  const claudeConfig =
+    process.env.CLAUDE_CONFIG_DIR ?? (home ? join(home, ".claude") : null);
+  if (!claudeConfig) throw new Error("HOME is not set");
+
+  const source = join(
+    claudeConfig,
+    "projects",
+    repo.replaceAll("/", "-"),
+    "memory",
+  );
+  try {
+    const sourceMetadata = await lstat(source);
+    if (sourceMetadata.isSymbolicLink()) {
+      const target = resolve(dirname(source), await readlink(source));
+      if (target === destination) return;
+    }
+
+    const importDirectory = await availableImportDirectory(source, destination);
+    await mergeDirectory(source, destination, importDirectory);
+    await rm(source, { recursive: true });
+  } catch (error) {
+    if (!isMissing(error)) throw error;
+  }
+
+  await mkdir(dirname(source), { recursive: true });
+  await symlink(destination, source);
+}
+
 export async function convergeUp(cwd = process.cwd()): Promise<number> {
   const repo = await gitRoot(cwd);
   if (!repo) {
@@ -81,6 +181,7 @@ export async function convergeUp(cwd = process.cwd()): Promise<number> {
   );
   const config = Bun.file(join(argusDirectory, "config.yaml"));
   if (!(await config.exists())) await Bun.write(config, DEFAULT_CONFIG);
+  await migrateClaudeMemory(repo, join(argusDirectory, "memory"));
   await ensureIgnoreEntry(repo);
 
   console.log(`Argus converged ${repo}`);

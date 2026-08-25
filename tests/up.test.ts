@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { lstat, mkdir, mkdtemp, rm } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readlink,
+  realpath,
+  rm,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,8 +41,9 @@ async function createScratchRepo(): Promise<{
   const root = await mkdtemp(join(tmpdir(), "argus-up-"));
   sandboxes.push(root);
   const home = join(root, "home");
-  const repo = join(root, "repo");
-  await Promise.all([mkdir(home), mkdir(repo)]);
+  const repoPath = join(root, "repo");
+  await Promise.all([mkdir(home), mkdir(repoPath)]);
+  const repo = await realpath(repoPath);
   const env = {
     ARGUS_REPOS_FILE: join(root, "state", "argus-repos"),
     CLAUDE_CONFIG_DIR: join(root, "state", "claude"),
@@ -103,5 +111,59 @@ describe("argus up", () => {
         )
       ).stdout,
     ).toContain(".argus/\n");
+  });
+
+  test("moves Claude project memory into Argus and symlinks it back", async () => {
+    const { env, repo } = await createScratchRepo();
+    const claudeMemory = join(
+      env.CLAUDE_CONFIG_DIR!,
+      "projects",
+      repo.replaceAll("/", "-"),
+      "memory",
+    );
+    await mkdir(join(claudeMemory, "facts"), { recursive: true });
+    await Bun.write(join(claudeMemory, "MEMORY.md"), "Claude memory\n");
+    await Bun.write(join(claudeMemory, "facts/tooling.md"), "Use Bun\n");
+
+    expect((await runUp(repo, env)).exitCode).toBe(0);
+
+    expect(await Bun.file(join(repo, ".argus/memory/MEMORY.md")).text()).toBe(
+      "Claude memory\n",
+    );
+    expect(
+      await Bun.file(join(repo, ".argus/memory/facts/tooling.md")).text(),
+    ).toBe("Use Bun\n");
+    expect((await lstat(claudeMemory)).isSymbolicLink()).toBe(true);
+    expect(await readlink(claudeMemory)).toBe(join(repo, ".argus/memory"));
+  });
+
+  test("merges pre-existing Argus and Claude memory without clobbering either", async () => {
+    const { env, repo } = await createScratchRepo();
+    const claudeMemory = join(
+      env.CLAUDE_CONFIG_DIR!,
+      "projects",
+      repo.replaceAll("/", "-"),
+      "memory",
+    );
+    await mkdir(claudeMemory, { recursive: true });
+    await mkdir(join(repo, ".argus/memory"), { recursive: true });
+    await Bun.write(join(claudeMemory, "MEMORY.md"), "Claude version\n");
+    await Bun.write(join(claudeMemory, "new-fact.md"), "New fact\n");
+    await Bun.write(join(repo, ".argus/memory/MEMORY.md"), "Argus version\n");
+
+    expect((await runUp(repo, env)).exitCode).toBe(0);
+
+    expect(await Bun.file(join(repo, ".argus/memory/MEMORY.md")).text()).toBe(
+      "Argus version\n",
+    );
+    expect(await Bun.file(join(repo, ".argus/memory/new-fact.md")).text()).toBe(
+      "New fact\n",
+    );
+    expect(
+      await Bun.file(
+        join(repo, ".argus/memory/claude-imported/MEMORY.md"),
+      ).text(),
+    ).toBe("Claude version\n");
+    expect((await lstat(claudeMemory)).isSymbolicLink()).toBe(true);
   });
 });
