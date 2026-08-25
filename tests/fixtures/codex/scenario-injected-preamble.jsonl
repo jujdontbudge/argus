@@ -1,0 +1,5 @@
+{"timestamp":"2026-09-01T10:00:00.000Z","ordinal":0,"type":"session_meta","payload":{"id":"aaaaaaaa-0000-4000-8000-000000000150","cwd":"__CWD__","cli_version":"0.150.0","history_mode":"paginated","thread_source":"cli"}}
+{"timestamp":"2026-09-01T10:00:01.000Z","ordinal":1,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<user_instructions>\n  Follow AGENTS.md in this repo.\n</user_instructions>"}]}}
+{"timestamp":"2026-09-01T10:00:02.000Z","ordinal":2,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<workspace_catalogue>\nHere is a list of workspaces that are available but not open.\n- argus: the watcher\n- hermes: the dispatcher\n</workspace_catalogue>"}]}}
+{"timestamp":"2026-09-01T10:00:03.000Z","ordinal":3,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"__DISPATCH__"}]}}
+{"timestamp":"2026-09-01T10:00:04.000Z","ordinal":4,"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"On it."}]}}
