@@ -96,3 +96,22 @@ test("the live agent drive executes its credential-free gate path", async () => 
   expect(result.exitCode).toBe(0);
   expect(result.stdout).toContain("argus: live agent drives SKIPPED");
 }, 10_000);
+
+test("the watcher stability probe runs its short real-process mode", async () => {
+  const result = await runAcceptanceScript("watch-stability.ts");
+
+  expect({ stderr: result.stderr, timedOut: result.timedOut }).toEqual({
+    stderr: "",
+    timedOut: false,
+  });
+  expect(result.exitCode).toBe(0);
+  const report = JSON.parse(result.stdout) as {
+    distinctPids: number;
+    expectedEyes: number;
+    mode?: string;
+    pidsByEye: Record<string, number>;
+  };
+  expect(report.mode).toBe("smoke");
+  expect(report.distinctPids).toBe(report.expectedEyes);
+  expect(Object.values(report.pidsByEye).every((count) => count === 1)).toBe(true);
+}, 10_000);
