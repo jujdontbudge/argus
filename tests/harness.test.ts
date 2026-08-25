@@ -25,12 +25,20 @@ describe("fake-Johan harness", () => {
       expect(sandbox.home).toBe(join(sandbox.root, "home"));
       expect(sandbox.env.HOME).toBe(sandbox.home);
       expect(sandbox.env.XDG_CONFIG_HOME).toBe(join(sandbox.root, "state/config"));
+      expect(sandbox.env.XDG_CACHE_HOME).toBe(join(sandbox.root, "state/cache"));
       expect(sandbox.env.XDG_DATA_HOME).toBe(join(sandbox.root, "state/data"));
       expect(sandbox.env.XDG_STATE_HOME).toBe(join(sandbox.root, "state/state"));
       expect(sandbox.env.ARGUS_REPOS_DIR).toBe(join(sandbox.root, "state/argus-repos"));
       expect(sandbox.env.CLAUDE_CONFIG_DIR).toBe(join(sandbox.root, "state/claude"));
+      expect(sandbox.env.CODEX_HOME).toBe(join(sandbox.root, "state/codex"));
       expect(sandbox.env.HERMES_HOME).toBe(join(sandbox.root, "state/hermes"));
       expect(sandbox.env.CMUX_SOCKET_DIR).toBe(join(sandbox.root, "state/cmux"));
+      expect(sandbox.env.CMUX_SOCKET_PATH).toBe(join(sandbox.root, "state/cmux/cmux.sock"));
+      expect(
+        Object.keys(sandbox.env)
+          .filter((name) => name.startsWith("CMUX_"))
+          .sort(),
+      ).toEqual(["CMUX_SOCKET_DIR", "CMUX_SOCKET_PATH"]);
       expect(dirname(sandbox.repo)).toBe(sandbox.root);
       expect(sandbox.up).toEqual({
         exitCode: 1,

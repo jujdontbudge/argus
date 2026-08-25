@@ -49,7 +49,7 @@ async function run(
 ): Promise<CommandResult> {
   const child = Bun.spawn(command, {
     cwd,
-    env: { ...Bun.env, ...env },
+    env,
     stderr: "pipe",
     stdout: "pipe",
   });
@@ -69,22 +69,39 @@ export async function createSandbox(
   const home = join(root, "home");
   const repo = join(root, "repo");
   const id = basename(root);
-  const env = {
+  const state = {
     ARGUS_REPOS_DIR: join(root, "state/argus-repos"),
     CLAUDE_CONFIG_DIR: join(root, "state/claude"),
+    CMUX_SOCKET_PATH: join(root, "state/cmux/cmux.sock"),
     CMUX_SOCKET_DIR: join(root, "state/cmux"),
+    CODEX_HOME: join(root, "state/codex"),
     HERMES_HOME: join(root, "state/hermes"),
     HOME: home,
+    XDG_CACHE_HOME: join(root, "state/cache"),
     XDG_CONFIG_HOME: join(root, "state/config"),
     XDG_DATA_HOME: join(root, "state/data"),
     XDG_STATE_HOME: join(root, "state/state"),
   };
+  const env: Record<string, string> = {};
+  for (const [name, value] of Object.entries(Bun.env)) {
+    if (
+      value !== undefined &&
+      !name.startsWith("CMUX_") &&
+      name !== "CODEX_SESSION_ID" &&
+      name !== "CODEX_THREAD_ID"
+    ) {
+      env[name] = value;
+    }
+  }
+  Object.assign(env, state);
 
   try {
     await Promise.all([
       mkdir(home, { recursive: true }),
       mkdir(repo, { recursive: true }),
-      ...Object.values(env)
+      ...Object.entries(state)
+        .filter(([name]) => name !== "CMUX_SOCKET_PATH")
+        .map(([, path]) => path)
         .filter((path) => path !== home)
         .map((path) => mkdir(path, { recursive: true })),
     ]);
