@@ -16,6 +16,8 @@ export interface SessionRecord {
   agent?: string;
   ticket?: string;
   workspace?: string;
+  /** Optional terminal surface for an exact cmux delivery target. */
+  surface?: string;
   /** The previous session id when this deployment is a Hermes compression
    * restart of an earlier session (§5.4: the chain digests as ONE session). */
   continues?: string;
@@ -135,6 +137,7 @@ export function parseSessionsJsonl(content: string, file: string): ParsedSession
       ...(typeof row.agent === "string" && { agent: row.agent }),
       ...(typeof row.ticket === "string" && { ticket: row.ticket }),
       ...(typeof row.workspace === "string" && { workspace: row.workspace }),
+      ...(typeof row.surface === "string" && { surface: row.surface }),
       ...(typeof row.continues === "string" && { continues: row.continues }),
     };
   });
