@@ -139,11 +139,39 @@ describe("fake-Johan harness", () => {
         name: "mechanics-isolation",
         sandboxRoot: result.sandboxRoot,
         status: "passed",
+        teardown: "completed",
         up: {
           exitCode: 1,
           stderr: "argus up: not implemented yet\n",
           stdout: "",
         },
+      });
+    } finally {
+      await rm(reportDirectory, { force: true, recursive: true });
+    }
+  });
+
+  test("scenario crash still tears down its sandbox and records failure", async () => {
+    const reportDirectory = await mkdtemp(join(tmpdir(), "argus-reports-"));
+
+    try {
+      const result = await runScenario({
+        checkout,
+        name: "deliberate-crash",
+        reportDirectory,
+        scenario: () => {
+          throw new Error("simulated driver crash");
+        },
+      });
+
+      expect(result.status).toBe("failed");
+      expect(result.error).toBe("simulated driver crash");
+      expect(result.teardown).toBe("completed");
+      expect(lstat(result.sandboxRoot)).rejects.toThrow();
+      expect(await Bun.file(result.reportPath).json()).toMatchObject({
+        error: "simulated driver crash",
+        status: "failed",
+        teardown: "completed",
       });
     } finally {
       await rm(reportDirectory, { force: true, recursive: true });

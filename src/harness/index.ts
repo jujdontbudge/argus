@@ -250,6 +250,7 @@ export interface ScenarioReport {
   name: string;
   sandboxRoot: string;
   status: "failed" | "passed";
+  teardown: "completed" | "failed";
   up: CommandResult;
 }
 
@@ -310,6 +311,7 @@ export async function runScenario(
   const assertions: ScenarioAssertion[] = [];
   let error: string | null = null;
   let status: ScenarioReport["status"] = "passed";
+  let teardown: ScenarioReport["teardown"] = "completed";
 
   const assert = (condition: boolean, description: string): void => {
     assertions.push({ description, passed: condition });
@@ -332,6 +334,7 @@ export async function runScenario(
       await sandbox.teardown();
     } catch (caught) {
       status = "failed";
+      teardown = "failed";
       error = caught instanceof Error ? caught.message : String(caught);
     }
   }
@@ -343,6 +346,7 @@ export async function runScenario(
     name: options.name,
     sandboxRoot: sandbox.root,
     status,
+    teardown,
     up: sandbox.up,
   };
   const reportPath = join(options.reportDirectory, `${id}.json`);
