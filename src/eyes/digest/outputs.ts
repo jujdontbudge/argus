@@ -13,7 +13,7 @@
  * true, and `dead` is terminal — a brain judgment cannot resurrect a session
  * the supervisor declared dead.
  */
-import { mkdir, rename } from "node:fs/promises";
+import { mkdir, rename, rmdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { DigestStatus } from "./schema";
 
@@ -150,4 +150,90 @@ export async function applyDigestUpdate(
     await writeAtomic(path, next);
   }
   return frontmatter;
+}
+
+/** One INDEX.md line's fields; `file` is the line's identity. */
+export interface IndexEntry {
+  file: string;
+  agent: string;
+  ticket?: string;
+  status: DigestStatus;
+  startedBy: "johan" | "hermes";
+  johanTouched: boolean;
+  /** Omitted: the existing line's summary is preserved. */
+  summary?: string;
+}
+
+const INDEX_HEADER = "# Session index\n";
+const INDEX_LINE = /^- (\S+\.md) — .* — (.*)$/;
+
+function renderIndexLine(entry: IndexEntry, summary: string): string {
+  return (
+    `- ${entry.file} — agent=${entry.agent} ticket=${entry.ticket ?? "null"} ` +
+    `status=${entry.status} started_by=${entry.startedBy} ` +
+    `johan_touched=${entry.johanTouched} — ${summary}`
+  );
+}
+
+/**
+ * Mutual exclusion for INDEX.md across eye PROCESSES, not just tasks: `mkdir`
+ * is atomic on POSIX, so the lock directory is a filesystem-wide critical
+ * section. A lock older than `staleMs` belongs to a crashed writer and is
+ * reclaimed — INDEX updates must never wedge behind a corpse.
+ */
+async function withIndexLock<T>(
+  sessionsDir: string,
+  body: () => Promise<T>,
+  pollMs = 5,
+  staleMs = 10_000,
+): Promise<T> {
+  const lock = join(sessionsDir, ".index.lock");
+  for (;;) {
+    try {
+      await mkdir(lock, { recursive: false });
+      break;
+    } catch {
+      try {
+        const held = await stat(lock);
+        if (Date.now() - held.mtimeMs > staleMs) {
+          await rmdir(lock).catch(() => {});
+        }
+      } catch {
+        // The holder released between attempts; retry immediately.
+      }
+      await Bun.sleep(pollMs);
+    }
+  }
+  try {
+    return await body();
+  } finally {
+    await rmdir(lock).catch(() => {});
+  }
+}
+
+/**
+ * Upsert one session's INDEX.md line under the lock: read-modify-write is a
+ * critical section, so concurrent writers (two eyes, two processes) lose no
+ * lines and duplicate none.
+ */
+export async function updateIndex(
+  sessionsDir: string,
+  entry: IndexEntry,
+): Promise<void> {
+  await mkdir(sessionsDir, { recursive: true });
+  await withIndexLock(sessionsDir, async () => {
+    const path = join(sessionsDir, "INDEX.md");
+    const file = Bun.file(path);
+    const existing = (await file.exists()) ? await file.text() : INDEX_HEADER;
+    const lines = existing.replace(/\n+$/, "").split("\n");
+    const at = lines.findIndex(
+      (line) => line.match(INDEX_LINE)?.[1] === entry.file,
+    );
+    const summary =
+      entry.summary ?? (at >= 0 ? lines[at]!.match(INDEX_LINE)![2]! : "");
+    const line = renderIndexLine(entry, summary);
+    if (at >= 0) lines[at] = line;
+    else lines.push(line);
+    await writeAtomic(path, `${lines.join("\n")}\n`);
+  });
 }
