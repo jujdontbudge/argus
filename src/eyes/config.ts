@@ -25,6 +25,7 @@ export interface EyesConfig {
   brain: BrainConfig;
   reviewer: CadenceConfig;
   digest: CadenceConfig;
+  retro: CadenceConfig;
 }
 
 export const DEFAULT_EYES_CONFIG: EyesConfig = {
@@ -35,6 +36,9 @@ export const DEFAULT_EYES_CONFIG: EyesConfig = {
   },
   reviewer: { quietWindowSeconds: 30, maxWaitSeconds: 300 },
   digest: { quietWindowSeconds: 30, maxWaitSeconds: 120 },
+  // The slowest eye: it files tickets, not notes, and its git scan is the
+  // one that must never race a half-finished commit sequence.
+  retro: { quietWindowSeconds: 60, maxWaitSeconds: 600 },
 };
 
 /** Parse the config subset: `section:` lines with `  key: value` children. */
@@ -108,5 +112,6 @@ export async function loadEyesConfig(repo: string): Promise<EyesConfig> {
     },
     reviewer: cadence(sections.get("reviewer"), defaults.reviewer),
     digest: cadence(sections.get("digest"), defaults.digest),
+    retro: cadence(sections.get("retro"), defaults.retro),
   };
 }

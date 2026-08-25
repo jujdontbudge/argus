@@ -27,6 +27,7 @@ describe("eyes config (ADR-0002 values, defaults in code)", () => {
         },
         reviewer: { quietWindowSeconds: 30, maxWaitSeconds: 300 },
         digest: { quietWindowSeconds: 30, maxWaitSeconds: 120 },
+        retro: { quietWindowSeconds: 60, maxWaitSeconds: 600 },
       });
     });
   });

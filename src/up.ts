@@ -38,6 +38,9 @@ const DEFAULT_CONFIG = `# Argus per-repo overrides. Uncomment only values that d
 # digest:
 #   quiet_window_seconds: 30
 #   max_wait_seconds: 120
+# retro:
+#   quiet_window_seconds: 60
+#   max_wait_seconds: 600
 `;
 
 const DEFAULT_HONCHO_URL = "http://localhost:8000";
