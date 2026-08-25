@@ -5,9 +5,16 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const checkout = fileURLToPath(new URL("../..", import.meta.url));
-const liveSweep = join(checkout, "scripts", "acceptance", "live-sweep.ts");
 
-test("the live sweep cheaply proves daemon and sandbox supervisor behavior", async () => {
+interface ScriptResult {
+  exitCode: number | null;
+  stderr: string;
+  stdout: string;
+  timedOut: boolean;
+}
+
+async function runAcceptanceScript(name: string): Promise<ScriptResult> {
+  const script = join(checkout, "scripts", "acceptance", name);
   const root = await mkdtemp(join(tmpdir(), "argus-acceptance-smoke-"));
   const home = join(root, "home");
   const state = join(root, "state");
@@ -26,6 +33,7 @@ test("the live sweep cheaply proves daemon and sandbox supervisor behavior", asy
   const env = {
     ...inherited,
     ARGUS_ACCEPTANCE_SMOKE: "1",
+    ARGUS_LIVE_AGENTS: "0",
     ARGUS_REPOS_FILE: join(state, "argus-repos"),
     CLAUDE_CONFIG_DIR: join(state, "claude"),
     CODEX_HOME: join(state, "codex"),
@@ -38,7 +46,7 @@ test("the live sweep cheaply proves daemon and sandbox supervisor behavior", asy
   };
 
   try {
-    const child = Bun.spawn([process.execPath, liveSweep], {
+    const child = Bun.spawn([process.execPath, script], {
       cwd: checkout,
       detached: true,
       env,
@@ -56,15 +64,35 @@ test("the live sweep cheaply proves daemon and sandbox supervisor behavior", asy
       await child.exited;
     }
     const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise]);
-
-    expect({ stderr, timedOut: outcome.timedOut }).toEqual({
-      stderr: "",
-      timedOut: false,
-    });
-    expect(outcome.exitCode).toBe(0);
-    expect(stdout).toContain("SMOKE PASS  watch daemon stayed alive until signalled");
-    expect(stdout).toContain("SMOKE PASS  sandbox supervisor watcher PIDs stayed stable");
+    return { ...outcome, stderr, stdout };
   } finally {
     await rm(root, { force: true, recursive: true });
   }
+}
+
+test("the live sweep cheaply proves daemon and sandbox supervisor behavior", async () => {
+  const result = await runAcceptanceScript("live-sweep.ts");
+
+  expect({ stderr: result.stderr, timedOut: result.timedOut }).toEqual({
+    stderr: "",
+    timedOut: false,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout).toContain(
+    "SMOKE PASS  watch daemon stayed alive until signalled",
+  );
+  expect(result.stdout).toContain(
+    "SMOKE PASS  sandbox supervisor watcher PIDs stayed stable",
+  );
+}, 10_000);
+
+test("the live agent drive executes its credential-free gate path", async () => {
+  const result = await runAcceptanceScript("live-agents.ts");
+
+  expect({ stderr: result.stderr, timedOut: result.timedOut }).toEqual({
+    stderr: "",
+    timedOut: false,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout).toContain("argus: live agent drives SKIPPED");
 }, 10_000);
