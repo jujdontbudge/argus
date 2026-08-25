@@ -71,4 +71,20 @@ describe("argus CLI", () => {
       await rm(home, { force: true, recursive: true });
     }
   });
+
+  test("install is idempotent when the launcher already points here", async () => {
+    const home = await mkdtemp(join(tmpdir(), "argus-install-"));
+
+    try {
+      expect((await runCli(["install"], [], { HOME: home })).exitCode).toBe(0);
+
+      const repeated = await runCli(["install"], [], { HOME: home });
+
+      expect(repeated.exitCode).toBe(0);
+      expect(repeated.stderr).toBe("");
+      expect(await readlink(join(home, ".local/bin/argus"))).toBe(cli);
+    } finally {
+      await rm(home, { force: true, recursive: true });
+    }
+  });
 });

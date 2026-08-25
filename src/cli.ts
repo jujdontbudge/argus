@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { mkdir, symlink } from "node:fs/promises";
+import { mkdir, readlink, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -48,6 +48,23 @@ async function install(): Promise<number> {
   const cli = fileURLToPath(import.meta.url);
 
   await mkdir(binDirectory, { recursive: true });
+  try {
+    const existingTarget = await readlink(launcher);
+    if (existingTarget === cli) {
+      console.log(`Argus is already installed at ${launcher}`);
+      return 0;
+    }
+
+    console.error(
+      `argus install: ${launcher} already points to ${existingTarget}; refusing to replace it`,
+    );
+    return 1;
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+      throw error;
+    }
+  }
+
   await symlink(cli, launcher);
   console.log(`Installed argus at ${launcher}`);
   return 0;
