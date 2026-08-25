@@ -12,6 +12,8 @@
  * agent's own words into a section headed "Johan's prompts".
  */
 import type { Author } from "../../provenance";
+import type { DriftCandidate, TicketScope } from "./drift";
+import type { DriftJudgment } from "./schema";
 import type { ParentResolution } from "./parent";
 import type { RetroSignal } from "./signal";
 
@@ -45,6 +47,8 @@ const MAX_TITLE = 256;
 /** GitHub's issue body limit, with room to spare for the closing sections. */
 export const MAX_BODY_BYTES = 60_000;
 const TITLE_PREFIX = "Retro: ";
+/** The quoted scope is evidence, not an archive: enough to argue with. */
+const MAX_QUOTED_SCOPE = 8_000;
 
 function cap(text: string, limit: number): string {
   return text.length <= limit ? text : `${text.slice(0, limit - 1)}…`;
@@ -203,5 +207,120 @@ export function composeRetro(input: ComposeRetroInput): RetroComposition {
   return {
     title: cap(`${TITLE_PREFIX}${input.what.trim()}`, MAX_TITLE),
     body: fit(head, diffSection(signal)),
+  };
+}
+
+/**
+ * The in-ticket SCOPE-DRIFT retro (#38, SPEC §14). Same discipline as the
+ * rogue retro above: the eye composes every word from evidence — the ticket
+ * as the tracker states it, the diff as git reported it — and the brain
+ * contributes only the phrase, the description and the reason it already had
+ * to articulate before `decideDrift` would let it file.
+ *
+ * The body has to survive being read by a Johan who disagrees, so it leads
+ * with what the ticket actually said and lets the diff speak for itself.
+ */
+export interface ComposeScopeDriftInput {
+  candidate: DriftCandidate;
+  scope: TicketScope;
+  judgment: DriftJudgment;
+}
+
+function driftChangeSections(candidate: DriftCandidate): string[] {
+  const sections: string[] = [];
+  const files = [
+    ...new Set(
+      candidate.work.flatMap((work) => [
+        ...work.commits.flatMap((commit) => commit.files),
+        ...(work.workingTree?.files ?? []),
+      ]),
+    ),
+  ];
+  if (files.length > 0) {
+    sections.push(
+      ["## Files touched", "", ...files.map((file) => `- \`${file}\``)].join("\n"),
+    );
+  }
+  const commits = candidate.work.flatMap((work) => work.commits);
+  if (commits.length > 0) {
+    sections.push(
+      [
+        "## Commits",
+        "",
+        ...commits.map(
+          (commit) =>
+            `- \`${shortSha(commit.sha)}\` ${commit.subject} — ${commit.authorName}` +
+            ` <${commit.authorEmail}>, ${commit.ts}`,
+        ),
+      ].join("\n"),
+    );
+  }
+  return sections;
+}
+
+function driftDiffSection(candidate: DriftCandidate): string | null {
+  const parts: string[] = [];
+  for (const work of candidate.work) {
+    for (const commit of work.commits) {
+      parts.push(
+        `### \`${shortSha(commit.sha)}\` ${commit.subject}\n\n\`\`\`diff\n${commit.diff.trimEnd()}\n\`\`\``,
+      );
+    }
+    if (work.workingTree) {
+      parts.push(
+        `### Uncommitted changes in \`${work.dir}\`\n\n\`\`\`diff\n${work.workingTree.diff.trimEnd()}\n\`\`\``,
+      );
+    }
+  }
+  if (parts.length === 0) return null;
+  return ["## Diff", "", ...parts].join("\n\n");
+}
+
+export function composeScopeDrift(
+  input: ComposeScopeDriftInput,
+): RetroComposition {
+  const { candidate, scope, judgment } = input;
+  const what = (judgment.what ?? "out-of-scope work").trim();
+
+  const head = [
+    "_Filed automatically by the Argus Retro eye (SPEC §5.5/§14): SCOPE DRIFT" +
+      ` inside ticket #${scope.number} — work done in that ticket's session` +
+      " that the ticket did not ask for. Filed closed; the work already" +
+      " happened. If this reads as in-scope, close the loop by saying so —" +
+      " the eye is built to stay silent when it is unsure._",
+    "",
+    "## The ticket",
+    "",
+    `#${scope.number} ${scope.title} (${scope.state})`,
+    "",
+    "Its stated scope, as the tracker holds it:",
+    "",
+    quote(cap(scope.body.trim(), MAX_QUOTED_SCOPE)),
+    "",
+    "## The work that does not serve it",
+    "",
+    (judgment.outOfScopeWork ?? "").trim(),
+    "",
+    `**Why it is a different goal:** ${(judgment.whyOutOfScope ?? "").trim()}`,
+    "",
+    "## Signal",
+    "",
+    `- **scope drift** — the diff below was made in a session registered to` +
+      ` #${scope.number}, so git and the digest both attribute it to that ticket.`,
+    `- checkouts: ${candidate.work.map((work) => `\`${work.dir}\``).join(", ")}` +
+      ` (parent repo \`${candidate.repoRoot}\`)`,
+    `- sessions: ${
+      candidate.sessionIds.length > 0
+        ? candidate.sessionIds.map((id) => `\`${id}\``).join(", ")
+        : "none observed"
+    }`,
+    `- parent: #${scope.number} (rule: \`session-ticket\`)`,
+    `- signal id: \`${candidate.id}\``,
+    ...driftChangeSections(candidate).flatMap((section) => ["", section]),
+  ].join("\n");
+
+  return {
+    title: cap(`${TITLE_PREFIX}${what} — out of scope for #${scope.number}`, MAX_TITLE),
+    body: fit(head, driftDiffSection(candidate)),
   };
 }
