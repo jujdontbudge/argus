@@ -2,8 +2,9 @@
  * Shared eye plumbing (ticket #30; SPEC §5): the pieces every eye (#31–#33)
  * composes — config knobs, coalesced cadence, the codex brain seam, the
  * machine-wide brain cap, and never-drop backpressure — plus the Reviewer
- * eye under ./reviewer, the Digest eye (#31) under ./digest and the Retro eye
- * (#33) under ./retro.
+ * eye under ./reviewer, the Digest eye (#31) under ./digest, the Retro eye
+ * (#33) under ./retro and the weekly curator pass (#35) under ./curator,
+ * which rides the Reviewer's loop rather than running as a sixth watcher.
  */
 export {
   ArchiverEye,
@@ -44,8 +45,95 @@ export {
   loadEyesConfig,
   type BrainConfig,
   type CadenceConfig,
+  type CuratorConfig,
   type EyesConfig,
 } from "./config";
+export {
+  archiveFact,
+  archiveSkill,
+  ARCHIVE_DIR,
+  memoryArchiveDir,
+  restoreSkill,
+  skillsArchiveDir,
+  type ArchivedSkill,
+  type ArchiveSkillOptions,
+} from "./curator/archive";
+export {
+  backupGitDir,
+  restoreSnapshot,
+  snapshotArgusState,
+  type SnapshotResult,
+} from "./curator/backup";
+export {
+  maybeRunCurator,
+  runCuratorPass,
+  type CuratorPassOptions,
+  type CuratorPassResult,
+  type CuratorTriggerResult,
+} from "./curator/curator";
+export {
+  buildCuratorPrompt,
+  DRY_RUN_BANNER,
+  type CuratorPromptInput,
+} from "./curator/prompt";
+export {
+  emptyReport,
+  renderReport,
+  reportDirectory,
+  writeReport,
+  type CuratorRunReport,
+} from "./curator/report";
+export {
+  EXCLUDED_SKILL_DIRS,
+  scanMemory,
+  scanSkills,
+  type FactCandidate,
+  type MemoryOrphan,
+  type MemoryScan,
+  type SkillCandidate,
+} from "./curator/scan";
+export {
+  curatorHalfScenario,
+  curatorSelfLearningScenario,
+  registerCuratorScenarios,
+} from "./curator/scenarios";
+export {
+  CURATOR_OUTPUT_SCHEMA,
+  parseCuratorVerdict,
+  type Consolidation,
+  type CuratorVerdict,
+  type Pruning,
+} from "./curator/schema";
+export {
+  curatorStatePath,
+  readCuratorState,
+  recordRun,
+  shouldRunNow,
+  type CuratorState,
+  type GateDecision,
+  type GateReason,
+} from "./curator/state";
+export {
+  applyAutomaticTransitions,
+  DEFAULT_THRESHOLDS,
+  type Transition,
+  type TransitionKind,
+  type TransitionResult,
+  type TransitionThresholds,
+} from "./curator/transitions";
+export {
+  emptyRecord,
+  latestActivityAt,
+  readUsage,
+  recordSkillWrites,
+  updateUsage,
+  usagePath,
+  writeUsage,
+  type UsageAuthor,
+  type UsageRecord,
+  type UsageSidecar,
+  type UsageState,
+} from "./curator/usage";
 export { chainRootOf } from "./digest/chain";
 export {
   DigestEye,
@@ -91,6 +179,7 @@ export {
 export {
   applyFindings,
   foldHermesEntries,
+  memoryIndexTarget,
   repairMemoryIndex,
   type ApplyContext,
   type ApplyResult,
