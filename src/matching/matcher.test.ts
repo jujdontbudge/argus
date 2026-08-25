@@ -114,6 +114,27 @@ describe("SendMatcher: expiry and audit events", () => {
   });
 });
 
+describe("SendMatcher: encoding-bug diagnostic", () => {
+  // Findings §4: a multi-line send to Claude Code without `\`+LF continuation
+  // shatters into N one-line messages. Each is a hash-miss (→ Johan), but a
+  // miss equal to a line of a pending multi-line send is flagged so the
+  // adapter bug is visible instead of silently poisoning provenance.
+  test("hash-miss equal to a line of a pending multi-line send is flagged", () => {
+    const m = new SendMatcher();
+    m.addSend({ ts: T0, text: "line one\nline two\nline three", id: "multi" });
+    const r = m.classify({ text: "line one", ts: at(500) });
+    expect(r.author).toBe("johan");
+    expect(r.author === "johan" && r.encodingBugSuspect?.id).toBe("multi");
+  });
+
+  test("an ordinary Johan message carries no flag", () => {
+    const m = new SendMatcher();
+    m.addSend({ ts: T0, text: "line one\nline two" });
+    const r = m.classify({ text: "unrelated thought", ts: at(500) });
+    expect(r.author === "johan" && r.encodingBugSuspect).toBeUndefined();
+  });
+});
+
 describe("SendMatcher: basic classification", () => {
   test("registry-logged send landing in window is Hermes-authored", () => {
     const m = new SendMatcher();

@@ -1,5 +1,6 @@
 import { deriveKind, derivedForms, type SendKind } from "./derived-forms";
 import { hashText } from "./hash";
+import { normalize } from "./normalize";
 
 /** Epoch milliseconds, or an ISO-8601 string as found in sends.jsonl / transcripts. */
 export type Timestamp = number | string;
@@ -49,7 +50,15 @@ export interface UserMessage {
 
 export type MatchResult =
   | { author: "hermes"; send: PendingSend; matchedForm: string }
-  | { author: "johan" };
+  | {
+      author: "johan";
+      /**
+       * Set when the miss equals one line of a pending multi-line send — the
+       * signature of a newline-encoding bug in Hermes' adapter (findings §4).
+       * Diagnostic only; the classification is still Johan.
+       */
+      encodingBugSuspect?: PendingSend;
+    };
 
 /**
  * Loud failure signals (findings §4): an unconsumed non-slash send past the
@@ -109,7 +118,23 @@ export class SendMatcher {
       this.pending.splice(i, 1); // consume: one send, at most one message
       return { author: "hermes", send, matchedForm: send.forms[formIndex]! };
     }
-    return { author: "johan" };
+    return { author: "johan", ...this.encodingBugSuspect(msg.text, t) };
+  }
+
+  private encodingBugSuspect(
+    text: string,
+    t: number,
+  ): { encodingBugSuspect: PendingSend } | undefined {
+    const line = normalize(text);
+    if (line.includes("\n")) return undefined;
+    for (const send of this.pending) {
+      if (t < send.ts - WINDOW_BEFORE_MS || t > send.ts + WINDOW_AFTER_MS) continue;
+      const lines = normalize(send.text).split("\n");
+      if (lines.length > 1 && lines.includes(line)) {
+        return { encodingBugSuspect: send };
+      }
+    }
+    return undefined;
   }
 
   /**
