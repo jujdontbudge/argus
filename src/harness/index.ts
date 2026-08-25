@@ -17,6 +17,12 @@ import {
   type HonchoPeerInput,
   type HonchoWorkspaceInput,
 } from "../up/bindings.ts";
+import { createWatcherSpawner } from "../supervisor/daemon.ts";
+import {
+  EYE_NAMES,
+  WatcherSupervisor,
+  type SupervisorStatus,
+} from "../supervisor/runtime.ts";
 
 export interface CommandResult {
   exitCode: number;
@@ -281,10 +287,79 @@ export class ScenarioRegistry {
 export function createScenarioRegistry(): ScenarioRegistry {
   const registry = new ScenarioRegistry();
   registry.register(2, fakeJohanBindingScenario);
+  registry.register(6, watcherDeathScenario);
   registry.register(9, semanticIsolationScenario);
   registry.register(10, blastRadiusZeroScenario);
   return registry;
 }
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function supervisorSnapshot(path: string): Promise<SupervisorStatus> {
+  return (await Bun.file(path).json()) as SupervisorStatus;
+}
+
+export const watcherDeathScenario: ScenarioHandler = async ({ assert, sandbox }) => {
+  assert(sandbox.up.exitCode === 0, "sandbox was converged by argus up");
+  const repo = await realpath(sandbox.repo);
+  const statusPath = join(sandbox.root, "state", "watcher-death-status.json");
+  const supervisor = new WatcherSupervisor({
+    registryPath: envPath(sandbox, "ARGUS_REPOS_FILE"),
+    restartDelayMilliseconds: 1,
+    spawn: createWatcherSpawner([
+      process.execPath,
+      "-e",
+      "await new Promise(() => {});",
+    ]),
+    statusPath,
+  });
+
+  try {
+    await supervisor.reconcile();
+    const initial = await supervisorSnapshot(statusPath);
+    assert(
+      initial.watchers.length === EYE_NAMES.length &&
+        initial.watchers.every(({ pid }) => processIsAlive(pid)),
+      "all five watcher fixtures started",
+    );
+
+    for (const eye of EYE_NAMES) {
+      const before = (await supervisorSnapshot(statusPath)).watchers.find(
+        (watcher) => watcher.eye === eye && watcher.repo === repo,
+      );
+      if (!before) throw new Error(`missing ${eye} watcher fixture`);
+      process.kill(before.pid, "SIGKILL");
+
+      let replacement: SupervisorStatus["watchers"][number] | undefined;
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        await Bun.sleep(5);
+        replacement = (await supervisorSnapshot(statusPath)).watchers.find(
+          (watcher) =>
+            watcher.eye === eye &&
+            watcher.repo === repo &&
+            watcher.pid !== before.pid &&
+            processIsAlive(watcher.pid),
+        );
+        if (replacement) break;
+      }
+      assert(replacement !== undefined, `${eye} restarted after death`);
+    }
+  } finally {
+    await supervisor.stop();
+  }
+
+  assert(
+    (await supervisorSnapshot(statusPath)).watchers.length === 0,
+    "supervisor stopped every watcher fixture",
+  );
+};
 
 export interface ScenarioRunOptions {
   checkout: string;

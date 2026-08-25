@@ -104,7 +104,7 @@ describe("fake-Johan harness", () => {
       { number: 3, status: "unimplemented", title: "Rogue session" },
       { number: 4, status: "unimplemented", title: "The poisoning test" },
       { number: 5, status: "unimplemented", title: "Fault injection: the unlogged send" },
-      { number: 6, status: "unimplemented", title: "Watcher death" },
+      { number: 6, status: "implemented", title: "Watcher death" },
       { number: 7, status: "unimplemented", title: "Signal paths" },
       { number: 8, status: "unimplemented", title: "Self-learning loop" },
       { number: 9, status: "implemented", title: "Semantic isolation" },
