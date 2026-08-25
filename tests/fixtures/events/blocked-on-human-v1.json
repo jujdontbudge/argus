@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "fixture-blocked-v1",
+  "kind": "blocked-on-human",
+  "agent": "codex",
+  "sessionId": "codex-fixture-thread",
+  "repo": "/tmp/argus-fixture-repo",
+  "createdAt": "2026-08-25T12:01:00.000Z",
+  "message": "BLOCKED: waiting on Johan for credentials."
+}

@@ -14,6 +14,7 @@ import {
   HttpHonchoClient,
   type HonchoClient,
 } from "./up/bindings.ts";
+import { convergePushHooks } from "./up/hooks.ts";
 import { startSupervisor } from "./supervisor/control.ts";
 import { enableRepo } from "./supervisor/registry.ts";
 
@@ -506,12 +507,16 @@ export async function convergeUp(cwd = process.cwd()): Promise<number> {
   await ensureClaudeSkillsAdapter(repo);
   await ensureAgentsPointer(repo);
   await ensureIgnoreEntry(repo);
+  const home = process.env.HOME;
+  if (!home) throw new Error("argus up: HOME is not set");
+  await convergePushHooks({
+    codexHome: process.env.CODEX_HOME ?? join(home, ".codex"),
+    repo,
+  });
   await ensureSupervisorEnrollment(repo);
   await startSupervisor();
   await ensureTracker(repo);
 
-  const home = process.env.HOME;
-  if (!home) throw new Error("argus up: HOME is not set");
   const url = configuredHonchoUrl(await config.text());
   const apiKey = await honchoApiKey(home);
   const bindings = await convergeAgentBindings({
@@ -532,6 +537,7 @@ export async function convergeUp(cwd = process.cwd()): Promise<number> {
     console.log(`Honcho binding: ${bindings.workspace} (${bindings.honcho})`);
   }
   console.log(`Hermes profile: ${bindings.profile}`);
+  console.log("Push hooks: Claude Stop + Codex notify");
 
   console.log("cmux hooks: pending #7 (soft check)");
   console.log(`Argus converged ${repo}`);
