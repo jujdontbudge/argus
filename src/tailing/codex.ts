@@ -4,7 +4,7 @@ import {
   realpathSync,
 } from "node:fs";
 import { readdir } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { codexCandidateText } from "../matching/candidates";
 import type { SourceParser, TailEvent, TranscriptSource } from "./events";
@@ -28,7 +28,28 @@ function canonicalPath(path: string): string {
   try {
     return realpathSync.native(path);
   } catch {
-    return resolve(path);
+    const absolute = resolve(path);
+    let existing = absolute;
+    while (true) {
+      try {
+        const canonicalParent = realpathSync.native(existing);
+        return resolve(canonicalParent, relative(existing, absolute));
+      } catch {
+        const parent = dirname(existing);
+        if (parent === existing) return absolute;
+        existing = parent;
+      }
+    }
+  }
+}
+
+function pathExists(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
   }
 }
 
@@ -75,6 +96,8 @@ function messageText(item: Rec, role: "user" | "assistant"): string | undefined 
 
 class CodexParser implements SourceParser {
   private cwd: string | undefined;
+  private gitBranch: string | undefined;
+  private gitRepository: string | undefined;
   private parentSessionId: string | undefined;
   private repo: string | undefined;
   private sessionId: string | undefined;
@@ -92,6 +115,7 @@ class CodexParser implements SourceParser {
       ...(this.parentSessionId !== undefined && {
         parentSessionId: this.parentSessionId,
       }),
+      ...(this.gitBranch !== undefined && { gitBranch: this.gitBranch }),
       ...(this.version !== undefined && { version: this.version }),
       ...(ts !== undefined && { ts }),
       file: this.file,
@@ -116,7 +140,10 @@ class CodexParser implements SourceParser {
       this.sessionId = id;
       const rawCwd = str(payload.cwd);
       this.cwd = rawCwd ? canonicalPath(rawCwd) : undefined;
-      this.repo = this.cwd ? repositoryFor(this.cwd) : undefined;
+      const git = asRecord(payload.git);
+      this.gitBranch = git ? str(git.branch) : undefined;
+      this.gitRepository = git ? str(git.repository_url) : undefined;
+      this.repo = this.resolveRepository();
       this.version = str(payload.cli_version);
       this.parentSessionId =
         str(payload.parent_thread_id) ?? str(payload.forked_from_id);
@@ -130,7 +157,7 @@ class CodexParser implements SourceParser {
       const cwd = canonicalPath(rawCwd);
       if (cwd === this.cwd) return [];
       this.cwd = cwd;
-      this.repo = repositoryFor(cwd);
+      this.repo = this.resolveRepository();
       return [this.metaEvent(ts)];
     }
 
@@ -163,6 +190,15 @@ class CodexParser implements SourceParser {
       }
     }
     return [];
+  }
+
+  private resolveRepository(): string | undefined {
+    if (!this.cwd) return undefined;
+    if (pathExists(this.cwd)) return repositoryFor(this.cwd);
+    if (!this.gitRepository) return undefined;
+    return isAbsolute(this.gitRepository)
+      ? canonicalPath(this.gitRepository)
+      : this.gitRepository;
   }
 }
 

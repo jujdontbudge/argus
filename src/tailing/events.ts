@@ -41,6 +41,8 @@ export interface SessionMetaEvent {
   repo?: string;
   /** Parent thread for a Codex subagent/fork, when the rollout provides one. */
   parentSessionId?: string;
+  /** Best-effort session-start branch from Codex's git snapshot. */
+  gitBranch?: string;
   version?: string;
   ts?: string;
   file: string;

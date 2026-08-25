@@ -22,6 +22,23 @@ async function initializeRepo(path: string): Promise<void> {
   }
 }
 
+async function runGit(cwd: string, args: string[]): Promise<void> {
+  const child = Bun.spawn(["git", "-C", cwd, ...args], {
+    env: {
+      ...Bun.env,
+      GIT_AUTHOR_EMAIL: "fixture@invalid.example",
+      GIT_AUTHOR_NAME: "Argus Fixture",
+      GIT_COMMITTER_EMAIL: "fixture@invalid.example",
+      GIT_COMMITTER_NAME: "Argus Fixture",
+    },
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  if ((await child.exited) !== 0) {
+    throw new Error(await new Response(child.stderr).text());
+  }
+}
+
 describe("Codex rollout source", () => {
   test("tails an envelope-era rollout and attributes it to its live git repo", async () => {
     const root = await mkdtemp(join(tmpdir(), "argus-codex-source-"));
@@ -143,6 +160,77 @@ describe("Codex rollout source", () => {
           text: "resumed prompt",
         },
       ]);
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  test("resolves a live linked worktree cwd to its parent checkout", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-codex-source-"));
+    try {
+      const repo = join(root, "parent");
+      const worktree = join(root, "worktrees/ticket-22");
+      const nested = join(worktree, "nested/directory");
+      await initializeRepo(repo);
+      await runGit(repo, ["commit", "--quiet", "--allow-empty", "-m", "fixture"]);
+      await mkdir(join(root, "worktrees"), { recursive: true });
+      await runGit(repo, ["worktree", "add", "--quiet", "--detach", worktree]);
+      await mkdir(nested, { recursive: true });
+
+      const codexHome = join(root, "codex");
+      const rolloutDir = join(codexHome, "sessions/2026/05/01");
+      await mkdir(rolloutDir, { recursive: true });
+      const rollout = join(
+        rolloutDir,
+        "rollout-2026-05-01T10-00-00-22222222-2222-2222-2222-222222222222.jsonl",
+      );
+      const fixture = await Bun.file(
+        join(fixtureRoot, "edge-worktree.jsonl"),
+      ).text();
+      await writeFile(rollout, fixture.replaceAll("__WORKTREE_CWD__", nested));
+
+      const events = await new Tailer(createCodexSource({ codexHome })).catchUp();
+      const meta = events.find((event) => event.type === "session-meta");
+
+      expect(meta).toMatchObject({
+        cwd: await realpath(nested),
+        repo: await realpath(repo),
+        sessionId: "22222222-2222-2222-2222-222222222222",
+      });
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  test("uses the best-effort git snapshot only when the recorded cwd is dead", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-codex-source-"));
+    try {
+      const parentRepo = join(root, "surviving-parent");
+      await initializeRepo(parentRepo);
+      const codexHome = join(root, "codex");
+      const rolloutDir = join(codexHome, "sessions/2026/06/01");
+      await mkdir(rolloutDir, { recursive: true });
+      const rollout = join(
+        rolloutDir,
+        "rollout-2026-06-01T10-00-00-33333333-3333-3333-3333-333333333333.jsonl",
+      );
+      const fixture = await Bun.file(
+        join(fixtureRoot, "edge-dead-worktree.jsonl"),
+      ).text();
+      await writeFile(
+        rollout,
+        fixture
+          .replaceAll("__DEAD_CWD__", join(root, "deleted-worktree"))
+          .replaceAll("__REPOSITORY_URL__", parentRepo),
+      );
+
+      const events = await new Tailer(createCodexSource({ codexHome })).catchUp();
+
+      expect(events[0]).toMatchObject({
+        cwd: join(await realpath(root), "deleted-worktree"),
+        repo: await realpath(parentRepo),
+        gitBranch: "build/deleted-lane",
+      });
     } finally {
       await rm(root, { force: true, recursive: true });
     }
