@@ -27,7 +27,7 @@ describe("§13 provenance scenarios in the harness registry", () => {
         .list()
         .filter(({ status }) => status === "unimplemented")
         .map(({ number }) => number),
-    ).toEqual([1, 3, 6, 7, 8, 9]);
+    ).toEqual([1, 3, 6, 7, 8]);
     expect(registry.get(2)).toBeFunction();
   });
 
