@@ -21,11 +21,21 @@ export interface CadenceConfig {
   maxWaitSeconds: number;
 }
 
+/** The weekly curator pass the Reviewer triggers (SPEC §5.1, ticket #35). */
+export interface CuratorConfig {
+  enabled: boolean;
+  /** Gate interval; Hermes' `curator.interval_hours` default is 168 (7 days). */
+  intervalHours: number;
+  staleAfterDays: number;
+  archiveAfterDays: number;
+}
+
 export interface EyesConfig {
   brain: BrainConfig;
   reviewer: CadenceConfig;
   digest: CadenceConfig;
   retro: CadenceConfig;
+  curator: CuratorConfig;
 }
 
 export const DEFAULT_EYES_CONFIG: EyesConfig = {
@@ -39,6 +49,13 @@ export const DEFAULT_EYES_CONFIG: EyesConfig = {
   // The slowest eye: it files tickets, not notes, and its git scan is the
   // one that must never race a half-finished commit sequence.
   retro: { quietWindowSeconds: 60, maxWaitSeconds: 600 },
+  // Hermes' `curator:` block defaults (hermes_cli/config.py:1852-1884).
+  curator: {
+    enabled: true,
+    intervalHours: 168,
+    staleAfterDays: 30,
+    archiveAfterDays: 90,
+  },
 };
 
 /** Parse the config subset: `section:` lines with `  key: value` children. */
@@ -70,6 +87,13 @@ function positiveInteger(value: string | undefined, fallback: number): number {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function boolean(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  if (/^(true|yes|on)$/i.test(value)) return true;
+  if (/^(false|no|off)$/i.test(value)) return false;
+  return fallback;
+}
+
 function nonEmpty(value: string | undefined, fallback: string): string {
   return value !== undefined && value.length > 0 ? value : fallback;
 }
@@ -86,6 +110,27 @@ function cadence(
     maxWaitSeconds: positiveInteger(
       section?.get("max_wait_seconds"),
       defaults.maxWaitSeconds,
+    ),
+  };
+}
+
+function curator(
+  section: Map<string, string> | undefined,
+  defaults: CuratorConfig,
+): CuratorConfig {
+  return {
+    enabled: boolean(section?.get("enabled"), defaults.enabled),
+    intervalHours: positiveInteger(
+      section?.get("interval_hours"),
+      defaults.intervalHours,
+    ),
+    staleAfterDays: positiveInteger(
+      section?.get("stale_after_days"),
+      defaults.staleAfterDays,
+    ),
+    archiveAfterDays: positiveInteger(
+      section?.get("archive_after_days"),
+      defaults.archiveAfterDays,
     ),
   };
 }
@@ -113,5 +158,6 @@ export async function loadEyesConfig(repo: string): Promise<EyesConfig> {
     reviewer: cadence(sections.get("reviewer"), defaults.reviewer),
     digest: cadence(sections.get("digest"), defaults.digest),
     retro: cadence(sections.get("retro"), defaults.retro),
+    curator: curator(sections.get("curator"), defaults.curator),
   };
 }
