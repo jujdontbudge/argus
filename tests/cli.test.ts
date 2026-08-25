@@ -1,13 +1,20 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, readlink, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const checkout = new URL("..", import.meta.url).pathname;
 const cli = new URL("../src/cli.ts", import.meta.url).pathname;
 const oldBunPreload = new URL("./fixtures/old-bun.ts", import.meta.url).pathname;
 
-async function runCli(args: string[], bunArgs: string[] = []) {
+async function runCli(
+  args: string[],
+  bunArgs: string[] = [],
+  env: Record<string, string> = {},
+) {
   const child = Bun.spawn([process.execPath, ...bunArgs, cli, ...args], {
     cwd: checkout,
-    env: { ...Bun.env },
+    env: { ...Bun.env, ...env },
     stderr: "pipe",
     stdout: "pipe",
   });
@@ -48,6 +55,20 @@ describe("argus CLI", () => {
       expect(result.exitCode).toBe(1);
       expect(result.stdout).toBe("");
       expect(result.stderr).toBe(`argus ${command}: not implemented yet\n`);
+    }
+  });
+
+  test("install creates a launcher symlink under a scratch HOME", async () => {
+    const home = await mkdtemp(join(tmpdir(), "argus-install-"));
+
+    try {
+      const result = await runCli(["install"], [], { HOME: home });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(await readlink(join(home, ".local/bin/argus"))).toBe(cli);
+    } finally {
+      await rm(home, { force: true, recursive: true });
     }
   });
 });

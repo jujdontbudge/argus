@@ -1,5 +1,9 @@
 #!/usr/bin/env bun
 
+import { mkdir, symlink } from "node:fs/promises";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 const HELP = `Argus — orchestration and self-learning toolkit
 
 Usage: argus <command>
@@ -32,6 +36,23 @@ function isVersionAtLeast(actual: string, minimum: string): boolean {
   return true;
 }
 
+async function install(): Promise<number> {
+  const home = process.env.HOME;
+  if (!home) {
+    console.error("argus install: HOME is not set");
+    return 1;
+  }
+
+  const binDirectory = join(home, ".local", "bin");
+  const launcher = join(binDirectory, "argus");
+  const cli = fileURLToPath(import.meta.url);
+
+  await mkdir(binDirectory, { recursive: true });
+  await symlink(cli, launcher);
+  console.log(`Installed argus at ${launcher}`);
+  return 0;
+}
+
 export async function main(args: string[]): Promise<number> {
   const bunVersion = process.versions.bun;
   if (!bunVersion || !isVersionAtLeast(bunVersion, MINIMUM_BUN_VERSION)) {
@@ -49,6 +70,10 @@ export async function main(args: string[]): Promise<number> {
   if (STUB_COMMANDS.has(args[0] ?? "")) {
     console.error(`argus ${args[0]}: not implemented yet`);
     return 1;
+  }
+
+  if (args[0] === "install") {
+    return install();
   }
 
   console.error(`argus: unknown command '${args[0]}'`);
