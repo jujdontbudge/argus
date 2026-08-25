@@ -18,6 +18,12 @@ export {
   registerCodexScenarios,
 } from "./codex-scenarios";
 export { createCodexSource, type CodexSourceOptions } from "./codex";
+export {
+  hermesAutonomousBatchScenario,
+  hermesPoisoningScenario,
+  registerHermesScenarios,
+} from "./hermes-scenarios";
+export { createHermesSource, type HermesSourceOptions } from "./hermes";
 export type {
   LifecycleEvent,
   MessageEvent,
