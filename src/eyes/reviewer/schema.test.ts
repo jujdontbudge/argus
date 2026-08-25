@@ -77,7 +77,7 @@ describe("reviewer verdict schema (luna output contract)", () => {
   });
 
   test("the --output-schema contract constrains kinds and requires every field", () => {
-    const schema = REVIEWER_OUTPUT_SCHEMA as {
+    const schema = REVIEWER_OUTPUT_SCHEMA as unknown as {
       required: string[];
       properties: {
         findings: {

@@ -92,7 +92,13 @@ describe("never-drop backpressure (infinite retry, backoff, >15min alert)", () =
         if (attempts < 3) throw new Error("blip");
         return null;
       },
-      { now: time.now, sleep: time.sleep, onAlert: (alert) => alerts.push(alert) },
+      {
+        now: time.now,
+        sleep: time.sleep,
+        onAlert: (alert) => {
+          alerts.push(alert);
+        },
+      },
     );
     expect(alerts).toEqual([]);
   });
