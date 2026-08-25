@@ -16,7 +16,9 @@ import { fileAlertEmitter, retryForever, type StuckAlert } from "../backpressure
 import { createCodexBrain, type Brain } from "../brain";
 import { createBrainCap, defaultBrainSlotsDirectory, type BrainCap } from "../cap";
 import { Coalescer, type CoalesceWindow } from "../coalesce";
-import { loadEyesConfig, type CadenceConfig } from "../config";
+import { loadEyesConfig, type CadenceConfig, type CuratorConfig } from "../config";
+import { maybeRunCurator } from "../curator/curator";
+import { recordSkillWrites } from "../curator/usage";
 import { applyFindings, foldHermesEntries, repairMemoryIndex } from "./outputs";
 import { parseVerdict, REVIEWER_OUTPUT_SCHEMA, type Verdict } from "./schema";
 
@@ -41,6 +43,12 @@ export interface ReviewerEyeOptions {
   brain: Brain;
   cap: BrainCap;
   cadence: CadenceConfig;
+  /**
+   * The weekly curator pass (#35) rides this loop. Omitted (as unit tests
+   * omit it) the curator never runs and leaves no state — it is a pass inside
+   * the Reviewer, so it is only ever as alive as the Reviewer is.
+   */
+  curator?: CuratorConfig;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   /** Stuck-alert sink; defaults to a §6 event file in `.argus/events/`. */
@@ -167,6 +175,7 @@ export class ReviewerEye {
       this.coalescer.flush();
       for (const entry of this.pending) this.coalescer.note(entry.ingestedAt);
       await this.persist();
+      await this.curate();
       return true;
     } finally {
       this.evaluating = false;
@@ -195,6 +204,35 @@ export class ReviewerEye {
     }
   }
 
+  /**
+   * SPEC §5.1's weekly curator pass. The gate answers "not yet" almost every
+   * time, so this is a cheap file read on the overwhelming majority of ticks.
+   * It can never take the eye down: a pass that throws is alerted like any
+   * other stuck eye and the evaluation that preceded it still counts.
+   */
+  private async curate(): Promise<void> {
+    const config = this.options.curator;
+    if (config === undefined) return;
+    try {
+      await maybeRunCurator({
+        repo: this.options.repo,
+        brain: this.options.brain,
+        cap: this.options.cap,
+        now: this.now(),
+        config,
+      });
+    } catch (error) {
+      await this.onAlert({
+        type: "eye-stuck",
+        eye: "curator",
+        stuckForMs: 0,
+        attempts: 1,
+        lastError: error instanceof Error ? error.message : String(error),
+        at: new Date(this.now()).toISOString(),
+      });
+    }
+  }
+
   private async apply(verdict: Verdict, batch: PendingEntry[]): Promise<void> {
     const memoryDir = join(this.options.repo, ".argus/memory");
     const skillsDir = join(this.options.repo, ".argus/skills");
@@ -206,11 +244,32 @@ export class ReviewerEye {
         .map(({ record }) => [record.event.uuid!, record.author]),
     );
     await foldHermesEntries(memoryDir);
-    await applyFindings(
+    const result = await applyFindings(
       { memoryDir, skillsDir, authorOf: (uuid) => authors.get(uuid) },
       verdict.findings,
     );
     await repairMemoryIndex(memoryDir);
+
+    // The curator's telemetry source (#35): every skill this eye writes gets a
+    // usage record, carrying the provenance split — a skill Johan asked for is
+    // his, and pinned beyond the curator's reach.
+    const johanAuthored = new Set(
+      verdict.findings
+        .filter(
+          (finding) =>
+            finding.kind === "procedure" &&
+            finding.sources.length > 0 &&
+            finding.sources.every((source) => authors.get(source) === "johan"),
+        )
+        .map(({ slug }) => slug),
+    );
+    const at = new Date(this.now()).toISOString();
+    for (const createdBy of ["johan", "agent"] as const) {
+      const slugs = result.applied.skills.filter(
+        (slug) => johanAuthored.has(slug) === (createdBy === "johan"),
+      );
+      await recordSkillWrites(skillsDir, slugs, { at, createdBy });
+    }
   }
 
   /** Atomic (temp + rename) so a crash can never tear the no-skip state. */
@@ -266,6 +325,7 @@ export async function openReviewer(
       maxConcurrency: config.brain.maxConcurrency,
     }),
     cadence: config.reviewer,
+    curator: config.curator,
     ...(overrides.now !== undefined && { now: overrides.now }),
     ...(overrides.sleep !== undefined && { sleep: overrides.sleep }),
     ...(overrides.onAlert !== undefined && { onAlert: overrides.onAlert }),
