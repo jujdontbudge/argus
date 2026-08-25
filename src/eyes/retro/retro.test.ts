@@ -579,3 +579,394 @@ describe("two eyes in one process never share state", () => {
     }
   }, 60_000);
 });
+
+const SCOPE_SEVEN =
+  "Build the widget renderer and its cache.\n" +
+  "The pipeline must stream, and the renderer needs a fixture test.";
+const SCOPE_NINE =
+  "Retries, timeouts and error paths for src/fetch-helper.ts.\n" +
+  "The retry loop needs a fixture test for the 429 path.";
+
+async function registerTicketSession(
+  repo: string,
+  sessionId: string,
+  ticket: string,
+  workspace: string,
+): Promise<void> {
+  await registerSession(repo, {
+    ts: "2026-08-25T09:00:00Z",
+    sessionId,
+    dispatchPrompt: `You are a BUILD worker for ticket #${ticket}.`,
+    agent: "codex",
+    ticket,
+    workspace,
+  });
+}
+
+describe("in-ticket scope drift (SPEC §14, #38)", () => {
+  test("out-of-scope work in a REGISTERED ticket session files under that ticket", async () => {
+    const place = await scratch();
+    const gh = createFakeGh({ repo: "JohanSardar/argus" });
+    gh.seed({ number: 7, title: "Ship the widget pipeline", body: SCOPE_SEVEN });
+    try {
+      const { eye } = await openEye(place, gh);
+      await eye.prime();
+      await registerTicketSession(place.repo, "sess-seven", "7", place.repo);
+      await place.commit(
+        "src/billing/stripe-webhooks.ts",
+        "export const onStripeEvent = () => {};\n",
+        "feat: add stripe billing webhooks",
+      );
+
+      const filings = await eye.scan();
+
+      expect(filings).toHaveLength(1);
+      expect(filings[0]!.kind).toBe("scope-drift");
+      expect(filings[0]!.outcome).toBe("filed");
+      expect(filings[0]!.parent).toBe("7");
+      const issue = filedIssue(gh)!;
+      expect(issue.parent).toBe(7);
+      expect(issue.state).toBe("closed");
+      expect(issue.title).toContain("out of scope for #7");
+      expect(issue.body).toContain("#7 Ship the widget pipeline");
+      expect(issue.body).toContain("> Build the widget renderer and its cache.");
+      expect(issue.body).toContain("stripe-webhooks");
+      expect(issue.body).toContain("sess-seven");
+    } finally {
+      await place.cleanup();
+    }
+  }, 60_000);
+
+  test("an IN-SCOPE refactor in a registered ticket session files NOTHING", async () => {
+    const place = await scratch();
+    const gh = createFakeGh({ repo: "JohanSardar/argus" });
+    gh.seed({ number: 9, title: "Harden the fetch helper", body: SCOPE_NINE });
+    try {
+      const { eye } = await openEye(place, gh);
+      await eye.prime();
+      await registerTicketSession(place.repo, "sess-nine", "9", place.repo);
+      await place.commit(
+        "src/fetch-helper.ts",
+        "export const fetchWithRetry = () => {};\n",
+        "refactor: extract the retry loop from the fetch helper",
+      );
+
+      expect(await eye.scan()).toEqual([]);
+      expect(gh.issues.filter((issue) => issue.labels.includes("retro"))).toHaveLength(0);
+    } finally {
+      await place.cleanup();
+    }
+  }, 60_000);
+
+  test("a one-line ticket body states too little scope to judge — silence, not a guess", async () => {
+    const place = await scratch();
+    const gh = createFakeGh({ repo: "JohanSardar/argus" });
+    gh.seed({ number: 7, title: "Ship the widget pipeline", body: "Do the pipeline." });
+    try {
+      const { eye } = await openEye(place, gh);
+      await eye.prime();
+      await registerTicketSession(place.repo, "sess-seven", "7", place.repo);
+      await place.commit(
+        "src/billing/stripe-webhooks.ts",
+        "export const onStripeEvent = () => {};\n",
+        "feat: add stripe billing webhooks",
+      );
+
+      expect(await eye.scan()).toEqual([]);
+      expect(gh.issues.filter((issue) => issue.labels.includes("retro"))).toHaveLength(0);
+    } finally {
+      await place.cleanup();
+    }
+  }, 60_000);
+
+  test("a ticket CLOSED mid-session is still judged, and still files", async () => {
+    const place = await scratch();
+    const gh = createFakeGh({ repo: "JohanSardar/argus" });
+    gh.seed({
+      number: 7,
+      title: "Ship the widget pipeline",
+      body: SCOPE_SEVEN,
+      state: "closed",
+    });
+    try {
+      const { eye } = await openEye(place, gh);
+      await eye.prime();
+      await registerTicketSession(place.repo, "sess-seven", "7", place.repo);
+      await place.commit(
+        "src/billing/stripe-webhooks.ts",
+        "export const onStripeEvent = () => {};\n",
+        "feat: add stripe billing webhooks",
+      );
+
+      const filings = await eye.scan();
+
+      expect(filings).toHaveLength(1);
+      expect(filings[0]!.parent).toBe("7");
+      expect(filedIssue(gh)!.parent).toBe(7);
+    } finally {
+      await place.cleanup();
+    }
+  }, 60_000);
+
+  test("the same drift is never filed twice", async () => {
+    const place = await scratch();
+    const gh = createFakeGh({ repo: "JohanSardar/argus" });
+    gh.seed({ number: 7, title: "Ship the widget pipeline", body: SCOPE_SEVEN });
+    try {
+      const { eye } = await openEye(place, gh);
+      await eye.prime();
+      await registerTicketSession(place.repo, "sess-seven", "7", place.repo);
+      await place.commit(
+        "src/billing/stripe-webhooks.ts",
+        "export const onStripeEvent = () => {};\n",
+        "feat: add stripe billing webhooks",
+      );
+
+      expect(await eye.scan()).toHaveLength(1);
+      expect(await eye.scan()).toEqual([]);
+      expect(gh.issues.filter((issue) => issue.labels.includes("retro"))).toHaveLength(1);
+    } finally {
+      await place.cleanup();
+    }
+  }, 60_000);
+
+  test("work in the ticket's own WORKTREE is judged against the parent repo's ticket", async () => {
+    const place = await scratch();
+    const worktree = join(place.root, "worktrees/seven");
+    const gh = createFakeGh({ repo: "JohanSardar/argus" });
+    gh.seed({ number: 7, title: "Ship the widget pipeline", body: SCOPE_SEVEN });
+    try {
+      await place.git("worktree", "add", "--quiet", "-b", "build/seven", worktree);
+      const { eye } = await openEye(place, gh);
+      await eye.prime();
+      await registerTicketSession(place.repo, "sess-seven", "7", worktree);
+
+      await mkdir(join(worktree, "src/billing"), { recursive: true });
+      await writeFile(
+        join(worktree, "src/billing/stripe-webhooks.ts"),
+        "export const onStripeEvent = () => {};\n",
+      );
+      await gitIn(worktree, "add", "src/billing/stripe-webhooks.ts");
+      await gitIn(worktree, "commit", "--quiet", "-m", "feat: add stripe billing webhooks");
+
+      const filings = await eye.scan();
+
+      expect(filings).toHaveLength(1);
+      expect(filings[0]!.parent).toBe("7");
+      // Filed against the PARENT repo's tracker, from the parent checkout.
+      expect(gh.cwds.every((cwd) => cwd === place.repo)).toBe(true);
+    } finally {
+      await place.cleanup();
+    }
+  }, 60_000);
+});
+
+describe("scope drift never takes the eye down (ADR-0001)", () => {
+  test("a broken brain is reported and the pass moves on — no retry storm", async () => {
+    const place = await scratch();
+    const gh = createFakeGh({ repo: "JohanSardar/argus" });
+    gh.seed({ number: 7, title: "Ship the widget pipeline", body: SCOPE_SEVEN });
+    try {
+      const audits: RetroAudit[] = [];
+      let brainCalls = 0;
+      const eye = await RetroEye.open({
+        repo: place.repo,
+        brain: {
+          // The #35 failure shape: a bare `exit 1` with empty stderr.
+          evaluate: async () => {
+            brainCalls += 1;
+            return {
+              ok: false as const,
+              reason: "nonzero-exit" as const,
+              detail: "exit 1: ",
+            };
+          },
+        },
+        cap: createBrainCap({
+          directory: join(place.root, "brain-slots"),
+          maxConcurrency: 2,
+          pollMs: 1,
+        }),
+        cadence: { quietWindowSeconds: 60, maxWaitSeconds: 600 },
+        gh: gh.run,
+        now: () => 0,
+        sleep: async () => {},
+        onAudit: (audit) => {
+          audits.push(audit);
+        },
+      });
+      await eye.prime();
+      await registerTicketSession(place.repo, "sess-seven", "7", place.repo);
+      await place.commit(
+        "src/billing/stripe-webhooks.ts",
+        "export const onStripeEvent = () => {};\n",
+        "feat: add stripe billing webhooks",
+      );
+
+      expect(await eye.scan()).toEqual([]);
+      expect(brainCalls).toBe(1);
+      expect(
+        audits.some(
+          (audit) => audit.type === "scope-drift-not-filed" && audit.ticket === "7",
+        ),
+      ).toBe(true);
+      expect(gh.issues.filter((issue) => issue.labels.includes("retro"))).toHaveLength(0);
+    } finally {
+      await place.cleanup();
+    }
+  }, 60_000);
+
+  test("a schema miss is reported once, not retried forever", async () => {
+    const place = await scratch();
+    const gh = createFakeGh({ repo: "JohanSardar/argus" });
+    gh.seed({ number: 7, title: "Ship the widget pipeline", body: SCOPE_SEVEN });
+    try {
+      const audits: RetroAudit[] = [];
+      let brainCalls = 0;
+      const eye = await RetroEye.open({
+        repo: place.repo,
+        brain: {
+          evaluate: async () => {
+            brainCalls += 1;
+            return { ok: true as const, text: '{"drifts":[{"nope":1}]}' };
+          },
+        },
+        cap: createBrainCap({
+          directory: join(place.root, "brain-slots"),
+          maxConcurrency: 2,
+          pollMs: 1,
+        }),
+        cadence: { quietWindowSeconds: 60, maxWaitSeconds: 600 },
+        gh: gh.run,
+        now: () => 0,
+        sleep: async () => {},
+        onAudit: (audit) => {
+          audits.push(audit);
+        },
+      });
+      await eye.prime();
+      await registerTicketSession(place.repo, "sess-seven", "7", place.repo);
+      await place.commit(
+        "src/billing/stripe-webhooks.ts",
+        "export const onStripeEvent = () => {};\n",
+        "feat: add stripe billing webhooks",
+      );
+
+      expect(await eye.scan()).toEqual([]);
+      expect(brainCalls).toBe(1);
+      expect(
+        audits.some(
+          (audit) =>
+            audit.type === "scope-drift-not-filed" && audit.reason.includes("schema"),
+        ),
+      ).toBe(true);
+    } finally {
+      await place.cleanup();
+    }
+  }, 60_000);
+
+  test("a brain that THROWS is caught too — the scan returns, the eye lives", async () => {
+    const place = await scratch();
+    const gh = createFakeGh({ repo: "JohanSardar/argus" });
+    gh.seed({ number: 7, title: "Ship the widget pipeline", body: SCOPE_SEVEN });
+    try {
+      const audits: RetroAudit[] = [];
+      const eye = await RetroEye.open({
+        repo: place.repo,
+        brain: {
+          evaluate: async () => {
+            throw new Error("codex vanished mid-flight");
+          },
+        },
+        cap: createBrainCap({
+          directory: join(place.root, "brain-slots"),
+          maxConcurrency: 2,
+          pollMs: 1,
+        }),
+        cadence: { quietWindowSeconds: 60, maxWaitSeconds: 600 },
+        gh: gh.run,
+        now: () => 0,
+        sleep: async () => {},
+        onAudit: (audit) => {
+          audits.push(audit);
+        },
+      });
+      await eye.prime();
+      await registerTicketSession(place.repo, "sess-seven", "7", place.repo);
+      await place.commit(
+        "src/billing/stripe-webhooks.ts",
+        "export const onStripeEvent = () => {};\n",
+        "feat: add stripe billing webhooks",
+      );
+
+      expect(await eye.scan()).toEqual([]);
+      expect(
+        audits.some(
+          (audit) =>
+            audit.type === "scope-drift-not-filed" &&
+            audit.reason.includes("codex vanished mid-flight"),
+        ),
+      ).toBe(true);
+      // The slot it took is released, or the next scan would hang forever.
+      expect(await eye.scan()).toEqual([]);
+    } finally {
+      await place.cleanup();
+    }
+  }, 60_000);
+
+  test("a gh failure keeps the drift record in the digest and audits it", async () => {
+    const place = await scratch();
+    const gh = createFakeGh({
+      repo: "JohanSardar/argus",
+      failCreate: "label 'retro' not found",
+    });
+    gh.seed({ number: 7, title: "Ship the widget pipeline", body: SCOPE_SEVEN });
+    try {
+      const { eye, audits } = await openEye(place, gh);
+      await eye.prime();
+      await registerTicketSession(place.repo, "sess-seven", "7", place.repo);
+      await seedDigest(place.repo, "7-sess-seven.md", "Working ticket seven.");
+      await place.commit(
+        "src/billing/stripe-webhooks.ts",
+        "export const onStripeEvent = () => {};\n",
+        "feat: add stripe billing webhooks",
+      );
+
+      const filings = await eye.scan();
+
+      expect(filings).toHaveLength(1);
+      expect(filings[0]!.outcome).toBe("digest-note");
+      expect(audits.some((audit) => audit.type === "retro-file-failed")).toBe(true);
+      expect(
+        await Bun.file(join(place.repo, ".argus/sessions/7-sess-seven.md")).text(),
+      ).toContain("out of scope for #7");
+    } finally {
+      await place.cleanup();
+    }
+  }, 60_000);
+
+  test("tracker-less mode cannot read a stated scope, so it asks nothing", async () => {
+    const place = await scratch();
+    const gh = createFakeGh({ repo: "JohanSardar/argus", failView: "no git remotes" });
+    try {
+      const { eye, audits } = await openEye(place, gh);
+      await eye.prime();
+      await registerTicketSession(place.repo, "sess-seven", "7", place.repo);
+      await place.commit(
+        "src/billing/stripe-webhooks.ts",
+        "export const onStripeEvent = () => {};\n",
+        "feat: add stripe billing webhooks",
+      );
+
+      expect(await eye.scan()).toEqual([]);
+      expect(
+        audits.some(
+          (audit) =>
+            audit.type === "scope-drift-not-filed" && audit.reason.includes("tracker"),
+        ),
+      ).toBe(true);
+    } finally {
+      await place.cleanup();
+    }
+  }, 60_000);
+});

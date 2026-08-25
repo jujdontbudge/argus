@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import type { RogueChanges } from "./attribution";
-import { composeRetro, MAX_BODY_BYTES, type RetroPrompt } from "./compose";
+import {
+  composeRetro,
+  composeScopeDrift,
+  MAX_BODY_BYTES,
+  type RetroPrompt,
+} from "./compose";
+import type { DriftCandidate, TicketScope } from "./drift";
+import type { DriftJudgment } from "./schema";
 import type { RetroSignal } from "./signal";
 
 const changes: RogueChanges = {
@@ -169,5 +176,111 @@ describe("composing the retro ticket (SPEC §5.5: prompts + the diff)", () => {
     expect(body).toContain("Implemented the frobnicator end to end.");
     expect(body).toContain("root-level");
     expect(body).toMatch(/no git changes/i);
+  });
+});
+
+describe("composing an in-ticket scope-drift retro (#38)", () => {
+  const candidate: DriftCandidate = {
+    id: "drift-0123456789abcdef",
+    ticket: "7",
+    repoRoot: "/repo",
+    sessionIds: ["sess-seven"],
+    work: [
+      {
+        dir: "/worktrees/seven",
+        commits: [
+          {
+            sha: "feed1234def567890abc1234def567890abc1234",
+            authorName: "Johan Sardar",
+            authorEmail: "johansardar77@gmail.com",
+            ts: "2026-08-25T09:00:00Z",
+            subject: "feat: stripe billing webhooks",
+            body: "",
+            files: ["src/billing/stripe-webhooks.ts"],
+            diff: "--- /dev/null\n+++ b/src/billing/stripe-webhooks.ts\n+export const onStripeEvent = () => {};",
+          },
+        ],
+        workingTree: null,
+      },
+    ],
+  };
+  const scope: TicketScope = {
+    number: "7",
+    title: "Ship the widget pipeline",
+    body: "Build the widget renderer and its cache.\nThe pipeline must stream.",
+    state: "open",
+  };
+  const judgment: DriftJudgment = {
+    candidateId: candidate.id,
+    drift: true,
+    confident: true,
+    what: "Stripe billing webhooks",
+    outOfScopeWork:
+      "Added src/billing/stripe-webhooks.ts, a Stripe event handler and its route.",
+    whyOutOfScope: "The ticket states the widget pipeline; billing is a different goal.",
+  };
+  const composed = composeScopeDrift({ candidate, scope, judgment });
+
+  test("the title names the drift and the ticket it drifted from", () => {
+    expect(composed.title).toContain("Stripe billing webhooks");
+    expect(composed.title).toContain("#7");
+    expect(composed.title.startsWith("Retro: ")).toBe(true);
+  });
+
+  test("the body NAMES the ticket and QUOTES its stated scope", () => {
+    expect(composed.body).toContain("#7 Ship the widget pipeline");
+    expect(composed.body).toContain("> Build the widget renderer and its cache.");
+    expect(composed.body).toContain("> The pipeline must stream.");
+  });
+
+  test("the body describes the out-of-scope work concretely, with the diff", () => {
+    expect(composed.body).toContain(
+      "Added src/billing/stripe-webhooks.ts, a Stripe event handler and its route.",
+    );
+    expect(composed.body).toContain("billing is a different goal");
+    expect(composed.body).toContain("`src/billing/stripe-webhooks.ts`");
+    expect(composed.body).toContain("+export const onStripeEvent = () => {};");
+    expect(composed.body).toContain("feed123");
+    expect(composed.body).toContain("sess-seven");
+    expect(composed.body).toContain("/worktrees/seven");
+  });
+
+  test("it says a wrong call is cheap to close — the retro invites correction", () => {
+    expect(composed.body.toLowerCase()).toContain("scope drift");
+    expect(composed.body).toContain(candidate.id);
+  });
+
+  test("a closed parent ticket is composed against, not crashed on", () => {
+    const onClosed = composeScopeDrift({
+      candidate,
+      scope: { ...scope, state: "closed" },
+      judgment,
+    });
+    expect(onClosed.body).toContain("closed");
+    expect(onClosed.body).toContain("#7 Ship the widget pipeline");
+  });
+
+  test("a huge diff loses bytes from the DIFF, never from the record", () => {
+    const enormous = composeScopeDrift({
+      candidate: {
+        ...candidate,
+        work: [
+          {
+            ...candidate.work[0]!,
+            commits: [
+              { ...candidate.work[0]!.commits[0]!, diff: `+${"x".repeat(400_000)}` },
+            ],
+          },
+        ],
+      },
+      scope,
+      judgment,
+    });
+
+    expect(enormous.body.length).toBeLessThanOrEqual(MAX_BODY_BYTES);
+    expect(enormous.body).toContain("> Build the widget renderer and its cache.");
+    expect(enormous.body).toContain(
+      "Added src/billing/stripe-webhooks.ts, a Stripe event handler and its route.",
+    );
   });
 });

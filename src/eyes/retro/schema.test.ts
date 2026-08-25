@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { parseRetroVerdict, RETRO_OUTPUT_SCHEMA } from "./schema";
+import {
+  DRIFT_OUTPUT_SCHEMA,
+  parseDriftVerdict,
+  parseRetroVerdict,
+  RETRO_OUTPUT_SCHEMA,
+} from "./schema";
 
 const judgment = {
   signalId: "sig-1",
@@ -63,5 +68,70 @@ describe("the Retro brain's output contract", () => {
       "parentTicket",
     ]);
     expect(properties.additionalProperties).toBe(false);
+  });
+});
+
+describe("the scope-drift contract (#38)", () => {
+  const judgment = {
+    candidateId: "drift-abc123",
+    drift: true,
+    confident: true,
+    what: "Stripe billing webhooks",
+    outOfScopeWork: "Added src/billing/stripe-webhooks.ts and its route table.",
+    whyOutOfScope: "The ticket states the widget pipeline; billing is a different goal.",
+  };
+
+  test("a well-formed verdict parses", () => {
+    expect(parseDriftVerdict(JSON.stringify({ drifts: [judgment] }))).toEqual({
+      drifts: [judgment],
+    });
+  });
+
+  test("the not-drift answer nulls the prose fields rather than omitting them", () => {
+    const silent = {
+      candidateId: "drift-abc123",
+      drift: false,
+      confident: true,
+      what: null,
+      outOfScopeWork: null,
+      whyOutOfScope: null,
+    };
+
+    expect(parseDriftVerdict(JSON.stringify({ drifts: [silent] }))).toEqual({
+      drifts: [silent],
+    });
+  });
+
+  test("anything off-contract is a schema miss, not a half-trusted verdict", () => {
+    expect(parseDriftVerdict("not json")).toBeNull();
+    expect(parseDriftVerdict(JSON.stringify({ drifts: {} }))).toBeNull();
+    expect(
+      parseDriftVerdict(JSON.stringify({ drifts: [{ ...judgment, drift: "yes" }] })),
+    ).toBeNull();
+    expect(
+      parseDriftVerdict(JSON.stringify({ drifts: [{ ...judgment, confident: undefined }] })),
+    ).toBeNull();
+    expect(
+      parseDriftVerdict(JSON.stringify({ drifts: [{ ...judgment, candidateId: "" }] })),
+    ).toBeNull();
+  });
+
+  test("EVERY property is listed in `required` — an omitted one voids the schema", () => {
+    // The #35 lesson: strict structured output rejects an object whose
+    // `required` omits a property, and it surfaces only as a bare `exit 1`
+    // with empty stderr. Optionality rides the null union instead.
+    const walk = (node: unknown): void => {
+      if (typeof node !== "object" || node === null) return;
+      const schema = node as Record<string, unknown>;
+      if (schema.type === "object") {
+        const properties = Object.keys(
+          (schema.properties ?? {}) as Record<string, unknown>,
+        );
+        expect([...(schema.required as string[])].sort()).toEqual(properties.sort());
+      }
+      for (const value of Object.values(schema)) walk(value);
+    };
+
+    walk(DRIFT_OUTPUT_SCHEMA);
   });
 });

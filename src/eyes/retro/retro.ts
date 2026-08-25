@@ -31,19 +31,35 @@ import {
   type SessionRecord,
 } from "../../provenance";
 import { fileAlertEmitter, retryForever, type StuckAlert } from "../backpressure";
-import { createCodexBrain, type Brain } from "../brain";
+import { createCodexBrain, type Brain, type BrainOutcome } from "../brain";
 import { createBrainCap, defaultBrainSlotsDirectory, type BrainCap } from "../cap";
 import { Coalescer, type CoalesceWindow } from "../coalesce";
 import { loadEyesConfig, type CadenceConfig } from "../config";
-import { applyDigestUpdate, listDigests } from "../digest/outputs";
+import { applyDigestUpdate, listDigests, type StoredDigest } from "../digest/outputs";
 import { attributeChanges, referencedTickets } from "./attribution";
-import { composeRetro, type RetroPrompt } from "./compose";
+import {
+  composeRetro,
+  composeScopeDrift,
+  type RetroComposition,
+  type RetroPrompt,
+} from "./compose";
+import {
+  buildDriftCandidates,
+  buildDriftPrompt,
+  decideDrift,
+  isJudgeableScope,
+  type DriftCandidate,
+  type DriftQuestion,
+} from "./drift";
 import { resolvePath, scanGit, type GitRunner, type GitScan } from "./git";
 import { detectTracker, type GhRunner, type Tracker, type TrackerIssue } from "./gh";
-import { resolveParent, type ParentRule } from "./parent";
+import { resolveParent, type ParentResolution, type ParentRule } from "./parent";
 import {
+  DRIFT_OUTPUT_SCHEMA,
+  parseDriftVerdict,
   parseRetroVerdict,
   RETRO_OUTPUT_SCHEMA,
+  type DriftJudgment,
   type RetroJudgment,
   type RetroVerdict,
 } from "./schema";
@@ -51,9 +67,18 @@ import { buildSignals, type RetroSignal } from "./signal";
 
 export type { ProvenanceRecord } from "../../provenance";
 
+/**
+ * `rogue` is §5.5's original detection — work no claimed ticket covers.
+ * `scope-drift` is §14's harder case (#38) — work inside a ticket that the
+ * ticket never asked for.
+ */
+export type RetroKind = "rogue" | "scope-drift";
+
 /** What one detected signal ended up as. */
 export interface RetroFiling {
   signalId: string;
+  /** Which detector produced it: unticketed work, or drift inside a ticket. */
+  kind: RetroKind;
   title: string;
   /** `filed` reached the tracker; `digest-note` is the loud degradation. */
   outcome: "filed" | "digest-note";
@@ -75,7 +100,20 @@ export type RetroAudit =
       reason: string;
       where: string;
     }
-  | { type: "tracker-less"; signalId: string; title: string; where: string };
+  | { type: "tracker-less"; signalId: string; title: string; where: string }
+  | {
+      /**
+       * A scope-drift question that did NOT become a ticket for a reason
+       * worth seeing: the brain was unreachable or answered off-contract, the
+       * repo has no tracker to read a scope from, or the brain claimed drift
+       * without clearing the policy bar. An ordinary "not drift" is silent —
+       * silence is the expected answer and must not become noise.
+       */
+      type: "scope-drift-not-filed";
+      candidateId: string;
+      ticket: string;
+      reason: string;
+    };
 
 export interface SessionObservation {
   sessionId: string;
@@ -104,6 +142,13 @@ export interface RetroEyeOptions {
   baseDelayMs?: number;
   maxDelayMs?: number;
   stuckAfterMs?: number;
+}
+
+/** The minimum a degradation needs to find a session's digest. */
+interface NoteSession {
+  sessionId: string;
+  agent?: string;
+  digestFile?: string;
 }
 
 /** A Johan-authored turn kept as retro evidence until its work is filed. */
@@ -175,12 +220,18 @@ export function describeAudit(audit: RetroAudit): string {
         `TRACKER-LESS MODE: no GitHub tracker for this repo; retro ` +
         `"${audit.title}" written to ${audit.where} instead of a ticket`
       );
+    case "scope-drift-not-filed":
+      return (
+        `RETRO: scope drift against #${audit.ticket} was NOT filed ` +
+        `(${audit.candidateId}): ${audit.reason}`
+      );
   }
 }
 
 /** Evidence, not an archive: the newest prompts are the ones that explain. */
 const MAX_PROMPTS = 200;
 const NOT_IMPLEMENTATION = "not-implementation";
+const NOT_DRIFT = "not-drift";
 const UNFILED = "unfiled";
 
 function truncate(text: string, limit: number): string {
@@ -435,18 +486,49 @@ export class RetroEye {
       const signals = buildSignals({ attribution, digests, sessionDirs, sessions }).filter(
         (signal) => this.isFresh(signal),
       );
+      // §14's harder case rides the SAME scan: the work a ticket session does
+      // cover still has to answer "is this what the ticket asked for?".
+      const drifts = buildDriftCandidates({
+        attributed: attribution.attributed,
+        // Every checkout in one scan belongs to one parent repo (§7.3).
+        parentRepoOf: () => scan.repoRoot,
+      }).filter((candidate) => this.state.judged[candidate.id] === undefined);
 
       // The cursor advances even when nothing is rogue: reported commits are
       // reported. What stops a re-file is `judged`, not the cursor.
       this.state.seen = scan.seen;
       this.coalescer.flush();
 
-      if (signals.length === 0) {
+      if (signals.length === 0 && drifts.length === 0) {
         await this.persist();
         return [];
       }
 
       const tracker = await detectTracker(this.options.repo, this.options.gh);
+      const filings: RetroFiling[] = [];
+      if (signals.length > 0) {
+        filings.push(...(await this.judgeSignals(signals, tracker, scan.repoRoot)));
+      }
+      if (drifts.length > 0) {
+        filings.push(...(await this.judgeDrift(drifts, tracker, digests)));
+      }
+      await this.persist();
+      return filings;
+    } finally {
+      this.scanning = false;
+    }
+  }
+
+  /**
+   * The §5.5 half: unticketed work becomes a retro. Extracted from `scan` so
+   * the §14 scope-drift half can share the scan, the tracker and the cursor
+   * without either half being able to swallow the other.
+   */
+  private async judgeSignals(
+    signals: readonly RetroSignal[],
+    tracker: Tracker | null,
+    repoRoot: string,
+  ): Promise<RetroFiling[]> {
       const candidates = tracker ? await tracker.openTickets() : [];
       const verdict = await retryForever(
         () => this.evaluateOnce(signals, candidates),
@@ -477,14 +559,10 @@ export class RetroEye {
           continue;
         }
         filings.push(
-          await this.file(signal, judgment, tracker, candidates, scan.repoRoot),
+          await this.file(signal, judgment, tracker, candidates, repoRoot),
         );
       }
-      await this.persist();
       return filings;
-    } finally {
-      this.scanning = false;
-    }
   }
 
   /** A signal is fresh unless it was judged, or its session already retro'd. */
@@ -496,6 +574,150 @@ export class RetroEye {
       );
     }
     return true;
+  }
+
+  /**
+   * The §14 half (#38): for each ticket whose session did work this scan, ask
+   * the ONE scope question and file only what clears the policy bar.
+   *
+   * Failure posture differs from the §5.5 half ON PURPOSE. A retro for
+   * unticketed work must never be lost, so that half retries forever; a
+   * scope-drift question is a judgment call whose correct default is silence,
+   * so a broken brain here is REPORTED and dropped. One attempt, no retry
+   * storm, and the eye stays up either way.
+   */
+  private async judgeDrift(
+    candidates: readonly DriftCandidate[],
+    tracker: Tracker | null,
+    digests: readonly StoredDigest[],
+  ): Promise<RetroFiling[]> {
+    const skip = async (candidate: DriftCandidate, reason: string): Promise<void> => {
+      await this.onAudit({
+        type: "scope-drift-not-filed",
+        candidateId: candidate.id,
+        ticket: candidate.ticket,
+        reason,
+      });
+    };
+
+    if (tracker === null) {
+      // No tracker, no stated scope to measure against. Silence is the only
+      // honest answer; the degradation is said out loud rather than guessed.
+      for (const candidate of candidates) {
+        await skip(
+          candidate,
+          "tracker-less mode: a ticket's stated scope cannot be read, so the" +
+            " scope question cannot be asked",
+        );
+      }
+      return [];
+    }
+
+    const questions: DriftQuestion[] = [];
+    for (const candidate of candidates) {
+      const scope = await tracker.readTicket(candidate.ticket);
+      // A ticket gh cannot read, or one that states too little to measure a
+      // diff against, is silence — never a guess in the direction of drift.
+      if (scope === null || !isJudgeableScope(scope)) continue;
+      questions.push({ candidate, scope });
+    }
+    if (questions.length === 0) return [];
+
+    const release = await this.options.cap.acquire();
+    let outcome: BrainOutcome;
+    try {
+      outcome = await this.options.brain.evaluate({
+        prompt: buildDriftPrompt(questions),
+        schema: DRIFT_OUTPUT_SCHEMA,
+        cwd: this.options.repo,
+      });
+    } catch (error) {
+      // A brain is supposed to REPORT failure, not throw it. One that throws
+      // anyway must not escape into `scan` and take the watcher down — this
+      // half's correct default is silence, so it degrades to silence, loudly.
+      outcome = {
+        ok: false,
+        reason: "spawn-error",
+        detail: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      // Always, on every path: a leaked slot would starve every eye on the
+      // machine of the ADR-0002 budget, not just this one.
+      await release();
+    }
+    if (!outcome.ok) {
+      for (const { candidate } of questions) {
+        await skip(candidate, `brain ${outcome.reason}: ${outcome.detail.slice(0, 200)}`);
+      }
+      return [];
+    }
+    const verdict = parseDriftVerdict(outcome.text);
+    if (verdict === null) {
+      for (const { candidate } of questions) {
+        await skip(
+          candidate,
+          `brain schema miss: ${outcome.text.slice(0, 200)}`,
+        );
+      }
+      return [];
+    }
+
+    const byId = new Map(
+      questions.map((question) => [question.candidate.id, question]),
+    );
+    const filings: RetroFiling[] = [];
+    for (const judgment of verdict.drifts) {
+      const question = byId.get(judgment.candidateId);
+      if (question === undefined) continue; // the eye decides what exists
+      const decision = decideDrift(judgment);
+      if (!decision.file) {
+        this.state.judged[question.candidate.id] = NOT_DRIFT;
+        // A plain "not drift" is the expected answer and stays silent; a
+        // drift CLAIM the policy refused is worth seeing.
+        if (judgment.drift) await skip(question.candidate, decision.reason);
+        continue;
+      }
+      filings.push(await this.fileDrift(question, judgment, tracker, digests));
+    }
+    return filings;
+  }
+
+  private async fileDrift(
+    question: DriftQuestion,
+    judgment: DriftJudgment,
+    tracker: Tracker,
+    digests: readonly StoredDigest[],
+  ): Promise<RetroFiling> {
+    const { candidate, scope } = question;
+    // The parent is the ticket itself — §5.5 rule 1, resolved through the
+    // same machinery so the rule name in the body is the real one.
+    const parent = resolveParent({
+      sessionTickets: [scope.number],
+      referencedTickets: [],
+      brainChoice: null,
+      candidates: [],
+    });
+    return this.deliver({
+      id: candidate.id,
+      kind: "scope-drift",
+      composition: composeScopeDrift({ candidate, scope, judgment }),
+      parent,
+      sessions: candidate.sessionIds.map((sessionId) => {
+        const digest = digests.find((entry) => entry.sessionId === sessionId);
+        return {
+          sessionId,
+          ...(digest?.frontmatter.agent !== undefined && {
+            agent: digest.frontmatter.agent,
+          }),
+          ...(digest !== undefined && { digestFile: digest.fileName }),
+        };
+      }),
+      tracker,
+      // `filedSessions` suppresses a session's TRANSCRIPT retro; a registered
+      // ticket session never has one, and a drift must not silence a future
+      // rogue signal. The drift ledger is `judged`, keyed by candidate id.
+      remember: false,
+    });
   }
 
   /** One brain attempt under the machine-wide cap; throws to trigger retry. */
@@ -541,65 +763,97 @@ export class RetroEye {
       brainChoice: judgment.parentTicket,
       candidates,
     });
-    const composition = composeRetro({
-      what: judgment.what,
-      summary: judgment.summary,
-      signal,
-      prompts,
+    return this.deliver({
+      id: signal.id,
+      kind: "rogue",
+      composition: composeRetro({
+        what: judgment.what,
+        summary: judgment.summary,
+        signal,
+        prompts,
+        parent,
+        repoRoot,
+      }),
       parent,
-      repoRoot,
+      sessions: signal.sessions,
+      tracker,
+      // A session that has a retro does not need a second one for the same
+      // digest growing; drift has its own ledger and must not touch this.
+      remember: true,
     });
+  }
 
-    if (tracker === null) {
-      const where = await this.writeDigestNote(signal, composition.title, composition.body);
-      await this.onAudit({
-        type: "tracker-less",
-        signalId: signal.id,
-        title: composition.title,
-        where,
-      });
-      this.state.judged[signal.id] = UNFILED;
-      this.rememberSessions(signal);
+  /**
+   * The one path to the tracker, shared by both halves. Every outcome keeps
+   * the record: filed, filed-but-unlinked, or written into the digest with a
+   * LOUD audit (ADR-0001). It never throws — a crashed watcher is the only
+   * outcome §5.5 refuses.
+   */
+  private async deliver(input: {
+    id: string;
+    kind: RetroKind;
+    composition: RetroComposition;
+    parent: ParentResolution;
+    sessions: readonly NoteSession[];
+    tracker: Tracker | null;
+    remember: boolean;
+  }): Promise<RetroFiling> {
+    const { composition, parent } = input;
+    const degrade = async (reason: string, audit: RetroAudit): Promise<RetroFiling> => {
+      await this.onAudit(audit);
+      this.state.judged[input.id] = UNFILED;
+      if (input.remember) this.rememberSessions(input.sessions);
       return {
-        signalId: signal.id,
+        signalId: input.id,
+        kind: input.kind,
         title: composition.title,
         outcome: "digest-note",
         parent: parent.parent,
         parentRule: parent.rule,
-        reason: "tracker-less mode: no GitHub tracker for this repo",
+        reason,
       };
+    };
+
+    if (input.tracker === null) {
+      const where = await this.writeNote(
+        input.id,
+        input.sessions,
+        composition.title,
+        composition.body,
+      );
+      return degrade("tracker-less mode: no GitHub tracker for this repo", {
+        type: "tracker-less",
+        signalId: input.id,
+        title: composition.title,
+        where,
+      });
     }
 
-    const filed = await tracker.fileRetro({
+    const filed = await input.tracker.fileRetro({
       title: composition.title,
       body: composition.body,
       parent: parent.parent,
     });
     if (!filed.ok) {
-      const where = await this.writeDigestNote(signal, composition.title, composition.body);
-      await this.onAudit({
+      const where = await this.writeNote(
+        input.id,
+        input.sessions,
+        composition.title,
+        composition.body,
+      );
+      return degrade(filed.reason, {
         type: "retro-file-failed",
-        signalId: signal.id,
+        signalId: input.id,
         title: composition.title,
         reason: filed.reason,
         where,
       });
-      this.state.judged[signal.id] = UNFILED;
-      this.rememberSessions(signal);
-      return {
-        signalId: signal.id,
-        title: composition.title,
-        outcome: "digest-note",
-        parent: parent.parent,
-        parentRule: parent.rule,
-        reason: filed.reason,
-      };
     }
 
     if (parent.parent !== null && !filed.linked) {
       await this.onAudit({
         type: "retro-unlinked",
-        signalId: signal.id,
+        signalId: input.id,
         issue: filed.number,
         parent: parent.parent,
         reason: filed.linkError ?? "sub-issue link did not complete",
@@ -607,15 +861,16 @@ export class RetroEye {
     }
     await this.onAudit({
       type: "retro-filed",
-      signalId: signal.id,
+      signalId: input.id,
       issue: filed.number,
       parent: parent.parent,
       rule: parent.rule,
     });
-    this.state.judged[signal.id] = filed.number;
-    this.rememberSessions(signal);
+    this.state.judged[input.id] = filed.number;
+    if (input.remember) this.rememberSessions(input.sessions);
     return {
-      signalId: signal.id,
+      signalId: input.id,
+      kind: input.kind,
       title: composition.title,
       outcome: "filed",
       issue: filed.number,
@@ -624,8 +879,8 @@ export class RetroEye {
     };
   }
 
-  private rememberSessions(signal: RetroSignal): void {
-    for (const session of signal.sessions) {
+  private rememberSessions(sessions: readonly NoteSession[]): void {
+    for (const session of sessions) {
       if (!this.state.filedSessions.includes(session.sessionId)) {
         this.state.filedSessions.push(session.sessionId);
       }
@@ -637,12 +892,13 @@ export class RetroEye {
    * record survives, and into `.argus/eyes/retro/unfiled/` when there is no
    * session to attach it to.
    */
-  private async writeDigestNote(
-    signal: RetroSignal,
+  private async writeNote(
+    id: string,
+    sessions: readonly NoteSession[],
     title: string,
     body: string,
   ): Promise<string> {
-    const withDigests = signal.sessions.filter(
+    const withDigests = sessions.filter(
       (session) => session.digestFile !== undefined,
     );
     if (withDigests.length > 0) {
@@ -663,11 +919,7 @@ export class RetroEye {
       }
       return written.join(", ");
     }
-    const path = join(
-      this.options.repo,
-      ".argus/eyes/retro/unfiled",
-      `${signal.id}.md`,
-    );
+    const path = join(this.options.repo, ".argus/eyes/retro/unfiled", `${id}.md`);
     await mkdir(dirname(path), { recursive: true });
     await Bun.write(path, `# ${title}\n\n${body}\n`);
     return path;

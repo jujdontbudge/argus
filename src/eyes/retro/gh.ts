@@ -81,10 +81,24 @@ export type FiledRetro =
     }
   | { ok: false; reason: string };
 
+/** What one ticket STATES it asked for — the scope-drift comparison (#38). */
+export interface TicketScope {
+  number: string;
+  title: string;
+  body: string;
+  state: "open" | "closed";
+}
+
 export interface Tracker {
   /** `owner/name` — the repo retros are filed against. */
   readonly repo: string;
   openTickets(): Promise<TrackerIssue[]>;
+  /**
+   * One ticket by number, open or CLOSED — a ticket closed mid-session still
+   * states the scope its session was dispatched against. Null when `gh`
+   * cannot read it: no stated scope is silence, never a guess.
+   */
+  readTicket(number: string): Promise<TicketScope | null>;
   fileRetro(request: RetroIssueRequest): Promise<FiledRetro>;
 }
 
@@ -150,6 +164,40 @@ function createTracker(repo: string, cwd: string, run: GhRunner): Tracker {
           },
         ];
       });
+    },
+
+    async readTicket(number) {
+      if (!/^\d+$/.test(number)) return null;
+      const viewed = await run(
+        [
+          "issue",
+          "view",
+          number,
+          "--repo",
+          repo,
+          "--json",
+          "number,title,body,state",
+        ],
+        cwd,
+      );
+      if (viewed.exitCode !== 0) return null;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(viewed.stdout);
+      } catch {
+        return null;
+      }
+      if (typeof parsed !== "object" || parsed === null) return null;
+      const issue = parsed as Record<string, unknown>;
+      if (typeof issue.number !== "number") return null;
+      return {
+        number: String(issue.number),
+        title: typeof issue.title === "string" ? issue.title : "",
+        body: typeof issue.body === "string" ? issue.body : "",
+        // `gh` reports OPEN/CLOSED; anything else reads as open, which is the
+        // conservative default — state never decides drift, only labels it.
+        state: /^closed$/i.test(String(issue.state)) ? "closed" : "open",
+      };
     },
 
     async fileRetro(request) {

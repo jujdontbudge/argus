@@ -12,7 +12,8 @@
  *
  *   - archiver, hermes, codex, honcho, curator and retro EXTEND — they read
  *     `registry.get(n)` and chain onto whatever is already there, so they are
- *     order-tolerant.
+ *     order-tolerant. Retro chains TWO slots: 3 (rogue session) and, since
+ *     #38, 2 (fake-Johan takeover, where its scope-drift half lives).
  *   - provenance (2, 4, 5), reviewer (1, 2, 8), digest (1, 2, 7) and events
  *     (7) OVERWRITE. They are safe only because each one statically imports
  *     and re-runs the half it supersedes — reviewer's slot 2 calls

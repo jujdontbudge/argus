@@ -146,3 +146,41 @@ describe("the fake gh never reaches GitHub", () => {
     expect(gh.issues).toHaveLength(1);
   });
 });
+
+describe("reading a ticket's stated scope (#38 scope drift)", () => {
+  test("the title and body come back through the same gh seam the filer uses", async () => {
+    const gh = createFakeGh({ repo: "JohanSardar/argus" });
+    gh.seed({
+      number: 7,
+      title: "Ship the widget pipeline",
+      body: "Build the renderer.\nStream the pipeline.",
+    });
+    const tracker = (await detectTracker("/repo", gh.run))!;
+
+    const scope = await tracker.readTicket("7");
+
+    expect(scope).toEqual({
+      number: "7",
+      title: "Ship the widget pipeline",
+      body: "Build the renderer.\nStream the pipeline.",
+      state: "open",
+    });
+    expect(gh.calls.some((call) => call[0] === "issue" && call[1] === "view")).toBe(true);
+  });
+
+  test("a ticket CLOSED mid-session still reads — judge it, do not crash", async () => {
+    const gh = createFakeGh({ repo: "JohanSardar/argus" });
+    gh.seed({ number: 7, title: "Done already", body: "Body.", state: "closed" });
+    const tracker = (await detectTracker("/repo", gh.run))!;
+
+    expect((await tracker.readTicket("7"))?.state).toBe("closed");
+  });
+
+  test("a ticket gh cannot read is null, never a throw and never a guess", async () => {
+    const gh = createFakeGh({ repo: "JohanSardar/argus" });
+    const tracker = (await detectTracker("/repo", gh.run))!;
+
+    expect(await tracker.readTicket("404")).toBeNull();
+    expect(await tracker.readTicket("not-a-number")).toBeNull();
+  });
+});
