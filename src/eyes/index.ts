@@ -54,6 +54,14 @@ export {
   type SessionLifecycleEvent,
 } from "./digest/digest";
 export {
+  HonchoEye,
+  honchoSemanticIsolationScenario,
+  honchoTakeoverScenario,
+  loadHonchoBinding,
+  registerHonchoScenarios,
+  type HonchoEyeOptions,
+} from "./honcho";
+export {
   applyDigestUpdate,
   digestFileName,
   updateIndex,
