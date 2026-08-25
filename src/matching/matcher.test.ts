@@ -30,6 +30,27 @@ describe("SendMatcher: basic classification", () => {
     expect(m.classify({ text: "continue", ts: at(600) }).author).toBe("johan");
   });
 
+  test("window: message before send_ts - 5s is Johan", () => {
+    const m = new SendMatcher();
+    m.addSend({ ts: T0, text: "early bird" });
+    expect(m.classify({ text: "early bird", ts: at(-5_001) }).author).toBe("johan");
+    // -5s exactly is inside the window (T >= send.ts - 5s).
+    m.addSend({ ts: T0, text: "on the lower edge" });
+    expect(m.classify({ text: "on the lower edge", ts: at(-5_000) }).author).toBe(
+      "hermes",
+    );
+  });
+
+  test("window: message after send_ts + 3600s is Johan", () => {
+    const m = new SendMatcher();
+    m.addSend({ ts: T0, text: "too late" });
+    expect(m.classify({ text: "too late", ts: at(3_600_001) }).author).toBe("johan");
+    m.addSend({ ts: T0, text: "on the upper edge" });
+    expect(m.classify({ text: "on the upper edge", ts: at(3_600_000) }).author).toBe(
+      "hermes",
+    );
+  });
+
   test("matching is on normalized content (agent whitespace/unicode mutations)", () => {
     const m = new SendMatcher();
     // Hermes logs with CRLF + trailing spaces + NFD; agent lands NFC/LF/stripped.

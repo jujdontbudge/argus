@@ -41,6 +41,10 @@ export type MatchResult =
   | { author: "hermes"; send: PendingSend; matchedForm: string }
   | { author: "johan" };
 
+/** Window bounds (findings §3): −5s scheduler-jitter guard, +3600s covers queued landings. */
+export const WINDOW_BEFORE_MS = 5_000;
+export const WINDOW_AFTER_MS = 3_600_000;
+
 /**
  * Per-session send↔transcript matcher (research/send-transcript-matching.md §7).
  * Pure state machine: callers feed registry sends and candidate transcript
@@ -64,8 +68,10 @@ export class SendMatcher {
 
   classify(msg: UserMessage): MatchResult {
     const h = hashText(msg.text);
+    const t = toEpochMs(msg.ts);
     for (let i = 0; i < this.pending.length; i++) {
       const send = this.pending[i]!;
+      if (t < send.ts - WINDOW_BEFORE_MS || t > send.ts + WINDOW_AFTER_MS) continue;
       const formIndex = send.hashes.indexOf(h);
       if (formIndex === -1) continue;
       this.pending.splice(i, 1); // consume: one send, at most one message
