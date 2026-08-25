@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, readlink, rm } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readlink, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -11,9 +11,11 @@ async function runCli(
   args: string[],
   bunArgs: string[] = [],
   env: Record<string, string> = {},
+  script = cli,
+  cwd = checkout,
 ) {
-  const child = Bun.spawn([process.execPath, ...bunArgs, cli, ...args], {
-    cwd: checkout,
+  const child = Bun.spawn([process.execPath, ...bunArgs, script, ...args], {
+    cwd,
     env: { ...Bun.env, ...env },
     stderr: "pipe",
     stdout: "pipe",
@@ -83,6 +85,56 @@ describe("argus CLI", () => {
       expect(repeated.exitCode).toBe(0);
       expect(repeated.stderr).toBe("");
       expect(await readlink(join(home, ".local/bin/argus"))).toBe(cli);
+    } finally {
+      await rm(home, { force: true, recursive: true });
+    }
+  });
+
+  test("install refuses to run from a non-checkout copy", async () => {
+    const sandbox = await mkdtemp(join(tmpdir(), "argus-copy-"));
+    const copiedSource = join(sandbox, "snapshot", "src", "cli.ts");
+    const home = join(sandbox, "home");
+
+    try {
+      await mkdir(join(sandbox, "snapshot", "src"), { recursive: true });
+      await mkdir(home);
+      await copyFile(cli, copiedSource);
+
+      const result = await runCli(
+        ["install"],
+        [],
+        { HOME: home },
+        copiedSource,
+        join(sandbox, "snapshot"),
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("must run from a git checkout");
+      expect(await Bun.file(join(home, ".local/bin/argus")).exists()).toBe(false);
+    } finally {
+      await rm(sandbox, { force: true, recursive: true });
+    }
+  });
+
+  test("the installed launcher is directly executable", async () => {
+    const home = await mkdtemp(join(tmpdir(), "argus-install-"));
+
+    try {
+      expect((await runCli(["install"], [], { HOME: home })).exitCode).toBe(0);
+      const launcher = join(home, ".local/bin/argus");
+      const child = Bun.spawn([launcher, "--help"], {
+        env: { ...Bun.env, HOME: home },
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [exitCode, stdout] = await Promise.all([
+        child.exited,
+        new Response(child.stdout).text(),
+      ]);
+
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain("Usage: argus <command>");
     } finally {
       await rm(home, { force: true, recursive: true });
     }

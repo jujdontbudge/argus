@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
-import { mkdir, readlink, symlink } from "node:fs/promises";
-import { join } from "node:path";
+import { lstat, mkdir, readlink, symlink } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HELP = `Argus — orchestration and self-learning toolkit
@@ -46,6 +46,14 @@ async function install(): Promise<number> {
   const binDirectory = join(home, ".local", "bin");
   const launcher = join(binDirectory, "argus");
   const cli = fileURLToPath(import.meta.url);
+  const checkout = dirname(dirname(cli));
+
+  try {
+    await lstat(join(checkout, ".git"));
+  } catch {
+    console.error("argus install must run from a git checkout of Argus");
+    return 1;
+  }
 
   await mkdir(binDirectory, { recursive: true });
   try {
