@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  appendFile,
   lstat,
   mkdir,
   mkdtemp,
@@ -10,6 +11,8 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { Database } from "bun:sqlite";
 
 import {
   convergeAgentBindings,
@@ -23,6 +26,7 @@ import {
   WatcherSupervisor,
   type SupervisorStatus,
 } from "../supervisor/runtime.ts";
+import { claudeProjectDir } from "../tailing/claude-code.ts";
 
 export interface CommandResult {
   exitCode: number;
@@ -312,24 +316,33 @@ export const watcherDeathScenario: ScenarioHandler = async ({ assert, sandbox })
   const statusPath = join(sandbox.root, "state", "watcher-death-status.json");
   const supervisor = new WatcherSupervisor({
     registryPath: envPath(sandbox, "ARGUS_REPOS_FILE"),
-    restartDelayMilliseconds: 1,
+    restartDelayMilliseconds: 25,
     spawn: createWatcherSpawner([
       process.execPath,
-      "-e",
-      "await new Promise(() => {});",
-    ]),
+      fileURLToPath(new URL("../cli.ts", import.meta.url)),
+    ], sandbox.env),
     statusPath,
   });
 
   try {
     await supervisor.reconcile();
+    for (const eye of EYE_NAMES) {
+      const readyPath =
+        eye === "archiver"
+          ? join(repo, ".argus", "archive.db")
+          : join(repo, ".argus", "eyes", eye, "cursors.json");
+      for (let attempt = 0; !(await Bun.file(readyPath).exists()) && attempt < 500; attempt += 1) {
+        await Bun.sleep(20);
+      }
+    }
     const initial = await supervisorSnapshot(statusPath);
     assert(
       initial.watchers.length === EYE_NAMES.length &&
         initial.watchers.every(({ pid }) => processIsAlive(pid)),
-      "all five watcher fixtures started",
+      "all five real eye commands started",
     );
 
+    let replacementArchiver: SupervisorStatus["watchers"][number] | undefined;
     for (const eye of EYE_NAMES) {
       const before = (await supervisorSnapshot(statusPath)).watchers.find(
         (watcher) => watcher.eye === eye && watcher.repo === repo,
@@ -350,14 +363,68 @@ export const watcherDeathScenario: ScenarioHandler = async ({ assert, sandbox })
         if (replacement) break;
       }
       assert(replacement !== undefined, `${eye} restarted after death`);
+      if (eye === "archiver") replacementArchiver = replacement;
     }
+
+    if (replacementArchiver === undefined) {
+      throw new Error("the replacement archiver never started");
+    }
+    const sessionId = "scenario-6-live-replacement";
+    const text = "A replacement watcher observed this post-restart signal.";
+    await appendFile(
+      join(repo, ".argus", "registry", "sessions.jsonl"),
+      `${JSON.stringify({
+        ts: "2026-08-25T16:00:00.000Z",
+        sessionId,
+        agent: "claude",
+        dispatchPrompt: text,
+      })}\n`,
+    );
+    const claudeRoot = envPath(sandbox, "CLAUDE_CONFIG_DIR");
+    const transcriptDirectory = claudeProjectDir(repo, join(claudeRoot, "projects"));
+    await mkdir(transcriptDirectory, { recursive: true });
+    await Bun.write(
+      join(transcriptDirectory, `${sessionId}.jsonl`),
+      `${JSON.stringify({
+        type: "user",
+        message: { role: "user", content: text },
+        timestamp: "2026-08-25T16:00:00.000Z",
+        promptSource: "typed",
+        uuid: "scenario-6-live-u-1",
+        sessionId,
+        cwd: repo,
+        version: "test",
+      })}\n`,
+    );
+    let archived = 0;
+    for (let attempt = 0; attempt < 500; attempt += 1) {
+      await Bun.sleep(20);
+      try {
+        const database = new Database(join(repo, ".argus", "archive.db"), {
+          readonly: true,
+        });
+        archived = database
+          .query<{ count: number }, [string]>(
+            "SELECT count(*) AS count FROM archive_messages WHERE content = ?",
+          )
+          .get(text)!.count;
+        database.close();
+      } catch {
+        // The replacement may be opening the archive or committing its batch.
+      }
+      if (archived === 1) break;
+    }
+    assert(
+      archived === 1 && processIsAlive(replacementArchiver.pid),
+      "the replacement archiver observed a transcript written after restart",
+    );
   } finally {
     await supervisor.stop();
   }
 
   assert(
     (await supervisorSnapshot(statusPath)).watchers.length === 0,
-    "supervisor stopped every watcher fixture",
+    "supervisor stopped every real eye command",
   );
 };
 

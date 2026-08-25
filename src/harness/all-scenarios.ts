@@ -36,6 +36,7 @@ import { registerReviewerScenarios } from "../eyes/reviewer/scenarios.ts";
 import { registerProvenanceScenarios } from "../provenance/scenarios.ts";
 import { registerCodexScenarios } from "../tailing/codex-scenarios.ts";
 import { registerHermesScenarios } from "../tailing/hermes-scenarios.ts";
+import { registerWatchScenarios } from "../watch/scenarios.ts";
 import {
   createScenarioRegistry,
   fakeJohanBindingScenario,
@@ -57,6 +58,7 @@ export function registerAllScenarios(registry: ScenarioRegistry): void {
   registerHermesScenarios(registry);
   registerCodexScenarios(registry);
   registerHonchoScenarios(registry);
+  registerWatchScenarios(registry);
 
   // #28's slot-2 half is the one the overwriters drop: the base registry
   // seeds slot 2 with the agent-binding scenario and provenance replaces it

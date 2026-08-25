@@ -49,6 +49,7 @@ const CONTRIBUTED: Record<number, string[]> = {
   6: [
     "reviewer restarted after death", // #29 supervisor
     "kill-before-commit backfill has the exact message count with no duplicates", // #26
+    "a removed repo made its real watcher exit cleanly", // #39 watch command
   ],
   7: [
     "the finished session surfaced status=done in INDEX.md", // #31 digest
