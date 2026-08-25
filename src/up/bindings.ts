@@ -31,6 +31,55 @@ export interface HonchoClient {
   ): Promise<"created" | "existing">;
 }
 
+export class HttpHonchoClient implements HonchoClient {
+  readonly #baseUrl: string;
+
+  constructor(
+    baseUrl: string,
+    private readonly apiKey: string,
+    private readonly timeoutMilliseconds = 1_500,
+  ) {
+    this.#baseUrl = baseUrl.replace(/\/+$/, "");
+  }
+
+  async #ensure(
+    path: string,
+    body: HonchoWorkspaceInput | HonchoPeerInput,
+  ): Promise<"created" | "existing"> {
+    const response = await fetch(`${this.#baseUrl}${path}`, {
+      body: JSON.stringify(body),
+      headers: {
+        authorization: `Bearer ${this.apiKey}`,
+        "content-type": "application/json",
+      },
+      method: "POST",
+      signal: AbortSignal.timeout(this.timeoutMilliseconds),
+    });
+    if (response.status === 200) return "existing";
+    if (response.status === 201) return "created";
+    const detail = (await response.text()).trim();
+    throw new Error(
+      `Honcho ${response.status}${detail.length > 0 ? `: ${detail}` : ""}`,
+    );
+  }
+
+  ensureWorkspace(
+    input: HonchoWorkspaceInput,
+  ): Promise<"created" | "existing"> {
+    return this.#ensure("/v3/workspaces", input);
+  }
+
+  ensurePeer(
+    workspace: string,
+    input: HonchoPeerInput,
+  ): Promise<"created" | "existing"> {
+    return this.#ensure(
+      `/v3/workspaces/${encodeURIComponent(workspace)}/peers`,
+      input,
+    );
+  }
+}
+
 export interface AgentBindingOptions {
   hermesRoot: string;
   honcho: HonchoClient;

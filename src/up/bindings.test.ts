@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import {
   convergeAgentBindings,
+  HttpHonchoClient,
   type HonchoClient,
   type HonchoPeerInput,
   type HonchoWorkspaceInput,
@@ -51,6 +52,62 @@ afterEach(async () => {
 });
 
 describe("agent binding convergence", () => {
+  test("uses the Honcho v3 get-or-create call sequence", async () => {
+    const requests: Array<{
+      authorization: string | null;
+      body: unknown;
+      path: string;
+    }> = [];
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        requests.push({
+          authorization: request.headers.get("authorization"),
+          body: await request.json(),
+          path: new URL(request.url).pathname,
+        });
+        return Response.json({}, { status: requests.length === 1 ? 201 : 200 });
+      },
+    });
+
+    try {
+      const client = new HttpHonchoClient(
+        `http://127.0.0.1:${server.port}`,
+        "scratch-token",
+      );
+      expect(
+        await client.ensureWorkspace({
+          id: "argus-widget-kit",
+          metadata: { repo: "/scratch/Widget Kit" },
+        }),
+      ).toBe("created");
+      expect(
+        await client.ensurePeer("argus-widget-kit", {
+          configuration: { observe_me: false },
+          id: "codex",
+        }),
+      ).toBe("existing");
+
+      expect(requests).toEqual([
+        {
+          authorization: "Bearer scratch-token",
+          body: {
+            id: "argus-widget-kit",
+            metadata: { repo: "/scratch/Widget Kit" },
+          },
+          path: "/v3/workspaces",
+        },
+        {
+          authorization: "Bearer scratch-token",
+          body: { configuration: { observe_me: false }, id: "codex" },
+          path: "/v3/workspaces/argus-widget-kit/peers",
+        },
+      ]);
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test("binds a repo to its Honcho workspace and four peers idempotently", async () => {
     const { repo, root } = await scratchRepo();
     const honcho = new FakeHoncho();
