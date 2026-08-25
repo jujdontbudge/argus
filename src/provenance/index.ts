@@ -4,9 +4,12 @@
  * `ProvenanceRecord` / `ProvenanceAudit` are the seam for tickets #30–#33.
  */
 export {
+  classifierFromRegistry,
   ProvenanceClassifier,
   type Author,
+  type ClassifierFromRegistry,
   type ClassifyOutput,
+  type ProvenanceAudit,
   type ProvenanceAuditEvent,
   type ProvenanceRecord,
   type SessionProvenance,
@@ -25,31 +28,13 @@ export {
   type SendRecord,
   type SessionRecord,
 } from "./registry";
-
-import { ProvenanceClassifier, type ProvenanceAuditEvent } from "./classifier";
-import type { Registry, RegistryLineAudit } from "./registry";
-
-/** Everything provenance surfaces loudly: registry file problems + classifier audits. */
-export type ProvenanceAudit = RegistryLineAudit | ProvenanceAuditEvent;
-
-export interface ClassifierFromRegistry {
-  classifier: ProvenanceClassifier;
-  audits: ProvenanceAudit[];
-}
-
-/**
- * Build a classifier preloaded with a read registry. Sessions register before
- * sends so a deployment's follow-ups bind to its matcher; the registry's own
- * parse audits ride along.
- */
-export function classifierFromRegistry(registry: Registry): ClassifierFromRegistry {
-  const classifier = new ProvenanceClassifier();
-  const audits: ProvenanceAudit[] = [...registry.audits];
-  for (const session of registry.sessions) {
-    audits.push(...classifier.registerSession(session));
-  }
-  for (const send of registry.sends) {
-    audits.push(...classifier.recordSend(send));
-  }
-  return { classifier, audits };
-}
+export {
+  createFixtureProvenanceDriver,
+  poisoningScenario,
+  registerProvenanceScenarios,
+  takeoverScenario,
+  unloggedSendScenario,
+  type DeployOptions,
+  type ProvenanceScenarioDriver,
+  type ScenarioSessionHandle,
+} from "./scenarios";

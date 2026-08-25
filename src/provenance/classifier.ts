@@ -13,7 +13,7 @@ import {
   type Timestamp,
 } from "../matching";
 import type { LifecycleEvent, MessageEvent, TailEvent } from "../tailing";
-import type { SendRecord, SessionRecord } from "./registry";
+import type { Registry, RegistryLineAudit, SendRecord, SessionRecord } from "./registry";
 
 export type Author = "johan" | "hermes" | "agent" | "system";
 
@@ -96,7 +96,7 @@ interface SessionState {
    * the clock skew between the registry row and the transcript.
    */
   dispatchHashes: Set<string> | null;
-  /** Registry-logged follow-up sends, matched under the §24 clock windows. */
+  /** Registry-logged follow-up sends, matched under ticket #24's clock windows. */
   matcher: SendMatcher;
   johanTouched: boolean;
   /** The send-into-unregistered-session audit fires once per session. */
@@ -105,6 +105,31 @@ interface SessionState {
   seen: boolean;
   /** The dispatch-expired audit fires once per session. */
   dispatchAudited: boolean;
+}
+
+/** Everything provenance surfaces loudly: registry file problems + classifier audits. */
+export type ProvenanceAudit = RegistryLineAudit | ProvenanceAuditEvent;
+
+export interface ClassifierFromRegistry {
+  classifier: ProvenanceClassifier;
+  audits: ProvenanceAudit[];
+}
+
+/**
+ * Build a classifier preloaded with a read registry. Sessions register before
+ * sends so a deployment's follow-ups bind to its matcher; the registry's own
+ * parse audits ride along.
+ */
+export function classifierFromRegistry(registry: Registry): ClassifierFromRegistry {
+  const classifier = new ProvenanceClassifier();
+  const audits: ProvenanceAudit[] = [...registry.audits];
+  for (const session of registry.sessions) {
+    audits.push(...classifier.registerSession(session));
+  }
+  for (const send of registry.sends) {
+    audits.push(...classifier.recordSend(send));
+  }
+  return { classifier, audits };
 }
 
 export class ProvenanceClassifier {
