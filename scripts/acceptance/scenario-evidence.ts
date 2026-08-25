@@ -22,9 +22,8 @@ const registry = createFullScenarioRegistry();
 const reportDirectory = await mkdtemp(join(tmpdir(), "argus-evidence-"));
 const smoke = Bun.env.ARGUS_ACCEPTANCE_SMOKE === "1";
 const slots = registry.list();
-const selectedSlots = smoke
-  ? slots.filter(({ number }) => number === 10)
-  : slots;
+const smokeSlot = slots.find(({ number }) => number === 10);
+const selectedSlots = smoke ? (smokeSlot === undefined ? [] : [smokeSlot]) : slots;
 if (
   selectedSlots.length === 0 ||
   selectedSlots.some(({ number, status }) =>

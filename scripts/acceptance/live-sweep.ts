@@ -251,10 +251,17 @@ async function smokeSweep(
 const sandbox = await createSandbox({ checkout });
 const env = { ...sandbox.env } as Record<string, string>;
 
-try {
-  if (Bun.env.ARGUS_ACCEPTANCE_SMOKE === "1") {
+if (Bun.env.ARGUS_ACCEPTANCE_SMOKE === "1") {
+  try {
     await smokeSweep(sandbox, env);
-  } else {
+  } finally {
+    await sandbox.teardown();
+    await rm(join(sandbox.root), { force: true, recursive: true });
+  }
+  process.exit(0);
+}
+
+try {
   console.log("=".repeat(78));
   console.log("ARGUS LIVE COMMAND SWEEP — ticket #36");
   console.log("=".repeat(78));
@@ -529,7 +536,6 @@ try {
     console.log(
       `  exit ${String(invocation.exitCode).padStart(3)}  argus ${invocation.argv.join(" ")}`,
     );
-  }
   }
 } finally {
   await sandbox.teardown();

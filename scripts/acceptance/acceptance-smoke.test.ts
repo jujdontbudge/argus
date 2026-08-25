@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { loadScaledMs } from "../../src/eyes/test-budget.ts";
+
 const checkout = fileURLToPath(new URL("../..", import.meta.url));
+const PROCESS_BUDGET_MS = loadScaledMs(5_000, 60_000);
+const TEST_BUDGET_MS = loadScaledMs(10_000, 120_000);
 
 interface ScriptResult {
   exitCode: number | null;
@@ -24,10 +28,15 @@ async function runAcceptanceScript(name: string): Promise<ScriptResult> {
     Object.entries(Bun.env).filter(
       ([name, value]) =>
         value !== undefined &&
+        !name.startsWith("CMUX_") &&
         name !== "ANTHROPIC_API_KEY" &&
         name !== "ANTHROPIC_AUTH_TOKEN" &&
         name !== "CLAUDE_CODE_OAUTH_TOKEN" &&
-        name !== "HONCHO_API_KEY",
+        name !== "CODEX_SESSION_ID" &&
+        name !== "CODEX_THREAD_ID" &&
+        name !== "HONCHO_API_KEY" &&
+        name !== "HONCHO_CONFIG_FILE" &&
+        name !== "HONCHO_URL",
     ),
   ) as Record<string, string>;
   const env = {
@@ -37,6 +46,8 @@ async function runAcceptanceScript(name: string): Promise<ScriptResult> {
     ARGUS_REPOS_FILE: join(state, "argus-repos"),
     CLAUDE_CONFIG_DIR: join(state, "claude"),
     CODEX_HOME: join(state, "codex"),
+    CMUX_SOCKET_DIR: join(state, "cmux"),
+    CMUX_SOCKET_PATH: join(state, "cmux", "cmux.sock"),
     HERMES_HOME: join(state, "hermes"),
     HOME: home,
     XDG_CACHE_HOME: join(state, "cache"),
@@ -57,7 +68,7 @@ async function runAcceptanceScript(name: string): Promise<ScriptResult> {
     const stderrPromise = new Response(child.stderr).text();
     const outcome = await Promise.race([
       child.exited.then((exitCode) => ({ exitCode, timedOut: false })),
-      Bun.sleep(5_000).then(() => ({ exitCode: null, timedOut: true })),
+      Bun.sleep(PROCESS_BUDGET_MS).then(() => ({ exitCode: null, timedOut: true })),
     ]);
     if (outcome.timedOut) {
       process.kill(-child.pid, "SIGTERM");
@@ -84,7 +95,7 @@ test("the live sweep cheaply proves daemon and sandbox supervisor behavior", asy
   expect(result.stdout).toContain(
     "SMOKE PASS  sandbox supervisor watcher PIDs stayed stable",
   );
-}, 10_000);
+}, TEST_BUDGET_MS);
 
 test("the live agent drive executes its credential-free gate path", async () => {
   const result = await runAcceptanceScript("live-agents.ts");
@@ -95,7 +106,7 @@ test("the live agent drive executes its credential-free gate path", async () => 
   });
   expect(result.exitCode).toBe(0);
   expect(result.stdout).toContain("argus: live agent drives SKIPPED");
-}, 10_000);
+}, TEST_BUDGET_MS);
 
 test("the watcher stability probe runs its short real-process mode", async () => {
   const result = await runAcceptanceScript("watch-stability.ts");
@@ -112,9 +123,11 @@ test("the watcher stability probe runs its short real-process mode", async () =>
     pidsByEye: Record<string, number>;
   };
   expect(report.mode).toBe("smoke");
-  expect(report.distinctPids).toBe(report.expectedEyes);
+  expect(report.expectedEyes).toBe(5);
+  expect(report.distinctPids).toBe(5);
+  expect(Object.values(report.pidsByEye)).toHaveLength(5);
   expect(Object.values(report.pidsByEye).every((count) => count === 1)).toBe(true);
-}, 10_000);
+}, TEST_BUDGET_MS);
 
 test("the scenario evidence reporter executes one composed scratch slot", async () => {
   const result = await runAcceptanceScript("scenario-evidence.ts");
@@ -126,4 +139,4 @@ test("the scenario evidence reporter executes one composed scratch slot", async 
   expect(result.exitCode).toBe(0);
   expect(result.stdout).toContain("ARGUS §13 SCENARIO EVIDENCE SMOKE");
   expect(result.stdout).toContain("10. Blast-radius zero  ->  PASSED");
-}, 10_000);
+}, TEST_BUDGET_MS);
