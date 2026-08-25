@@ -10,8 +10,8 @@ searchable history, session digests, and tickets.
 
 - **Toolkit repo:** `~/argus` (this repo; private GitHub, Issues is its tracker, its
   own build is charted as a wayfinder map here).
-- **Per-repo instance:** `argus init` installs a self-contained `.argus/` directory
-  into any target repo. Every instance is fully independent.
+- **Per-repo instance:** `argus up` converges a self-contained `.argus/` directory
+  into any target repo and starts its eyes. Every instance is fully independent.
 
 **Status:** SPEC — approved in the grilling session of 2026-08-22. Build not started.
 **Diagrams:** drawn on the live Excalidraw canvas (port 3100), exported to `diagrams/`
@@ -122,7 +122,7 @@ API (`cmux new-workspace`, `send`, `send-key`, `read-screen`, `notify`, `set-sta
   honcho.yaml             # this repo's Honcho workspace binding (§5.3)
 ```
 
-Adapters installed by `argus init` (§10):
+Adapters installed by `argus up` (§10):
 
 - Claude Code's built-in memory dir (`~/.claude/projects/<slug>/memory/`) is **moved**
   into `.argus/memory/` and replaced by a symlink pointing there. Its `MEMORY.md`
@@ -353,13 +353,14 @@ knowledge beyond the list of enabled repos. This is the single exception to
 
 `argus` (installed from this repo):
 
-- `argus init` — scaffold `.argus/` in the current repo, gitignore it, create the
-  repo's Honcho workspace, migrate any existing Claude Code built-in memory into
-  `.argus/memory/` as seed content, install the memory symlink + skills adapters +
-  AGENTS.md pointer block, create tracker labels (`retro`, wayfinder set), verify
-  the Matt Pocock tracker wiring (`setup-matt-pocock-skills`) and lay it down if
-  missing, register the repo with the supervisor, verify cmux hooks.
-- `argus up | down | status` — start/stop/inspect this repo's watchers.
+- `argus up` — idempotently scaffold `.argus/` in the current repo, gitignore it,
+  create the repo's Honcho workspace, migrate any existing Claude Code built-in
+  memory into `.argus/memory/` as seed content, install the memory symlink + skills
+  adapters + AGENTS.md pointer block, create tracker labels (`retro`, wayfinder set),
+  verify the Matt Pocock tracker wiring (`setup-matt-pocock-skills`) and lay it down
+  if missing, register the repo with the supervisor, verify cmux hooks, and start
+  this repo's eyes.
+- `argus down | status` — stop/inspect this repo's eyes.
 - `argus search "<query>"` — FTS query over `archive.db`.
 
 ---
@@ -394,11 +395,12 @@ knowledge beyond the list of enabled repos. This is the single exception to
 ## 13. Simulation testing — the fake-Johan harness
 
 Argus is verified end-to-end and adversarially, not just by per-ticket TDD. The
-harness runs against a throwaway sandbox repo (`argus init`'d for the occasion) with
-a **simulation driver** agent that plays Johan: it types into deployed sessions via
-`cmux send`, starts random unregistered sessions on both Claude Code and Codex, makes
-untracked implementation edits, and drops preference statements mid-run. Every feature
-ships with its scenario; pass/fail is asserted by the harness, never eyeballed.
+harness runs against a throwaway sandbox repo (converged with `argus up` for the
+occasion) with a **simulation driver** agent that plays Johan: it types into deployed
+sessions via `cmux send`, starts random unregistered sessions on both Claude Code and
+Codex, makes untracked implementation edits, and drops preference statements mid-run.
+Every feature ships with its scenario; pass/fail is asserted by the harness, never
+eyeballed.
 
 **Test agents and isolation (Johan directive, amended 2026-08-25):** live testing of
 the system — the simulation driver, sessions under test and per-ticket live drives —
