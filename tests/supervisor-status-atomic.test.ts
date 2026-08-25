@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -51,6 +51,59 @@ class CrashableWatcher implements WatcherProcess {
  * behind, which holds only if it renames one into place.
  */
 describe("supervisor status writes are atomic", () => {
+  test("a background status failure is reported without disabling reconciliation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-status-failure-"));
+    const statusPath = join(root, "state", "status.json");
+    const registryPath = join(root, "argus-repos");
+    const repo = join(root, "repo");
+    await mkdir(repo, { recursive: true });
+    await Bun.write(registryPath, `${repo}\n`);
+
+    let nextPid = 2_000;
+    const backgroundFailures: unknown[] = [];
+    const spawned: CrashableWatcher[] = [];
+    const supervisor = new WatcherSupervisor({
+      registryPath,
+      restartDelayMilliseconds: 0,
+      spawn: () => {
+        const watcher = new CrashableWatcher(nextPid++, (error) => {
+          backgroundFailures.push(error);
+        });
+        spawned.push(watcher);
+        return watcher;
+      },
+      statusPath,
+    });
+    const errorLog = spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      await supervisor.reconcile();
+      await rm(statusPath);
+      await mkdir(statusPath);
+      spawned[0]!.crash();
+      for (
+        let attempt = 0;
+        backgroundFailures.length === 0 && attempt < 20;
+        attempt += 1
+      ) {
+        await Bun.sleep(5);
+      }
+
+      expect(backgroundFailures).toHaveLength(1);
+      expect(errorLog).toHaveBeenCalledTimes(1);
+      expect(String(errorLog.mock.calls[0]?.[0])).toContain("watcher exit");
+      expect(errorLog.mock.calls[0]?.[1]).toBe(backgroundFailures[0]);
+
+      await rm(statusPath, { recursive: true });
+      await supervisor.reconcile();
+      expect((await Bun.file(statusPath).json()).watchers).toHaveLength(5);
+    } finally {
+      errorLog.mockRestore();
+      await supervisor.stop().catch(() => {});
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
   test("concurrent reconciliation and crash restarts never collide or expose torn status", async () => {
     const root = await mkdtemp(join(tmpdir(), "argus-status-concurrent-"));
     const statusPath = join(root, "state", "status.json");
