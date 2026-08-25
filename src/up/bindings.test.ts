@@ -108,6 +108,85 @@ describe("agent binding convergence", () => {
     }
   });
 
+  test("uses the Honcho v3 session ensure and per-message batch sequence", async () => {
+    const requests: Array<{ body: unknown; path: string }> = [];
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        requests.push({
+          body: await request.json(),
+          path: new URL(request.url).pathname,
+        });
+        return Response.json({}, { status: 201 });
+      },
+    });
+
+    try {
+      const client = new HttpHonchoClient(
+        `http://127.0.0.1:${server.port}`,
+        "scratch-token",
+      );
+      await client.ensureSession("scratch-workspace", {
+        id: "session/with spaces",
+        metadata: { agent: "codex", ticket: "32" },
+        peers: {
+          johan: {},
+          "claude-code": {},
+          codex: {},
+          hermes: {},
+        },
+      });
+      await client.createMessages("scratch-workspace", "session/with spaces", [
+        {
+          peer_id: "johan",
+          content: "Use the durable queue.",
+          metadata: { provenance: "johan", via: "takeover" },
+        },
+        {
+          peer_id: "codex",
+          content: "Implemented it.",
+          metadata: { provenance: "agent", via: "assistant" },
+        },
+      ]);
+
+      expect(requests).toEqual([
+        {
+          body: {
+            id: "session/with spaces",
+            metadata: { agent: "codex", ticket: "32" },
+            peers: {
+              johan: {},
+              "claude-code": {},
+              codex: {},
+              hermes: {},
+            },
+          },
+          path: "/v3/workspaces/scratch-workspace/sessions",
+        },
+        {
+          body: {
+            messages: [
+              {
+                peer_id: "johan",
+                content: "Use the durable queue.",
+                metadata: { provenance: "johan", via: "takeover" },
+              },
+              {
+                peer_id: "codex",
+                content: "Implemented it.",
+                metadata: { provenance: "agent", via: "assistant" },
+              },
+            ],
+          },
+          path:
+            "/v3/workspaces/scratch-workspace/sessions/session%2Fwith%20spaces/messages",
+        },
+      ]);
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test("binds a repo to its Honcho workspace and four peers idempotently", async () => {
     const { repo, root } = await scratchRepo();
     const honcho = new FakeHoncho();

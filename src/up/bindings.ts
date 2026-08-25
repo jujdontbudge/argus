@@ -22,6 +22,20 @@ export interface HonchoPeerInput {
   id: "johan" | "claude-code" | "codex" | "hermes";
 }
 
+export type HonchoPeerId = HonchoPeerInput["id"];
+
+export interface HonchoSessionInput {
+  id: string;
+  metadata: Record<string, string>;
+  peers: Record<HonchoPeerId, Record<string, never>>;
+}
+
+export interface HonchoMessageInput {
+  peer_id: HonchoPeerId;
+  content: string;
+  metadata: Record<string, string | number | boolean | null>;
+}
+
 export interface HonchoClient {
   ensureWorkspace(
     input: HonchoWorkspaceInput,
@@ -32,7 +46,20 @@ export interface HonchoClient {
   ): Promise<"created" | "existing">;
 }
 
-export class HttpHonchoClient implements HonchoClient {
+/** The same binding client, extended with the watcher-side ingest operations. */
+export interface HonchoIngestionClient extends HonchoClient {
+  ensureSession(
+    workspace: string,
+    input: HonchoSessionInput,
+  ): Promise<"created" | "existing">;
+  createMessages(
+    workspace: string,
+    session: string,
+    messages: readonly HonchoMessageInput[],
+  ): Promise<void>;
+}
+
+export class HttpHonchoClient implements HonchoIngestionClient {
   readonly #baseUrl: string;
 
   constructor(
@@ -45,7 +72,7 @@ export class HttpHonchoClient implements HonchoClient {
 
   async #ensure(
     path: string,
-    body: HonchoWorkspaceInput | HonchoPeerInput,
+    body: HonchoWorkspaceInput | HonchoPeerInput | HonchoSessionInput,
   ): Promise<"created" | "existing"> {
     const response = await fetch(`${this.#baseUrl}${path}`, {
       body: JSON.stringify(body),
@@ -77,6 +104,40 @@ export class HttpHonchoClient implements HonchoClient {
     return this.#ensure(
       `/v3/workspaces/${encodeURIComponent(workspace)}/peers`,
       input,
+    );
+  }
+
+  ensureSession(
+    workspace: string,
+    input: HonchoSessionInput,
+  ): Promise<"created" | "existing"> {
+    return this.#ensure(
+      `/v3/workspaces/${encodeURIComponent(workspace)}/sessions`,
+      input,
+    );
+  }
+
+  async createMessages(
+    workspace: string,
+    session: string,
+    messages: readonly HonchoMessageInput[],
+  ): Promise<void> {
+    const response = await fetch(
+      `${this.#baseUrl}/v3/workspaces/${encodeURIComponent(workspace)}/sessions/${encodeURIComponent(session)}/messages`,
+      {
+        body: JSON.stringify({ messages }),
+        headers: {
+          authorization: `Bearer ${this.apiKey}`,
+          "content-type": "application/json",
+        },
+        method: "POST",
+        signal: AbortSignal.timeout(this.timeoutMilliseconds),
+      },
+    );
+    if (response.status === 201) return;
+    const detail = (await response.text()).trim();
+    throw new Error(
+      `Honcho ${response.status}${detail.length > 0 ? `: ${detail}` : ""}`,
     );
   }
 }
