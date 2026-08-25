@@ -865,6 +865,55 @@ describe("scope drift never takes the eye down (ADR-0001)", () => {
     }
   }, 60_000);
 
+  test("a brain that THROWS is caught too — the scan returns, the eye lives", async () => {
+    const place = await scratch();
+    const gh = createFakeGh({ repo: "JohanSardar/argus" });
+    gh.seed({ number: 7, title: "Ship the widget pipeline", body: SCOPE_SEVEN });
+    try {
+      const audits: RetroAudit[] = [];
+      const eye = await RetroEye.open({
+        repo: place.repo,
+        brain: {
+          evaluate: async () => {
+            throw new Error("codex vanished mid-flight");
+          },
+        },
+        cap: createBrainCap({
+          directory: join(place.root, "brain-slots"),
+          maxConcurrency: 2,
+          pollMs: 1,
+        }),
+        cadence: { quietWindowSeconds: 60, maxWaitSeconds: 600 },
+        gh: gh.run,
+        now: () => 0,
+        sleep: async () => {},
+        onAudit: (audit) => {
+          audits.push(audit);
+        },
+      });
+      await eye.prime();
+      await registerTicketSession(place.repo, "sess-seven", "7", place.repo);
+      await place.commit(
+        "src/billing/stripe-webhooks.ts",
+        "export const onStripeEvent = () => {};\n",
+        "feat: add stripe billing webhooks",
+      );
+
+      expect(await eye.scan()).toEqual([]);
+      expect(
+        audits.some(
+          (audit) =>
+            audit.type === "scope-drift-not-filed" &&
+            audit.reason.includes("codex vanished mid-flight"),
+        ),
+      ).toBe(true);
+      // The slot it took is released, or the next scan would hang forever.
+      expect(await eye.scan()).toEqual([]);
+    } finally {
+      await place.cleanup();
+    }
+  }, 60_000);
+
   test("a gh failure keeps the drift record in the digest and audits it", async () => {
     const place = await scratch();
     const gh = createFakeGh({

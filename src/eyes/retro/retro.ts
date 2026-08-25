@@ -31,7 +31,7 @@ import {
   type SessionRecord,
 } from "../../provenance";
 import { fileAlertEmitter, retryForever, type StuckAlert } from "../backpressure";
-import { createCodexBrain, type Brain } from "../brain";
+import { createCodexBrain, type Brain, type BrainOutcome } from "../brain";
 import { createBrainCap, defaultBrainSlotsDirectory, type BrainCap } from "../cap";
 import { Coalescer, type CoalesceWindow } from "../coalesce";
 import { loadEyesConfig, type CadenceConfig } from "../config";
@@ -591,15 +591,14 @@ export class RetroEye {
     tracker: Tracker | null,
     digests: readonly StoredDigest[],
   ): Promise<RetroFiling[]> {
-    const skip = (candidate: DriftCandidate, reason: string): Promise<void> =>
-      Promise.resolve(
-        this.onAudit({
-          type: "scope-drift-not-filed",
-          candidateId: candidate.id,
-          ticket: candidate.ticket,
-          reason,
-        }),
-      ).then(() => undefined);
+    const skip = async (candidate: DriftCandidate, reason: string): Promise<void> => {
+      await this.onAudit({
+        type: "scope-drift-not-filed",
+        candidateId: candidate.id,
+        ticket: candidate.ticket,
+        reason,
+      });
+    };
 
     if (tracker === null) {
       // No tracker, no stated scope to measure against. Silence is the only
@@ -625,14 +624,25 @@ export class RetroEye {
     if (questions.length === 0) return [];
 
     const release = await this.options.cap.acquire();
-    let outcome;
+    let outcome: BrainOutcome;
     try {
       outcome = await this.options.brain.evaluate({
         prompt: buildDriftPrompt(questions),
         schema: DRIFT_OUTPUT_SCHEMA,
         cwd: this.options.repo,
       });
+    } catch (error) {
+      // A brain is supposed to REPORT failure, not throw it. One that throws
+      // anyway must not escape into `scan` and take the watcher down — this
+      // half's correct default is silence, so it degrades to silence, loudly.
+      outcome = {
+        ok: false,
+        reason: "spawn-error",
+        detail: error instanceof Error ? error.message : String(error),
+      };
     } finally {
+      // Always, on every path: a leaked slot would starve every eye on the
+      // machine of the ADR-0002 budget, not just this one.
       await release();
     }
     if (!outcome.ok) {
