@@ -119,21 +119,28 @@ const BANNER_STATUS: Readonly<Record<LiveHalfStatus, string>> = {
 };
 
 /**
- * What opening the gate actually bought, printed once before any subprocess.
+ * The line the suite prints, whatever the gate says.
  *
- * Without this, a machine where the gate is set but nothing is provisioned
- * runs a suite of green structural tests and two quiet skips — which reads
- * exactly like a successful live run. The banner names every half.
+ * `bun test` (1.3.12) prints no name for a skipped test — only an aggregate
+ * `N skip` — so the test NAME is not on its own a visible channel. This is,
+ * and it is the reason a skipped drive can never read as a drive that was
+ * never written. One line when the gate is shut, because on the default path
+ * both halves have the same reason and nobody needs it twice.
+ *
+ * When the gate is OPEN it expands to name every half, including the case
+ * where nothing is provisioned: a green suite of structural tests plus two
+ * quiet skips otherwise reads exactly like a successful live run.
  */
 export function describeLiveAgentGate(gate: LiveAgentGate): string {
   const halves = [gate.claude, gate.codex];
+  if (!gate.enabled) {
+    const agents = halves.map(({ agent }) => agent).join(", ");
+    return `argus: live agent drives SKIPPED (${agents}) — set ${LIVE_AGENT_GATE}=1 to run them; they burn a subscription`;
+  }
   const lines = halves.map(
     (verdict) =>
       `  ${verdict.agent.padEnd(6)}  ${BANNER_STATUS[verdict.status]}  ${verdict.reason}`,
   );
-  if (!gate.enabled) {
-    return [`${LIVE_AGENT_GATE} is unset — live agent drives are SKIPPED`, ...lines].join("\n");
-  }
   const head = `${LIVE_AGENT_GATE}=1 — live agent drives are ENABLED (this burns a subscription)`;
   if (halves.every(({ status }) => status !== "run")) {
     return [head, ...lines, "  NO live half can run on this machine"].join("\n");

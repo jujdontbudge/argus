@@ -202,4 +202,19 @@ describe("the live-agent gate", () => {
       else Bun.env[LIVE_AGENT_GATE] = previous;
     }
   });
+
+  test("collapses to ONE line when shut — bun prints no name for a skip", () => {
+    const banner = describeLiveAgentGate(
+      resolveLiveAgentGate({
+        claudeInstalled: true,
+        codexAuthPresent: true,
+        codexInstalled: true,
+        env: {},
+      }),
+    );
+
+    expect(banner.split("\n")).toEqual([
+      "argus: live agent drives SKIPPED (claude, codex) — set ARGUS_LIVE_AGENTS=1 to run them; they burn a subscription",
+    ]);
+  });
 });
