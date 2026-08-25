@@ -24,6 +24,11 @@ interface HermesRow {
   model: string | null;
 }
 
+interface SessionLink {
+  id: string;
+  parentSessionId: string | null;
+}
+
 function readOnlyUri(file: string): string {
   return `${pathToFileURL(file).href}?mode=ro&immutable=0`;
 }
@@ -127,6 +132,29 @@ class HermesDatabaseReader {
     return rows.filter((row) => emitted.has(row.id));
   }
 
+  private stitchCompressionChains(db: Database, rows: HermesRow[]): HermesRow[] {
+    const links = new Map(
+      db
+        .query<SessionLink, []>(
+          "SELECT id, parent_session_id AS parentSessionId FROM sessions",
+        )
+        .all()
+        .map((link) => [link.id, link.parentSessionId]),
+    );
+    return rows.map((row) => {
+      if (row.parentSessionId === null) return row;
+      const visited = new Set([row.sessionId]);
+      let root = row.parentSessionId;
+      while (!visited.has(root)) {
+        visited.add(root);
+        const parent = links.get(root);
+        if (parent === null || parent === undefined) break;
+        root = parent;
+      }
+      return { ...row, parentSessionId: root };
+    });
+  }
+
   async read(file: string, offset: number): Promise<ReadResult> {
     const db = new Database(
       readOnlyUri(file),
@@ -154,8 +182,9 @@ class HermesDatabaseReader {
       const maximum = db.query<{ id: number | null }, []>(
         "SELECT max(id) AS id FROM messages",
       ).get()?.id;
+      const stitched = this.stitchCompressionChains(db, rows);
       return {
-        lines: this.unreplayed(file, rows).map((row) => JSON.stringify(row)),
+        lines: this.unreplayed(file, stitched).map((row) => JSON.stringify(row)),
         offset: maximum === null || maximum === undefined ? offset : Math.max(offset, maximum),
         truncated: false,
       };

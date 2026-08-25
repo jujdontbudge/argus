@@ -144,4 +144,55 @@ describe("Hermes state.db source", () => {
       await rm(root, { force: true, recursive: true });
     }
   });
+
+  test("stitches compression rotations to the logical root session", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-hermes-source-"));
+    try {
+      const { db } = await fixtureDatabase(root);
+      const insertSession = db.query(
+        `INSERT INTO sessions
+          (id, source, parent_session_id, started_at, end_reason, message_count)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      );
+      insertSession.run("session-root", "cli", null, 1_777_200_000, "compression", 1);
+      insertSession.run(
+        "session-middle",
+        "cli",
+        "session-root",
+        1_777_200_100,
+        "compression",
+        1,
+      );
+      insertSession.run(
+        "session-current",
+        "cli",
+        "session-middle",
+        1_777_200_200,
+        null,
+        1,
+      );
+      db.run(
+        "INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)",
+        ["session-current", "assistant", "continued after compression", 1_777_200_201],
+      );
+
+      const events = await new Tailer(
+        createHermesSource({ hermesRoot: root }),
+      ).catchUp();
+
+      expect(events[0]).toMatchObject({
+        type: "session-meta",
+        sessionId: "session-current",
+        parentSessionId: "session-root",
+      });
+      expect(events[1]).toMatchObject({
+        type: "message",
+        sessionId: "session-current",
+        text: "continued after compression",
+      });
+      db.close();
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
 });
