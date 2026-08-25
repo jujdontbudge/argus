@@ -74,8 +74,13 @@ export interface IsolatedAgentSpawnerOptions {
   /**
    * A long-lived inference-only token generated out of band by
    * `claude setup-token`. The harness never provisions, prints or persists it.
+   *
+   * Optional since #43, because a Codex-only drive needs no Claude credential
+   * and must not be made to invent one. A Claude spawn without it is refused
+   * by name rather than started with an empty token, which would surface as an
+   * opaque auth failure from inside the CLI.
    */
-  claudeOauthToken: string;
+  claudeOauthToken?: string | undefined;
   /** Override command resolution, chiefly to bypass local shell wrappers. */
   executables?: Partial<Record<TestAgent, string>>;
 }
@@ -104,11 +109,20 @@ export function createIsolatedAgentSpawner(
             "isolated Claude HOME and CLAUDE_CONFIG_DIR must be outside the real home",
           );
         }
+        // Only AFTER the isolation refusal above: a caller who is both
+        // untokened and pointed at the real home must be told about the home,
+        // so provisioning a token can never be the way to silence that.
+        const token = options.claudeOauthToken;
+        if (token === undefined || token === "") {
+          throw new Error(
+            "a live Claude drive needs a provisioned CLAUDE_CODE_OAUTH_TOKEN",
+          );
+        }
         // These outrank CLAUDE_CODE_OAUTH_TOKEN in Claude's documented auth
         // precedence, so inherited values must not silently change providers.
         delete env.ANTHROPIC_API_KEY;
         delete env.ANTHROPIC_AUTH_TOKEN;
-        env.CLAUDE_CODE_OAUTH_TOKEN = options.claudeOauthToken;
+        env.CLAUDE_CODE_OAUTH_TOKEN = token;
       }
       const executable = options.executables?.[request.agent] ?? request.command[0];
       if (executable === undefined) throw new Error("agent command is empty");
