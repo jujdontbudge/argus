@@ -232,3 +232,8 @@ export class ArchiverEye {
     this.database.close(false);
   }
 }
+
+/** Production composition for the passive archive eye. */
+export function openArchiver(repo: string): Promise<ArchiverEye> {
+  return ArchiverEye.open({ repo });
+}

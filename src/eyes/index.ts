@@ -8,6 +8,7 @@
  */
 export {
   ArchiverEye,
+  openArchiver,
   archiveAutonomousBatchScenario,
   archiverWatcherDeathScenario,
   registerArchiverScenarios,
@@ -147,8 +148,10 @@ export {
   honchoSemanticIsolationScenario,
   honchoTakeoverScenario,
   loadHonchoBinding,
+  openHoncho,
   registerHonchoScenarios,
   type HonchoEyeOptions,
+  type OpenHonchoOverrides,
 } from "./honcho";
 export {
   applyDigestUpdate,
