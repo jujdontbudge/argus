@@ -193,6 +193,83 @@ describe("fake-Johan harness", () => {
     ).rejects.toThrow("outside the real home");
   });
 
+  test("isolated spawner refuses a Claude child when no token is provisioned", async () => {
+    const spawner = createIsolatedAgentSpawner({
+      executables: { claude: "/must-not-run" },
+    });
+    const scratch = await mkdtemp(join(tmpdir(), "argus-live-untokened-"));
+
+    try {
+      expect(
+        spawner.spawn({
+          agent: "claude",
+          command: ["claude", "-p", "must not run"],
+          cwd: scratch,
+          env: {
+            CLAUDE_CONFIG_DIR: join(scratch, "state/claude"),
+            HOME: join(scratch, "home"),
+            PATH: process.env.PATH ?? "",
+          },
+          tab: "argus-test-untokened-claude",
+        }),
+      ).rejects.toThrow("live Claude drive needs a provisioned CLAUDE_CODE_OAUTH_TOKEN");
+    } finally {
+      await rm(scratch, { force: true, recursive: true });
+    }
+  });
+
+  test("the real-home refusal still outranks the missing token", async () => {
+    // #41's refusal is the safety property and must be the FIRST thing that
+    // fails, so a caller who is both untokened and pointed at the real home is
+    // told about the home. Provisioning a token must never be the way to make
+    // this message go away.
+    const spawner = createIsolatedAgentSpawner({
+      executables: { claude: "/must-not-run" },
+    });
+
+    expect(
+      spawner.spawn({
+        agent: "claude",
+        command: ["claude", "-p", "must not run"],
+        cwd: tmpdir(),
+        env: {
+          CLAUDE_CONFIG_DIR: join(homedir(), ".claude"),
+          HOME: homedir(),
+          PATH: process.env.PATH ?? "",
+        },
+        tab: "argus-test-untokened-refusal-claude",
+      }),
+    ).rejects.toThrow("outside the real home");
+  });
+
+  test("a Codex child needs no Claude token and keeps its scratch CODEX_HOME", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-live-codex-seam-"));
+    const codexHome = join(root, "state/codex");
+    const probe = join(root, "probe.ts");
+    await writeFile(
+      probe,
+      `console.log(JSON.stringify({ codexHome: Bun.env.CODEX_HOME }));\n`,
+    );
+    const spawner = createIsolatedAgentSpawner({
+      executables: { codex: process.execPath },
+    });
+
+    try {
+      const result = await spawner.spawn({
+        agent: "codex",
+        command: ["codex", probe],
+        cwd: root,
+        env: { CODEX_HOME: codexHome, PATH: process.env.PATH ?? "" },
+        tab: "argus-test-fixture-codex",
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout ?? "")).toEqual({ codexHome });
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
   test("registry exposes all ten core scenario slots and accepts future implementations", () => {
     const registry = createScenarioRegistry();
 
