@@ -74,9 +74,29 @@ function messageText(item: Rec, role: "user" | "assistant"): string | undefined 
 }
 
 class CodexParser implements SourceParser {
+  private cwd: string | undefined;
+  private parentSessionId: string | undefined;
+  private repo: string | undefined;
   private sessionId: string | undefined;
+  private version: string | undefined;
 
   constructor(private readonly file: string) {}
+
+  private metaEvent(ts: string | undefined): TailEvent {
+    return {
+      type: "session-meta",
+      sessionId: this.sessionId!,
+      agent: "codex",
+      ...(this.cwd !== undefined && { cwd: this.cwd }),
+      ...(this.repo !== undefined && { repo: this.repo }),
+      ...(this.parentSessionId !== undefined && {
+        parentSessionId: this.parentSessionId,
+      }),
+      ...(this.version !== undefined && { version: this.version }),
+      ...(ts !== undefined && { ts }),
+      file: this.file,
+    };
+  }
 
   parseLine(line: string): TailEvent[] {
     let parsed: unknown;
@@ -95,18 +115,23 @@ class CodexParser implements SourceParser {
       if (!payload || !id || this.sessionId) return [];
       this.sessionId = id;
       const rawCwd = str(payload.cwd);
-      const cwd = rawCwd ? canonicalPath(rawCwd) : undefined;
-      const version = str(payload.cli_version);
-      return [{
-        type: "session-meta",
-        sessionId: id,
-        agent: "codex",
-        ...(cwd !== undefined && { cwd }),
-        ...(cwd !== undefined && repositoryFor(cwd) !== undefined && { repo: repositoryFor(cwd) }),
-        ...(version !== undefined && { version }),
-        ...(ts !== undefined && { ts }),
-        file: this.file,
-      }];
+      this.cwd = rawCwd ? canonicalPath(rawCwd) : undefined;
+      this.repo = this.cwd ? repositoryFor(this.cwd) : undefined;
+      this.version = str(payload.cli_version);
+      this.parentSessionId =
+        str(payload.parent_thread_id) ?? str(payload.forked_from_id);
+      return [this.metaEvent(ts)];
+    }
+
+    if (record.type === "turn_context" && this.sessionId) {
+      const payload = asRecord(record.payload);
+      const rawCwd = payload ? str(payload.cwd) : undefined;
+      if (!rawCwd) return [];
+      const cwd = canonicalPath(rawCwd);
+      if (cwd === this.cwd) return [];
+      this.cwd = cwd;
+      this.repo = repositoryFor(cwd);
+      return [this.metaEvent(ts)];
     }
 
     if (record.type === "response_item" && this.sessionId && ts) {

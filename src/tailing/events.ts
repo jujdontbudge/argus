@@ -39,6 +39,8 @@ export interface SessionMetaEvent {
   cwd?: string;
   /** Canonical repository identity resolved from cwd while the path is live. */
   repo?: string;
+  /** Parent thread for a Codex subagent/fork, when the rollout provides one. */
+  parentSessionId?: string;
   version?: string;
   ts?: string;
   file: string;
