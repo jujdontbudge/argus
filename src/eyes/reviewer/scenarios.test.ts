@@ -41,7 +41,7 @@ describe("§13 reviewer scenarios in the harness registry", () => {
         .list()
         .filter(({ status: slotStatus }) => slotStatus === "unimplemented")
         .map(({ number }) => number),
-    ).toEqual([3, 6, 7, 9]);
+    ).toEqual([3, 6, 7]);
   });
 
   test("scenario 1 — autonomous batch: USER.md byte-identical, MEMORY.md gains facts", async () => {
