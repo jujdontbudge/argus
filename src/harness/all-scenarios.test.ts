@@ -34,6 +34,8 @@ const CONTRIBUTED: Record<number, string[]> = {
     "USER.md learned from the takeover directive", // #30 reviewer
     "the digest frontmatter carries johan_touched: true", // #31 digest
     "the takeover directive was logged as a Johan-peer observation", // #32 honcho
+    "exactly one scope-drift retro was filed for the hijacked ticket session", // #38
+    "the in-scope refactor in ticket #9's session filed NOTHING", // #38
   ],
   3: [
     "exactly one retro was filed for the rogue work", // #33 retro
