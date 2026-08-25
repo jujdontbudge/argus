@@ -1,0 +1,18 @@
+{"type":"summary","summary":"Prior day's work on the tailer","leafUuid":"u-prev"}
+{"type":"user","message":{"role":"user","content":"start work please"},"timestamp":"2026-08-23T22:00:00.000Z","promptSource":"typed","uuid":"u1","parentUuid":null,"sessionId":"s-edge","cwd":"/tmp/proj","version":"2.1.241","isSidechain":false,"userType":"external","origin":{"kind":"human"},"entrypoint":"cli"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Working on it."}]},"timestamp":"2026-08-23T22:00:05.000Z","uuid":"u2","sessionId":"s-edge","isSidechain":false}
+{"type":"user","message":{"role":"user","content":"E2 line one"},"timestamp":"2026-08-23T22:01:00.400Z","promptSource":"typed","uuid":"u3","sessionId":"s-edge","cwd":"/tmp/proj","isSidechain":false}
+{"type":"queue-operation","operation":"enqueue","timestamp":"2026-08-23T22:01:00.500Z","content":"E2 line two","sessionId":"s-edge"}
+{"type":"queue-operation","operation":"enqueue","timestamp":"2026-08-23T22:01:00.600Z","content":"E2 line three","sessionId":"s-edge"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Line one handled."}]},"timestamp":"2026-08-23T22:01:20.000Z","uuid":"u4","sessionId":"s-edge","isSidechain":false}
+{"type":"queue-operation","operation":"dequeue","timestamp":"2026-08-23T22:01:21.000Z","sessionId":"s-edge"}
+{"type":"user","message":{"role":"user","content":"E2 line two"},"timestamp":"2026-08-23T22:01:21.100Z","promptSource":"queued","uuid":"u5","sessionId":"s-edge","isSidechain":false}
+{"type":"queue-operation","operation":"dequeue","timestamp":"2026-08-23T22:01:21.200Z","sessionId":"s-edge"}
+{"type":"user","message":{"role":"user","content":"E2 line three"},"timestamp":"2026-08-23T22:01:21.300Z","promptSource":"queued","uuid":"u6","sessionId":"s-edge","isSidechain":false}
+{"type":"user","message":{"role":"user","content":"<command-message>caveman</command-message>\n<command-name>/caveman</command-name>\n<command-args>hello there</command-args>"},"timestamp":"2026-08-23T22:02:00.000Z","promptSource":"typed","uuid":"u7","sessionId":"s-edge","isSidechain":false}
+{"type":"user","isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"caveman skill instructions"}]},"timestamp":"2026-08-23T22:02:00.100Z","uuid":"u8","sessionId":"s-edge","isSidechain":false}
+{"type":"user","message":{"role":"user","content":"<bash-input>echo hermes-bang-probe</bash-input>"},"timestamp":"2026-08-23T22:03:00.000Z","uuid":"u9","sessionId":"s-edge","isSidechain":false}
+{"type":"user","message":{"role":"user","content":"<bash-stdout>hermes-bang-probe</bash-stdout><bash-stderr></bash-stderr>"},"timestamp":"2026-08-23T22:03:00.200Z","uuid":"u10","sessionId":"s-edge","isSidechain":false}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu-1","content":"ok"}]},"timestamp":"2026-08-23T22:04:00.000Z","uuid":"u11","sessionId":"s-edge","isSidechain":false}
+{"type":"user","message":{"role":"user","content":"sidechain internal"},"timestamp":"2026-08-23T22:05:00.000Z","promptSource":"typed","uuid":"u12","sessionId":"s-edge","isSidechain":true}
+{"type":"user","message":{"role":"user","content":"resumed next morning"},"timestamp":"2026-08-24T09:15:00.000Z","promptSource":"typed","uuid":"u13","sessionId":"s-edge","cwd":"/tmp/proj","isSidechain":false}
