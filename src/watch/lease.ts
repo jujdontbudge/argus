@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, rm, stat } from "node:fs/promises";
+import { mkdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 export interface WatchLease {
@@ -27,12 +27,14 @@ async function ownerPid(path: string): Promise<number | null> {
 
 async function wait(milliseconds: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return;
-  await Promise.race([
-    Bun.sleep(milliseconds),
-    new Promise<void>((resolve) => {
-      signal.addEventListener("abort", () => resolve(), { once: true });
-    }),
-  ]);
+  await new Promise<void>((resolve) => {
+    const onAbort = () => resolve();
+    signal.addEventListener("abort", onAbort, { once: true });
+    void Bun.sleep(milliseconds).then(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    });
+  });
 }
 
 async function moveStaleLease(path: string): Promise<void> {

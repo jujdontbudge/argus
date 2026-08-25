@@ -384,4 +384,86 @@ describe("argus watch", () => {
       await rm(world.root, { force: true, recursive: true });
     }
   }, 30_000);
+
+  test("a watcher ignores another repo's global Codex rollout", async () => {
+    const world = await watchWorld();
+    const peerPath = join(world.root, "peer");
+    await mkdir(join(peerPath, ".argus"), { recursive: true });
+    const peer = await realpath(peerPath);
+    const sentinel = join(peer, ".argus", "sentinel");
+    await Bun.write(sentinel, "peer-state\n");
+    const child = Bun.spawn(
+      [process.execPath, cli, "watch", "reviewer", "--repo", world.repo],
+      { env: world.env, stderr: "pipe", stdout: "pipe" },
+    );
+    try {
+      const cursorPath = join(
+        world.repo,
+        ".argus",
+        "eyes",
+        "reviewer",
+        "cursors.json",
+      );
+      for (let attempt = 0; !(await Bun.file(cursorPath).exists()) && attempt < 200; attempt += 1) {
+        await Bun.sleep(20);
+      }
+      const sessions = join(world.env.CODEX_HOME, "sessions", "2026", "08", "25");
+      await mkdir(sessions, { recursive: true });
+      const rollout = (
+        id: string,
+        repo: string,
+        text: string,
+      ) =>
+        `${JSON.stringify({
+          timestamp: "2026-08-25T12:04:00.000Z",
+          type: "session_meta",
+          payload: {
+            id,
+            cwd: join(world.root, `vanished-${id}`),
+            git: { repository_url: repo },
+            cli_version: "test",
+          },
+        })}\n${JSON.stringify({
+          timestamp: "2026-08-25T12:04:01.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text }],
+          },
+        })}\n`;
+      await Bun.write(
+        join(sessions, "rollout-peer.jsonl"),
+        rollout("peer-session", peer, "This belongs only to the peer."),
+      );
+      await Bun.sleep(600);
+      const statePath = join(world.repo, ".argus", "eyes", "reviewer", "state.json");
+      const afterPeer = (await Bun.file(statePath).exists())
+        ? ((await Bun.file(statePath).json()) as { pending: unknown[] }).pending.length
+        : 0;
+      expect(afterPeer).toBe(0);
+
+      await Bun.write(
+        join(sessions, "rollout-primary.jsonl"),
+        rollout("primary-session", world.repo, "This belongs to the primary."),
+      );
+      let pending = 0;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        await Bun.sleep(20);
+        try {
+          pending = ((await Bun.file(statePath).json()) as { pending: unknown[] })
+            .pending.length;
+        } catch {
+          // The repo-scoped source has not consumed the rollout yet.
+        }
+        if (pending === 1) break;
+      }
+      expect(pending).toBe(1);
+      expect(await Bun.file(sentinel).text()).toBe("peer-state\n");
+    } finally {
+      child.kill("SIGTERM");
+      await child.exited;
+      await rm(world.root, { force: true, recursive: true });
+    }
+  }, 30_000);
 });

@@ -49,12 +49,20 @@ async function sleepUntilRetry(
 ): Promise<void> {
   if (signal === undefined) return sleep(milliseconds);
   if (signal.aborted) throw aborted();
-  await Promise.race([
-    sleep(milliseconds),
-    new Promise<never>((_resolve, reject) => {
-      signal.addEventListener("abort", () => reject(aborted()), { once: true });
-    }),
-  ]);
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = () => reject(aborted());
+    signal.addEventListener("abort", onAbort, { once: true });
+    void sleep(milliseconds).then(
+      () => {
+        signal.removeEventListener("abort", onAbort);
+        resolve();
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
 }
 
 /**

@@ -1,5 +1,5 @@
 import { mkdir, readdir, realpath, rename } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { readEnabledRepos } from "./supervisor/registry.ts";
 import { EYE_NAMES, type EyeName } from "./supervisor/runtime.ts";
@@ -33,7 +33,7 @@ async function persistCursors(
   path: string,
   cursors: Readonly<Record<string, number>>,
 ): Promise<void> {
-  await mkdir(join(path, ".."), { recursive: true });
+  await mkdir(dirname(path), { recursive: true });
   const temporary = `${path}.${process.pid}.tmp`;
   await Bun.write(temporary, `${JSON.stringify(cursors, null, 2)}\n`);
   await rename(temporary, path);
@@ -207,13 +207,14 @@ async function runLoop(
       checkingEnrollment = false;
     }
   }, pollMilliseconds);
-  const lease = await acquireWatchLease(
-    repo,
-    eye,
-    controller.signal,
-    pollMilliseconds,
-  );
+  let lease: Awaited<ReturnType<typeof acquireWatchLease>> | undefined;
   try {
+    lease = await acquireWatchLease(
+      repo,
+      eye,
+      controller.signal,
+      pollMilliseconds,
+    );
     if (lease === null) return 0;
     while (!controller.signal.aborted) {
       if (!(await isEnrolled(registryPath, repo))) return 0;
