@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { AttributedChanges } from "./attribution";
 import type { GitCommit } from "./git";
-import { buildDriftCandidates } from "./drift";
+import {
+  buildDriftCandidates,
+  isJudgeableScope,
+  type TicketScope,
+} from "./drift";
 
 function commit(overrides: Partial<GitCommit> = {}): GitCommit {
   return {
@@ -94,5 +98,52 @@ describe("scope-drift candidates come from work a ticket session DOES cover", ()
         parentRepoOf: () => "/repo",
       })[0]!.id,
     ).not.toBe(build());
+  });
+});
+
+describe("too little stated scope is never a guess (the ticket says nothing)", () => {
+  const scope = (body: string): TicketScope => ({
+    number: "7",
+    title: "Ship the widget pipeline",
+    body,
+    state: "open",
+  });
+
+  test("a ticket with a real body is judgeable", () => {
+    expect(
+      isJudgeableScope(
+        scope(
+          "Build the widget renderer and its cache.\n\nThe pipeline must stream," +
+            " and the renderer needs a fixture test.",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  test("an empty body states no scope, so there is nothing to judge against", () => {
+    expect(isJudgeableScope(scope(""))).toBe(false);
+    expect(isJudgeableScope(scope("   \n\n  "))).toBe(false);
+  });
+
+  test("a one-line body is a label, not a scope: still nothing to judge", () => {
+    expect(
+      isJudgeableScope(scope("Build the widget renderer and its streaming cache.")),
+    ).toBe(false);
+  });
+
+  test("two lines of near-nothing is not scope either", () => {
+    expect(isJudgeableScope(scope("do it\nthanks"))).toBe(false);
+  });
+
+  test("a CLOSED ticket is still judged — closing it does not un-state its scope", () => {
+    expect(
+      isJudgeableScope({
+        ...scope(
+          "Build the widget renderer and its cache.\n\nThe pipeline must stream," +
+            " and the renderer needs a fixture test.",
+        ),
+        state: "closed",
+      }),
+    ).toBe(true);
   });
 });

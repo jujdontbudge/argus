@@ -53,6 +53,38 @@ export interface DriftCandidate {
   work: DriftWork[];
 }
 
+/** A ticket's STATED scope, read back from the tracker (title + body). */
+export interface TicketScope {
+  number: string;
+  title: string;
+  body: string;
+  /** Closed mid-session is normal; it never changes what the ticket asked. */
+  state: "open" | "closed";
+}
+
+/**
+ * A ticket body must actually STATE a scope before a diff can be measured
+ * against it. An empty body says nothing; a one-liner is a label, not a
+ * scope. Judging against either is guessing, and the policy forbids guessing
+ * in the direction of drift — so both are silence, not suspicion.
+ *
+ * The title is deliberately not counted: every ticket has one, so counting it
+ * would make every ticket judgeable and turn the gate off.
+ */
+const MIN_SCOPE_LINES = 2;
+const MIN_SCOPE_CHARS = 80;
+
+export function isJudgeableScope(scope: TicketScope): boolean {
+  const lines = scope.body
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  return (
+    lines.length >= MIN_SCOPE_LINES &&
+    lines.join(" ").length >= MIN_SCOPE_CHARS
+  );
+}
+
 export interface BuildDriftCandidatesInput {
   /** Changes a registered ticket session covers — attribution's other half. */
   attributed: readonly AttributedChanges[];
