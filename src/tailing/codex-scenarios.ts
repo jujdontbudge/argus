@@ -9,7 +9,11 @@ import type {
   ScenarioRegistry,
 } from "../harness/index.ts";
 import { createCodexSource } from "./codex.ts";
-import type { TailEvent } from "./events.ts";
+import type {
+  MessageEvent,
+  SessionMetaEvent,
+  TailEvent,
+} from "./events.ts";
 import { Tailer } from "./tailer.ts";
 
 const fixtureRoot = fileURLToPath(
@@ -63,12 +67,12 @@ export const codexRogueSessionScenario: ScenarioHandler = async ({
     "rollout-2026-08-25T11-00-00-66666666-6666-6666-6666-666666666666.jsonl",
   );
   const meta = events.find(
-    (event) =>
+    (event): event is SessionMetaEvent =>
       event.type === "session-meta" &&
       event.sessionId === "66666666-6666-6666-6666-666666666666",
   );
   const prompt = events.find(
-    (event) =>
+    (event): event is MessageEvent =>
       event.type === "message" &&
       event.role === "user" &&
       event.sessionId === "66666666-6666-6666-6666-666666666666",
