@@ -16,6 +16,9 @@ export interface SessionRecord {
   agent?: string;
   ticket?: string;
   workspace?: string;
+  /** The previous session id when this deployment is a Hermes compression
+   * restart of an earlier session (§5.4: the chain digests as ONE session). */
+  continues?: string;
 }
 
 /** A registry line that could not be used, surfaced loudly (never a crash). */
@@ -132,6 +135,7 @@ export function parseSessionsJsonl(content: string, file: string): ParsedSession
       ...(typeof row.agent === "string" && { agent: row.agent }),
       ...(typeof row.ticket === "string" && { ticket: row.ticket }),
       ...(typeof row.workspace === "string" && { workspace: row.workspace }),
+      ...(typeof row.continues === "string" && { continues: row.continues }),
     };
   });
 }
