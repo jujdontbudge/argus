@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { lstat, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -16,8 +16,10 @@ import {
 
 const checkout = fileURLToPath(new URL("..", import.meta.url));
 
+setDefaultTimeout(30_000);
+
 describe("fake-Johan harness", () => {
-  test("creates an isolated throwaway git repo and records the argus up stub", async () => {
+  test("creates an isolated throwaway git repo and converges it with the real argus up", async () => {
     const sandbox = await createSandbox({ checkout });
 
     try {
@@ -28,7 +30,7 @@ describe("fake-Johan harness", () => {
       expect(sandbox.env.XDG_CACHE_HOME).toBe(join(sandbox.root, "state/cache"));
       expect(sandbox.env.XDG_DATA_HOME).toBe(join(sandbox.root, "state/data"));
       expect(sandbox.env.XDG_STATE_HOME).toBe(join(sandbox.root, "state/state"));
-      expect(sandbox.env.ARGUS_REPOS_DIR).toBe(join(sandbox.root, "state/argus-repos"));
+      expect(sandbox.env.ARGUS_REPOS_FILE).toBe(join(sandbox.root, "state/argus-repos"));
       expect(sandbox.env.CLAUDE_CONFIG_DIR).toBe(join(sandbox.root, "state/claude"));
       expect(sandbox.env.CODEX_HOME).toBe(join(sandbox.root, "state/codex"));
       expect(sandbox.env.HERMES_HOME).toBe(join(sandbox.root, "state/hermes"));
@@ -40,11 +42,12 @@ describe("fake-Johan harness", () => {
           .sort(),
       ).toEqual(["CMUX_SOCKET_DIR", "CMUX_SOCKET_PATH"]);
       expect(dirname(sandbox.repo)).toBe(sandbox.root);
-      expect(sandbox.up).toEqual({
-        exitCode: 1,
-        stderr: "argus up: not implemented yet\n",
-        stdout: "",
-      });
+      expect(sandbox.up.exitCode).toBe(0);
+      expect(sandbox.up.stderr).toContain("TRACKER-LESS MODE");
+      expect(sandbox.up.stdout).toContain("cmux hooks: pending #7 (soft check)");
+      expect(await Bun.file(join(sandbox.repo, ".argus/config.yaml")).exists()).toBe(
+        true,
+      );
     } finally {
       await sandbox.teardown();
     }
@@ -105,7 +108,7 @@ describe("fake-Johan harness", () => {
       { number: 7, status: "unimplemented", title: "Signal paths" },
       { number: 8, status: "unimplemented", title: "Self-learning loop" },
       { number: 9, status: "unimplemented", title: "Semantic isolation" },
-      { number: 10, status: "unimplemented", title: "Blast-radius zero" },
+      { number: 10, status: "implemented", title: "Blast-radius zero" },
     ]);
 
     registry.register(3, async () => {});
@@ -116,6 +119,7 @@ describe("fake-Johan harness", () => {
       title: "Rogue session",
     });
     expect(registry.get(3)).toBeFunction();
+    expect(registry.get(10)).toBeFunction();
   });
 
   test("mechanics scenario proves machine-state isolation, tears down, and writes a report", async () => {
@@ -149,11 +153,7 @@ describe("fake-Johan harness", () => {
         sandboxRoot: result.sandboxRoot,
         status: "passed",
         teardown: "completed",
-        up: {
-          exitCode: 1,
-          stderr: "argus up: not implemented yet\n",
-          stdout: "",
-        },
+        up: result.up,
       });
     } finally {
       await rm(reportDirectory, { force: true, recursive: true });
@@ -218,6 +218,32 @@ describe("fake-Johan harness", () => {
         expect(lstat(result.sandboxRoot)).rejects.toThrow();
         expect(await Bun.file(result.reportPath).exists()).toBe(true);
       }
+    } finally {
+      await rm(reportDirectory, { force: true, recursive: true });
+    }
+  });
+
+  test("scenario 10 wipes one converged repo without changing another sandbox", async () => {
+    const reportDirectory = await mkdtemp(join(tmpdir(), "argus-reports-"));
+    const scenario = createScenarioRegistry().get(10);
+
+    try {
+      expect(scenario).toBeFunction();
+      const result = await runScenario({
+        checkout,
+        name: "blast-radius-zero",
+        reportDirectory,
+        scenario: scenario!,
+      });
+
+      expect(result.status).toBe("passed");
+      expect(result.assertions).toEqual([
+        { description: "primary sandbox was converged by argus up", passed: true },
+        { description: "peer sandbox was converged by argus up", passed: true },
+        { description: "primary .argus state was removed", passed: true },
+        { description: "peer .argus state stayed byte-identical", passed: true },
+        { description: "peer supervisor state stayed byte-identical", passed: true },
+      ]);
     } finally {
       await rm(reportDirectory, { force: true, recursive: true });
     }
