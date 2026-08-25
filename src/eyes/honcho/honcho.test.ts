@@ -16,6 +16,7 @@ import { HonchoEye } from "./honcho";
 const scratchDirectories: string[] = [];
 
 class FakeHoncho implements HonchoIngestionClient {
+  readonly delivered: HonchoMessageInput[] = [];
   readonly calls: Array<
     | { type: "workspace"; input: HonchoWorkspaceInput }
     | { type: "peer"; workspace: string; input: HonchoPeerInput }
@@ -27,6 +28,8 @@ class FakeHoncho implements HonchoIngestionClient {
         messages: readonly HonchoMessageInput[];
       }
   > = [];
+
+  constructor(private failuresRemaining = 0) {}
 
   async ensureWorkspace(input: HonchoWorkspaceInput) {
     this.calls.push({ type: "workspace", input });
@@ -49,6 +52,11 @@ class FakeHoncho implements HonchoIngestionClient {
     messages: readonly HonchoMessageInput[],
   ) {
     this.calls.push({ type: "messages", workspace, session, messages });
+    if (this.failuresRemaining > 0) {
+      this.failuresRemaining -= 1;
+      throw new Error("Honcho fixture is down");
+    }
+    this.delivered.push(...messages);
   }
 }
 
@@ -57,13 +65,17 @@ function record(
   author: ProvenanceRecord["author"],
   options: {
     agent?: string;
+    sessionId?: string;
+    ts?: string;
     uuid?: string;
     via?: ProvenanceRecord["via"];
   } = {},
 ): ProvenanceRecord {
   const uuid = options.uuid ?? `uuid-${text}`;
+  const sessionId = options.sessionId ?? "session-32";
+  const ts = options.ts ?? "2026-08-25T12:00:00.000Z";
   return {
-    sessionId: "session-32",
+    sessionId,
     author,
     via: options.via ?? (author === "agent" ? "assistant" : "takeover"),
     registered: true,
@@ -71,17 +83,17 @@ function record(
     johanTouched: author === "johan",
     agent: options.agent ?? "claude",
     ticket: "32",
-    ts: "2026-08-25T12:00:00.000Z",
+    ts,
     text,
     event: {
       type: "message",
-      sessionId: "session-32",
+      sessionId,
       role: author === "agent" ? "assistant" : "user",
       text,
-      ts: "2026-08-25T12:00:00.000Z",
+      ts,
       uuid,
       candidate: true,
-      file: "/scratch/transcripts/session-32.jsonl",
+      file: `/scratch/transcripts/${sessionId}.jsonl`,
     },
   };
 }
@@ -186,5 +198,105 @@ describe("Honcho eye", () => {
       expect(message.metadata.via).toBeString();
     }
     expect(await eye.pendingCount()).toBe(0);
+  });
+
+  test("survives restart and retries a durable backlog with backoff and a prolonged-failure alert", async () => {
+    const repo = await scratchRepo();
+    const down = new FakeHoncho();
+    const beforeRestart = await HonchoEye.open({
+      repo,
+      client: down,
+      autoFlush: false,
+      onAlert: () => {},
+    });
+    await beforeRestart.ingest([
+      record("first durable message", "johan"),
+      record("second durable message", "agent", { agent: "codex" }),
+    ]);
+
+    expect(await beforeRestart.pendingCount()).toBe(2);
+    expect(
+      (await Bun.file(join(repo, ".argus/eyes/honcho/queue.json")).json())
+        .messages,
+    ).toHaveLength(2);
+
+    let now = 0;
+    const slept: number[] = [];
+    const alerts: Array<{ eye: string; lastError: string }> = [];
+    const recovered = new FakeHoncho(3);
+    const afterRestart = await HonchoEye.open({
+      repo,
+      client: recovered,
+      autoFlush: false,
+      onAlert: (alert) => {
+        alerts.push(alert);
+      },
+      retry: {
+        baseDelayMs: 10,
+        maxDelayMs: 20,
+        stuckAfterMs: 15,
+        now: () => now,
+        sleep: async (ms) => {
+          slept.push(ms);
+          now += ms;
+        },
+      },
+    });
+    await afterRestart.flush();
+
+    expect(slept).toEqual([10, 20, 20]);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({
+      eye: "honcho",
+      lastError: "Honcho fixture is down",
+    });
+    expect(recovered.delivered.map(({ content }) => content)).toEqual([
+      "first durable message",
+      "second durable message",
+    ]);
+    expect(await afterRestart.pendingCount()).toBe(0);
+  });
+
+  test("splits backlogs at 100 without reordering messages across sessions", async () => {
+    const repo = await scratchRepo();
+    const client = new FakeHoncho();
+    const eye = await HonchoEye.open({
+      repo,
+      client,
+      autoFlush: false,
+      onAlert: () => {},
+    });
+    const records: ProvenanceRecord[] = [];
+    for (let index = 0; index < 205; index += 1) {
+      const sessionId =
+        index < 102 ? "source-a" : index === 102 ? "source-b" : "source-a";
+      records.push(
+        record(`ordered-${index}`, "agent", {
+          agent: "codex",
+          sessionId,
+          ts: new Date(Date.parse("2026-08-25T12:00:00.000Z") + index).toISOString(),
+        }),
+      );
+    }
+
+    await eye.ingest(records);
+    await eye.flush();
+
+    const batches = client.calls.filter(
+      (call): call is Extract<(typeof client.calls)[number], { type: "messages" }> =>
+        call.type === "messages",
+    );
+    expect(batches.map(({ messages }) => messages.length)).toEqual([100, 2, 1, 100, 2]);
+    expect(batches.map(({ session }) => session)).toEqual([
+      "source-a",
+      "source-a",
+      "source-b",
+      "source-a",
+      "source-a",
+    ]);
+    expect(client.delivered.map(({ content }) => content)).toEqual(
+      Array.from({ length: 205 }, (_, index) => `ordered-${index}`),
+    );
+    expect(Math.max(...batches.map(({ messages }) => messages.length))).toBe(100);
   });
 });
