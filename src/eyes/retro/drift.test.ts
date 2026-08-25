@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { AttributedChanges } from "./attribution";
+import type { DriftJudgment } from "./schema";
 import type { GitCommit } from "./git";
 import {
   buildDriftCandidates,
+  buildDriftPrompt,
+  decideDrift,
   isJudgeableScope,
   type TicketScope,
 } from "./drift";
@@ -145,5 +148,115 @@ describe("too little stated scope is never a guess (the ticket says nothing)", (
         state: "closed",
       }),
     ).toBe(true);
+  });
+});
+
+describe("the burden of proof is on DRIFT (the encoded policy)", () => {
+  const judged = (overrides: Partial<DriftJudgment> = {}): DriftJudgment => ({
+    candidateId: "drift-abc123",
+    drift: true,
+    confident: true,
+    what: "Stripe billing webhooks",
+    outOfScopeWork: "Added src/billing/stripe-webhooks.ts and wired its routes.",
+    whyOutOfScope: "The ticket states the widget pipeline; billing is another goal.",
+    ...overrides,
+  });
+
+  test("a confident, articulated drift files", () => {
+    expect(decideDrift(judged()).file).toBe(true);
+  });
+
+  test("`drift: false` is silence — the ordinary case", () => {
+    const decision = decideDrift(
+      judged({ drift: false, what: null, outOfScopeWork: null, whyOutOfScope: null }),
+    );
+    expect(decision.file).toBe(false);
+    expect(decision.reason).toContain("not drift");
+  });
+
+  test("an UNCONFIDENT drift is silence: ambiguity never files", () => {
+    const decision = decideDrift(judged({ confident: false }));
+    expect(decision.file).toBe(false);
+    expect(decision.reason).toContain("not confident");
+  });
+
+  test("a drift the model cannot describe concretely is not a drift", () => {
+    expect(decideDrift(judged({ outOfScopeWork: null })).file).toBe(false);
+    expect(decideDrift(judged({ outOfScopeWork: "   " })).file).toBe(false);
+    expect(decideDrift(judged({ what: null })).file).toBe(false);
+  });
+
+  test("a drift with no stated reason does not file either", () => {
+    expect(decideDrift(judged({ whyOutOfScope: null })).file).toBe(false);
+  });
+
+  test("every refusal says WHY, so a missed drift is auditable", () => {
+    for (const judgment of [
+      judged({ drift: false }),
+      judged({ confident: false }),
+      judged({ outOfScopeWork: null }),
+    ]) {
+      expect(decideDrift(judgment).reason.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("the prompt states the policy the eye enforces", () => {
+  const candidate = buildDriftCandidates({
+    attributed: [attributed()],
+    parentRepoOf: () => "/repo",
+  })[0]!;
+  const scope: TicketScope = {
+    number: "7",
+    title: "Ship the widget pipeline",
+    body: "Build the widget renderer and its cache.\nThe pipeline must stream.",
+    state: "open",
+  };
+  const prompt = buildDriftPrompt([{ candidate, scope }]);
+
+  test("it asks the one question, per candidate id", () => {
+    expect(prompt).toContain("is this diff what the ticket asked for");
+    expect(prompt).toContain(`[candidate=${candidate.id}`);
+    expect(prompt).toContain("#7 Ship the widget pipeline");
+    expect(prompt).toContain("The pipeline must stream.");
+  });
+
+  test("it states the burden of proof, the safe list, and the cost asymmetry", () => {
+    expect(prompt).toContain("burden of proof is on DRIFT");
+    expect(prompt).toContain("refactor");
+    expect(prompt).toContain("test");
+    expect(prompt).toContain("rename");
+    expect(prompt).toContain("gates");
+    expect(prompt).toContain("DIFFERENT goal");
+    expect(prompt.toLowerCase()).toContain("ambigu");
+    expect(prompt).toContain("false positive");
+  });
+
+  test("it shows the diff, and a huge diff degrades instead of blowing the prompt", () => {
+    const huge = buildDriftCandidates({
+      attributed: [
+        attributed({
+          commits: [
+            commit({ diff: `+${"x".repeat(400_000)}\n`, subject: "feat: enormous" }),
+          ],
+        }),
+      ],
+      parentRepoOf: () => "/repo",
+    })[0]!;
+
+    const bounded = buildDriftPrompt([{ candidate: huge, scope }]);
+
+    expect(bounded).toContain("feat: enormous");
+    expect(bounded.length).toBeLessThan(60_000);
+    expect(bounded).toContain("truncated");
+    // Truncation is not evidence: the model must not read elision as guilt.
+    expect(bounded.toLowerCase()).toContain("not evidence of drift");
+  });
+
+  test("an enormous ticket body is capped too", () => {
+    const bounded = buildDriftPrompt([
+      { candidate, scope: { ...scope, body: "y".repeat(200_000) } },
+    ]);
+    expect(bounded.length).toBeLessThan(60_000);
   });
 });
