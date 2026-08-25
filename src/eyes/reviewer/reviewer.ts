@@ -57,6 +57,7 @@ export interface ReviewerEyeOptions {
   baseDelayMs?: number;
   maxDelayMs?: number;
   stuckAfterMs?: number;
+  signal?: AbortSignal;
 }
 
 function buildPrompt(records: ProvenanceRecord[]): string {
@@ -166,6 +167,7 @@ export class ReviewerEye {
           stuckAfterMs: this.options.stuckAfterMs,
         }),
         now: this.now,
+        ...(this.options.signal !== undefined && { signal: this.options.signal }),
         ...(this.options.sleep !== undefined && { sleep: this.options.sleep }),
       });
       await this.apply(verdict, batch);
@@ -299,6 +301,7 @@ export interface OpenReviewerOverrides {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   onAlert?: (alert: StuckAlert) => void | Promise<void>;
+  signal?: AbortSignal;
 }
 
 /**
@@ -329,5 +332,6 @@ export async function openReviewer(
     ...(overrides.now !== undefined && { now: overrides.now }),
     ...(overrides.sleep !== undefined && { sleep: overrides.sleep }),
     ...(overrides.onAlert !== undefined && { onAlert: overrides.onAlert }),
+    ...(overrides.signal !== undefined && { signal: overrides.signal }),
   });
 }

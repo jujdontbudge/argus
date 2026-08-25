@@ -32,6 +32,29 @@ export interface RetryForeverOptions {
   stuckAfterMs?: number;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  /** Daemon shutdown only; normal failures still retry forever. */
+  signal?: AbortSignal;
+}
+
+function aborted(): Error {
+  const error = new Error("eye retry stopped by daemon shutdown");
+  error.name = "AbortError";
+  return error;
+}
+
+async function sleepUntilRetry(
+  milliseconds: number,
+  sleep: (ms: number) => Promise<void>,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  if (signal === undefined) return sleep(milliseconds);
+  if (signal.aborted) throw aborted();
+  await Promise.race([
+    sleep(milliseconds),
+    new Promise<never>((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(aborted()), { once: true });
+    }),
+  ]);
 }
 
 /**
@@ -53,10 +76,12 @@ export async function retryForever<T>(
   let attempts = 0;
   let alerted = false;
   for (;;) {
+    if (options.signal?.aborted) throw aborted();
     attempts += 1;
     try {
       return await operation();
     } catch (error) {
+      if (options.signal?.aborted) throw aborted();
       const stuckForMs = now() - startedAt;
       if (!alerted && stuckForMs > stuckAfterMs) {
         alerted = true;
@@ -69,8 +94,10 @@ export async function retryForever<T>(
           at: new Date(now()).toISOString(),
         });
       }
-      await sleep(
+      await sleepUntilRetry(
         Math.min(baseDelayMs * 2 ** (attempts - 1), maxDelayMs),
+        sleep,
+        options.signal,
       );
     }
   }

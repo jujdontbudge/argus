@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { claudeProjectDir } from "../src/tailing/claude-code.ts";
+import { writeEvent } from "../src/events/writer.ts";
 
 const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 
@@ -50,11 +54,17 @@ describe("argus watch", () => {
           [process.execPath, cli, "watch", eye, "--repo", world.repo],
           { env: world.env, stderr: "pipe", stdout: "pipe" },
         );
-        const earlyExit = await Promise.race([
-          child.exited.then((exitCode) => ({ exitCode })),
-          Bun.sleep(150).then(() => null),
-        ]);
-        expect({ eye, earlyExit }).toEqual({ eye, earlyExit: null });
+        const readyPath =
+          eye === "archiver"
+            ? join(world.repo, ".argus", "archive.db")
+            : join(world.repo, ".argus", "eyes", eye, "cursors.json");
+        let ready = false;
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          await Bun.sleep(20);
+          ready = await Bun.file(readyPath).exists();
+          if (ready) break;
+        }
+        expect({ eye, ready }).toEqual({ eye, ready: true });
 
         child.kill("SIGTERM");
         expect({ eye, exitCode: await child.exited }).toEqual({
@@ -64,6 +74,208 @@ describe("argus watch", () => {
       }
     } finally {
       await rm(world.root, { force: true, recursive: true });
+    }
+  }, 30_000);
+
+  test("the archiver command observes a transcript created after startup", async () => {
+    const world = await watchWorld();
+    const child = Bun.spawn(
+      [process.execPath, cli, "watch", "archiver", "--repo", world.repo],
+      { env: world.env, stderr: "pipe", stdout: "pipe" },
+    );
+    try {
+      await Bun.sleep(150);
+      const sessionId = "live-watch-session";
+      await Bun.write(
+        join(world.repo, ".argus", "registry", "sessions.jsonl"),
+        `${JSON.stringify({
+          ts: "2026-08-25T12:00:00.000Z",
+          sessionId,
+          agent: "claude",
+          dispatchPrompt: "Observe this after restart.",
+        })}\n`,
+      );
+      const projectsRoot = join(world.env.CLAUDE_CONFIG_DIR, "projects");
+      const transcriptDirectory = claudeProjectDir(world.repo, projectsRoot);
+      await mkdir(transcriptDirectory, { recursive: true });
+      await Bun.write(
+        join(transcriptDirectory, `${sessionId}.jsonl`),
+        `${JSON.stringify({
+          type: "user",
+          message: { role: "user", content: "Observe this after restart." },
+          timestamp: "2026-08-25T12:00:00.000Z",
+          promptSource: "typed",
+          uuid: "live-watch-u-1",
+          sessionId,
+          cwd: world.repo,
+          version: "test",
+        })}\n`,
+      );
+
+      let archived = 0;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        await Bun.sleep(20);
+        try {
+          const db = new Database(join(world.repo, ".argus", "archive.db"), {
+            readonly: true,
+          });
+          archived = db
+            .query<{ count: number }, []>(
+              "SELECT count(*) AS count FROM archive_messages WHERE content = 'Observe this after restart.'",
+            )
+            .get()!.count;
+          db.close();
+        } catch {
+          // The watcher may still be opening its database.
+        }
+        if (archived === 1) break;
+      }
+      expect(archived).toBe(1);
+    } finally {
+      child.kill("SIGTERM");
+      await child.exited;
+      await rm(world.root, { force: true, recursive: true });
+    }
+  }, 30_000);
+
+  test("the reviewer command feeds observed turns into its durable queue", async () => {
+    const world = await watchWorld();
+    const child = Bun.spawn(
+      [process.execPath, cli, "watch", "reviewer", "--repo", world.repo],
+      { env: world.env, stderr: "pipe", stdout: "pipe" },
+    );
+    try {
+      await Bun.sleep(150);
+      const transcriptDirectory = claudeProjectDir(
+        world.repo,
+        join(world.env.CLAUDE_CONFIG_DIR, "projects"),
+      );
+      await mkdir(transcriptDirectory, { recursive: true });
+      await Bun.write(
+        join(transcriptDirectory, "reviewer-live.jsonl"),
+        `${JSON.stringify({
+          type: "user",
+          message: { role: "user", content: "Always keep the live watcher running." },
+          timestamp: "2026-08-25T12:01:00.000Z",
+          promptSource: "typed",
+          uuid: "reviewer-live-u-1",
+          sessionId: "reviewer-live-session",
+          cwd: world.repo,
+          version: "test",
+        })}\n`,
+      );
+
+      const statePath = join(world.repo, ".argus", "eyes", "reviewer", "state.json");
+      let pending = 0;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        await Bun.sleep(20);
+        try {
+          const state = (await Bun.file(statePath).json()) as { pending: unknown[] };
+          pending = state.pending.length;
+        } catch {
+          // The first source poll may still be in flight.
+        }
+        if (pending === 1) break;
+      }
+      expect(pending).toBe(1);
+    } finally {
+      child.kill("SIGTERM");
+      await child.exited;
+      await rm(world.root, { force: true, recursive: true });
+    }
+  }, 30_000);
+
+  test("the digest command observes lifecycle event files written after startup", async () => {
+    const world = await watchWorld();
+    const child = Bun.spawn(
+      [process.execPath, cli, "watch", "digest", "--repo", world.repo],
+      { env: world.env, stderr: "pipe", stdout: "pipe" },
+    );
+    try {
+      await Bun.sleep(150);
+      await writeEvent(world.repo, {
+        agent: "codex",
+        kind: "end-of-session",
+        message: "Ticket complete.",
+        sessionId: "digest-live-session",
+      });
+
+      const index = join(world.repo, ".argus", "sessions", "INDEX.md");
+      let surfaced = false;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        await Bun.sleep(20);
+        const file = Bun.file(index);
+        surfaced =
+          (await file.exists()) &&
+          (await file.text()).includes("digest-live-session") &&
+          (await file.text()).includes("status=done");
+        if (surfaced) break;
+      }
+      expect(surfaced).toBe(true);
+    } finally {
+      child.kill("SIGTERM");
+      await child.exited;
+      await rm(world.root, { force: true, recursive: true });
+    }
+  }, 30_000);
+
+  test("digest, retro, and Honcho each durably consume their repo's turns", async () => {
+    for (const eye of ["digest", "retro", "honcho"] as const) {
+      const world = await watchWorld();
+      const child = Bun.spawn(
+        [process.execPath, cli, "watch", eye, "--repo", world.repo],
+        { env: world.env, stderr: "pipe", stdout: "pipe" },
+      );
+      try {
+        await Bun.sleep(150);
+        const transcriptDirectory = claudeProjectDir(
+          world.repo,
+          join(world.env.CLAUDE_CONFIG_DIR, "projects"),
+        );
+        await mkdir(transcriptDirectory, { recursive: true });
+        await Bun.write(
+          join(transcriptDirectory, `${eye}-live.jsonl`),
+          `${JSON.stringify({
+            type: "user",
+            message: { role: "user", content: `A live turn for ${eye}.` },
+            timestamp: "2026-08-25T12:02:00.000Z",
+            promptSource: "typed",
+            uuid: `${eye}-live-u-1`,
+            sessionId: `${eye}-live-session`,
+            cwd: world.repo,
+            version: "test",
+          })}\n`,
+        );
+
+        const statePath =
+          eye === "honcho"
+            ? join(world.repo, ".argus", "eyes", eye, "queue.json")
+            : join(world.repo, ".argus", "eyes", eye, "state.json");
+        let consumed = 0;
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          await Bun.sleep(20);
+          try {
+            const state = (await Bun.file(statePath).json()) as {
+              messages?: unknown[];
+              pending?: unknown[];
+              prompts?: unknown[];
+            };
+            consumed =
+              state.messages?.length ??
+              state.pending?.length ??
+              state.prompts?.length ??
+              0;
+          } catch {
+            // The first source poll may still be in flight.
+          }
+          if (consumed === 1) break;
+        }
+        expect({ eye, consumed }).toEqual({ eye, consumed: 1 });
+      } finally {
+        child.kill("SIGTERM");
+        await child.exited;
+        await rm(world.root, { force: true, recursive: true });
+      }
     }
   }, 30_000);
 });
