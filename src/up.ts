@@ -95,17 +95,25 @@ interface CommandResult {
 }
 
 async function run(command: string[], cwd: string): Promise<CommandResult> {
-  const child = Bun.spawn(command, {
-    cwd,
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-  const [exitCode, stdout, stderr] = await Promise.all([
-    child.exited,
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-  ]);
-  return { exitCode, stderr, stdout };
+  try {
+    const child = Bun.spawn(command, {
+      cwd,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [exitCode, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    return { exitCode, stderr, stdout };
+  } catch (error) {
+    return {
+      exitCode: 127,
+      stderr: error instanceof Error ? error.message : String(error),
+      stdout: "",
+    };
+  }
 }
 
 async function gitRoot(cwd: string): Promise<string | null> {

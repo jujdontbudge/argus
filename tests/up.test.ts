@@ -50,6 +50,10 @@ async function createScratchRepo(): Promise<{
   const env = {
     ARGUS_REPOS_FILE: join(root, "state", "argus-repos"),
     CLAUDE_CONFIG_DIR: join(root, "state", "claude"),
+    GIT_AUTHOR_EMAIL: "test@invalid.example",
+    GIT_AUTHOR_NAME: "Argus Test",
+    GIT_COMMITTER_EMAIL: "test@invalid.example",
+    GIT_COMMITTER_NAME: "Argus Test",
     HOME: home,
   };
   expect((await run(["git", "init", "--quiet"], repo, env)).exitCode).toBe(0);
@@ -373,5 +377,25 @@ if (args[0] === "label" && args[1] === "list") console.log(JSON.stringify([{ nam
     expect(
       (await run(["git", "show", "HEAD:.gitignore"], repo, env)).stdout,
     ).toBe(".argus/\n");
+  });
+
+  test("degrades to tracker-less mode when gh is unavailable", async () => {
+    const { env, repo } = await createScratchRepo();
+    expect(
+      (
+        await run(
+          ["git", "remote", "add", "origin", "https://github.com/acme/widgets.git"],
+          repo,
+          env,
+        )
+      ).exitCode,
+    ).toBe(0);
+
+    const result = await runUp(repo, { ...env, PATH: "/usr/bin:/bin" });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain("TRACKER-LESS MODE");
+    expect(result.stderr).toContain("gh could not access acme/widgets");
+    expect(await Bun.file(join(repo, ".argus/config.yaml")).exists()).toBe(true);
   });
 });

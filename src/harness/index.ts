@@ -76,6 +76,10 @@ export async function createSandbox(
     CMUX_SOCKET_PATH: join(root, "state/cmux/cmux.sock"),
     CMUX_SOCKET_DIR: join(root, "state/cmux"),
     CODEX_HOME: join(root, "state/codex"),
+    GIT_AUTHOR_EMAIL: "harness@invalid.example",
+    GIT_AUTHOR_NAME: "Argus Harness",
+    GIT_COMMITTER_EMAIL: "harness@invalid.example",
+    GIT_COMMITTER_NAME: "Argus Harness",
     HERMES_HOME: join(root, "state/hermes"),
     HOME: home,
     XDG_CACHE_HOME: join(root, "state/cache"),
@@ -103,7 +107,9 @@ export async function createSandbox(
       ...Object.entries(state)
         .filter(
           ([name]) =>
-            name !== "CMUX_SOCKET_PATH" && name !== "ARGUS_REPOS_FILE",
+            name !== "CMUX_SOCKET_PATH" &&
+            name !== "ARGUS_REPOS_FILE" &&
+            !name.startsWith("GIT_"),
         )
         .map(([, path]) => path)
         .filter((path) => path !== home)
