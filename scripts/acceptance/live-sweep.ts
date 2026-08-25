@@ -15,10 +15,13 @@ import { mkdir, readdir, readlink, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { ArchiverEye } from "../../src/eyes/archiver/archiver.ts";
-import { createSandbox, type Sandbox } from "../../src/harness/index.ts";
+import {
+  createSandbox,
+  createSandboxWatcherSpawner,
+  type Sandbox,
+} from "../../src/harness/index.ts";
 import { ProvenanceClassifier } from "../../src/provenance/index.ts";
 import { createClaudeCodeSource, Tailer } from "../../src/tailing/index.ts";
-import { createWatcherSpawner } from "../../src/supervisor/daemon.ts";
 import { EYE_NAMES, WatcherSupervisor } from "../../src/supervisor/runtime.ts";
 
 const checkout = new URL("../../", import.meta.url).pathname.replace(/\/$/, "");
@@ -191,10 +194,67 @@ async function seedArchive(sandbox: Sandbox): Promise<void> {
   }
 }
 
+/**
+ * The no-credential path kept in `bun test` by ticket #46.
+ *
+ * Both checks use real `argus watch` children. The first proves the daemon
+ * helper observes a live process instead of awaiting its exit. The second
+ * proves sandbox children resolve enrolment through scratch state and do not
+ * churn through an apparent restart storm.
+ */
+async function smokeSweep(
+  sandbox: Sandbox,
+  env: Record<string, string>,
+): Promise<void> {
+  const daemon = await watchDaemon(
+    ["watch", "reviewer", "--repo", sandbox.repo],
+    sandbox.repo,
+    env,
+    200,
+  );
+  if (!daemon.alive) {
+    throw new Error(
+      `smoke watch returned before its observation window (exit ${daemon.exitCode})`,
+    );
+  }
+  console.log("SMOKE PASS  watch daemon stayed alive until signalled");
+
+  const statusPath = join(sandbox.root, "state", "acceptance-smoke.json");
+  const supervisor = new WatcherSupervisor({
+    registryPath: env.ARGUS_REPOS_FILE!,
+    restartDelayMilliseconds: 25,
+    spawn: createSandboxWatcherSpawner([process.execPath, cli], sandbox),
+    statusPath,
+  });
+  const seenPids = new Set<number>();
+  try {
+    await supervisor.reconcile();
+    const deadline = Date.now() + 350;
+    while (Date.now() < deadline) {
+      const status = (await Bun.file(statusPath).json()) as {
+        watchers: Array<{ pid: number }>;
+      };
+      for (const watcher of status.watchers) seenPids.add(watcher.pid);
+      await Bun.sleep(20);
+    }
+  } finally {
+    await supervisor.stop();
+  }
+  if (seenPids.size !== EYE_NAMES.length) {
+    throw new Error(
+      `sandbox supervisor spawned ${seenPids.size} watcher PIDs for ${EYE_NAMES.length} eyes`,
+    );
+  }
+  console.log("SMOKE PASS  sandbox supervisor watcher PIDs stayed stable");
+}
+
 const sandbox = await createSandbox({ checkout });
 const env = { ...sandbox.env } as Record<string, string>;
 
 try {
+  if (Bun.env.ARGUS_ACCEPTANCE_SMOKE === "1") {
+    await smokeSweep(sandbox, env);
+  } else {
   console.log("=".repeat(78));
   console.log("ARGUS LIVE COMMAND SWEEP — ticket #36");
   console.log("=".repeat(78));
@@ -350,7 +410,7 @@ try {
     // supervisor restarts it forever. That reads as a restart storm but is an
     // artifact of the sweep, not of the supervisor — see scenarios 6 and the
     // watch-stability probe, which both pass sandbox.env.
-    spawn: createWatcherSpawner([process.execPath, cli], sandbox.env),
+    spawn: createSandboxWatcherSpawner([process.execPath, cli], sandbox),
     statusPath,
   });
   // The supervisor restarts dying children from an un-awaited handler, so its
@@ -469,6 +529,7 @@ try {
     console.log(
       `  exit ${String(invocation.exitCode).padStart(3)}  argus ${invocation.argv.join(" ")}`,
     );
+  }
   }
 } finally {
   await sandbox.teardown();

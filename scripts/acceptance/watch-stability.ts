@@ -1,8 +1,10 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createSandbox } from "../../src/harness/index.ts";
-import { createWatcherSpawner } from "../../src/supervisor/daemon.ts";
+import {
+  createSandbox,
+  createSandboxWatcherSpawner,
+} from "../../src/harness/index.ts";
 import {
   EYE_NAMES,
   WatcherSupervisor,
@@ -15,9 +17,9 @@ const statusPath = join(sandbox.root, "state", "stability-status.json");
 const supervisor = new WatcherSupervisor({
   registryPath: sandbox.env.ARGUS_REPOS_FILE!,
   restartDelayMilliseconds: 25,
-  spawn: createWatcherSpawner(
+  spawn: createSandboxWatcherSpawner(
     [process.execPath, join(checkout, "src", "cli.ts")],
-    sandbox.env,
+    sandbox,
   ),
   statusPath,
 });
