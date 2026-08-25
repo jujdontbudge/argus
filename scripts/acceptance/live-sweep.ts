@@ -229,6 +229,28 @@ async function smokeSweep(
   const seenPids = new Set<number>();
   try {
     await supervisor.reconcile();
+    const readinessPaths = EYE_NAMES.map((eye) =>
+      eye === "archiver"
+        ? join(sandbox.repo, ".argus", "archive.db")
+        : join(sandbox.repo, ".argus", "eyes", eye, "cursors.json"),
+    );
+    let ready = false;
+    for (let attempt = 0; attempt < 250; attempt += 1) {
+      const status = (await Bun.file(statusPath).json()) as {
+        watchers: Array<{ pid: number }>;
+      };
+      for (const watcher of status.watchers) seenPids.add(watcher.pid);
+      ready = (
+        await Promise.all(readinessPaths.map((path) => Bun.file(path).exists()))
+      ).every(Boolean);
+      if (ready || seenPids.size > EYE_NAMES.length) break;
+      await Bun.sleep(20);
+    }
+    if (!ready) {
+      throw new Error(
+        `sandbox watchers did not become ready (${seenPids.size} PIDs for ${EYE_NAMES.length} eyes)`,
+      );
+    }
     const deadline = Date.now() + 350;
     while (Date.now() < deadline) {
       const status = (await Bun.file(statusPath).json()) as {

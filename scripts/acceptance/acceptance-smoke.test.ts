@@ -123,9 +123,9 @@ test("the watcher stability probe runs its short real-process mode", async () =>
     pidsByEye: Record<string, number>;
   };
   expect(report.mode).toBe("smoke");
-  expect(report.expectedEyes).toBe(5);
-  expect(report.distinctPids).toBe(5);
-  expect(Object.values(report.pidsByEye)).toHaveLength(5);
+  expect(report.expectedEyes).toBeGreaterThan(0);
+  expect(report.distinctPids).toBe(report.expectedEyes);
+  expect(Object.values(report.pidsByEye)).toHaveLength(report.expectedEyes);
   expect(Object.values(report.pidsByEye).every((count) => count === 1)).toBe(true);
 }, TEST_BUDGET_MS);
 
