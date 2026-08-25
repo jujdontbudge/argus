@@ -28,6 +28,12 @@ describe("eyes config (ADR-0002 values, defaults in code)", () => {
         reviewer: { quietWindowSeconds: 30, maxWaitSeconds: 300 },
         digest: { quietWindowSeconds: 30, maxWaitSeconds: 120 },
         retro: { quietWindowSeconds: 60, maxWaitSeconds: 600 },
+        curator: {
+          enabled: true,
+          intervalHours: 168,
+          staleAfterDays: 30,
+          archiveAfterDays: 90,
+        },
       });
     });
   });
@@ -79,6 +85,44 @@ describe("eyes config (ADR-0002 values, defaults in code)", () => {
         quietWindowSeconds: 30,
         maxWaitSeconds: 300,
       });
+    });
+  });
+});
+
+describe("the curator block (ticket #35)", () => {
+  test("a repo can disable the weekly pass and retune its thresholds", async () => {
+    await withRepo(async (repo) => {
+      await mkdir(join(repo, ".argus"), { recursive: true });
+      await Bun.write(
+        join(repo, ".argus/config.yaml"),
+        [
+          "curator:",
+          "  enabled: false",
+          "  interval_hours: 24",
+          "  stale_after_days: 14",
+          "  archive_after_days: 60",
+          "",
+        ].join("\n"),
+      );
+      expect((await loadEyesConfig(repo)).curator).toEqual({
+        enabled: false,
+        intervalHours: 24,
+        staleAfterDays: 14,
+        archiveAfterDays: 60,
+      });
+    });
+  });
+
+  test("a nonsense value falls back to its default rather than taking the eye down", async () => {
+    await withRepo(async (repo) => {
+      await mkdir(join(repo, ".argus"), { recursive: true });
+      await Bun.write(
+        join(repo, ".argus/config.yaml"),
+        "curator:\n  enabled: maybe\n  archive_after_days: -3\n",
+      );
+      const { curator } = await loadEyesConfig(repo);
+      expect(curator.enabled).toBe(true);
+      expect(curator.archiveAfterDays).toBe(90);
     });
   });
 });
