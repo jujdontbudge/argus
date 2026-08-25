@@ -9,6 +9,12 @@ import {
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
+import {
+  convergeAgentBindings,
+  HttpHonchoClient,
+  type HonchoClient,
+} from "./up/bindings.ts";
+
 const ARGUS_DIRECTORIES = [
   "registry",
   "memory",
@@ -18,6 +24,8 @@ const ARGUS_DIRECTORIES = [
 ] as const;
 
 const DEFAULT_CONFIG = `# Argus per-repo overrides. Uncomment only values that differ from defaults.
+# honcho:
+#   url: http://localhost:8000
 # brain:
 #   model: gpt-5.6-luna
 #   reasoning_effort: low
@@ -29,6 +37,8 @@ const DEFAULT_CONFIG = `# Argus per-repo overrides. Uncomment only values that d
 #   quiet_window_seconds: 30
 #   max_wait_seconds: 120
 `;
+
+const DEFAULT_HONCHO_URL = "http://localhost:8000";
 
 const AGENTS_POINTER_BLOCK = `<!-- argus:begin -->
 ## Argus project memory and skills
@@ -310,6 +320,57 @@ async function writeIfMissing(path: string, contents: string): Promise<void> {
   await Bun.write(path, contents);
 }
 
+function configuredHonchoUrl(config: string): string {
+  const lines = config.split(/\r?\n/);
+  const section = lines.findIndex((line) => /^honcho:\s*(?:#.*)?$/.test(line));
+  if (section === -1) return DEFAULT_HONCHO_URL;
+  for (let index = section + 1; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    if (line.trim() === "" || line.trimStart().startsWith("#")) continue;
+    if (!/^\s/.test(line)) break;
+    const match = line.match(/^\s+url:\s*(.*?)\s*$/);
+    if (match?.[1]) return match[1].replace(/^['"]|['"]$/g, "");
+  }
+  return DEFAULT_HONCHO_URL;
+}
+
+async function honchoApiKey(home: string): Promise<string | null> {
+  const fromEnvironment = process.env.HONCHO_API_KEY?.trim();
+  if (fromEnvironment) return fromEnvironment;
+  const configPath =
+    process.env.HONCHO_CONFIG_FILE ?? join(home, ".honcho", "config.json");
+  try {
+    const config = (await Bun.file(configPath).json()) as { apiKey?: unknown };
+    return typeof config.apiKey === "string" && config.apiKey.trim().length > 0
+      ? config.apiKey.trim()
+      : null;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ) {
+      return null;
+    }
+    throw new Error(
+      `argus up: could not read Honcho credentials at ${configPath}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
+function unavailableHoncho(reason: string): HonchoClient {
+  return {
+    ensurePeer: async () => {
+      throw new Error(reason);
+    },
+    ensureWorkspace: async () => {
+      throw new Error(reason);
+    },
+  };
+}
+
 async function ensureMattWiring(
   repo: string,
   remoteRepo: string | null,
@@ -447,6 +508,29 @@ export async function convergeUp(cwd = process.cwd()): Promise<number> {
   await ensureIgnoreEntry(repo);
   await ensureSupervisorEnrollment(repo);
   await ensureTracker(repo);
+
+  const home = process.env.HOME;
+  if (!home) throw new Error("argus up: HOME is not set");
+  const url = configuredHonchoUrl(await config.text());
+  const apiKey = await honchoApiKey(home);
+  const bindings = await convergeAgentBindings({
+    hermesRoot: process.env.HERMES_HOME ?? join(home, ".hermes"),
+    honcho: apiKey
+      ? new HttpHonchoClient(url, apiKey)
+      : unavailableHoncho(
+          "HONCHO_API_KEY and ~/.honcho/config.json apiKey are both missing",
+        ),
+    honchoUrl: url,
+    repo,
+  });
+  if (bindings.honcho === "unavailable") {
+    console.error(
+      `HONCHO DEGRADED: ${url} unavailable (${bindings.honchoError}); local bindings converged`,
+    );
+  } else {
+    console.log(`Honcho binding: ${bindings.workspace} (${bindings.honcho})`);
+  }
+  console.log(`Hermes profile: ${bindings.profile}`);
 
   console.log("cmux hooks: pending #7 (soft check)");
   console.log(`Argus converged ${repo}`);

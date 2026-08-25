@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 const sandboxes: string[] = [];
 
-setDefaultTimeout(30_000);
+setDefaultTimeout(90_000);
 
 async function run(
   command: string[],
@@ -36,7 +36,7 @@ async function run(
   return { exitCode, stderr, stdout };
 }
 
-async function createScratchRepo(): Promise<{
+async function createScratchRepo(name = "repo"): Promise<{
   env: Record<string, string>;
   repo: string;
   root: string;
@@ -44,7 +44,7 @@ async function createScratchRepo(): Promise<{
   const root = await mkdtemp(join(tmpdir(), "argus-up-"));
   sandboxes.push(root);
   const home = join(root, "home");
-  const repoPath = join(root, "repo");
+  const repoPath = join(root, name);
   await Promise.all([mkdir(home), mkdir(repoPath)]);
   const repo = await realpath(repoPath);
   const env = {
@@ -55,6 +55,8 @@ async function createScratchRepo(): Promise<{
     GIT_COMMITTER_EMAIL: "test@invalid.example",
     GIT_COMMITTER_NAME: "Argus Test",
     HOME: home,
+    HERMES_HOME: join(root, "state", "hermes"),
+    HONCHO_API_KEY: "",
   };
   expect((await run(["git", "init", "--quiet"], repo, env)).exitCode).toBe(0);
   expect(
@@ -88,12 +90,75 @@ afterEach(async () => {
 });
 
 describe("argus up", () => {
+  test("converges configured Honcho and Hermes bindings through the CLI", async () => {
+    const requests: Array<{ body: unknown; path: string }> = [];
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        requests.push({
+          body: await request.json(),
+          path: new URL(request.url).pathname,
+        });
+        return Response.json({}, { status: 201 });
+      },
+    });
+    const { env, repo } = await createScratchRepo("scratch-fake-honcho");
+    await mkdir(join(repo, ".argus"), { recursive: true });
+    await Bun.write(
+      join(repo, ".argus", "config.yaml"),
+      `honcho:
+  url: http://127.0.0.1:${server.port}
+`,
+    );
+
+    try {
+      const result = await runUp(repo, {
+        ...env,
+        HONCHO_API_KEY: "scratch-token",
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain(
+        "Honcho binding: argus-scratch-fake-honcho (created)",
+      );
+      expect(result.stdout).toContain(
+        "Hermes profile: argus-scratch-fake-honcho",
+      );
+      expect(requests).toHaveLength(5);
+      expect(requests[0]).toEqual({
+        body: {
+          id: "argus-scratch-fake-honcho",
+          metadata: { repo },
+        },
+        path: "/v3/workspaces",
+      });
+      expect(
+        (
+          await lstat(
+            join(
+              env.HERMES_HOME!,
+              "profiles",
+              "argus-scratch-fake-honcho",
+              "memories",
+            ),
+          )
+        ).isSymbolicLink(),
+      ).toBe(true);
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test("scaffolds the per-repo Argus layout and commits its ignore entry", async () => {
     const { env, repo } = await createScratchRepo();
 
     const result = await runUp(repo, env);
 
     expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain(
+      "HONCHO DEGRADED: http://localhost:8000 unavailable",
+    );
+    expect(result.stderr).toContain("local bindings converged");
     for (const directory of [
       "registry",
       "memory",

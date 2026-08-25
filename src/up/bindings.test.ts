@@ -1,0 +1,348 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { lstat, mkdtemp, mkdir, readlink, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import {
+  convergeAgentBindings,
+  HttpHonchoClient,
+  type HonchoClient,
+  type HonchoPeerInput,
+  type HonchoWorkspaceInput,
+} from "./bindings.ts";
+
+const scratchDirectories: string[] = [];
+
+class FakeHoncho implements HonchoClient {
+  readonly peers = new Map<string, Map<string, HonchoPeerInput>>();
+  readonly workspaces = new Map<string, HonchoWorkspaceInput>();
+
+  async ensureWorkspace(input: HonchoWorkspaceInput): Promise<"created" | "existing"> {
+    const status = this.workspaces.has(input.id) ? "existing" : "created";
+    this.workspaces.set(input.id, input);
+    return status;
+  }
+
+  async ensurePeer(
+    workspace: string,
+    input: HonchoPeerInput,
+  ): Promise<"created" | "existing"> {
+    const peers = this.peers.get(workspace) ?? new Map<string, HonchoPeerInput>();
+    const status = peers.has(input.id) ? "existing" : "created";
+    peers.set(input.id, input);
+    this.peers.set(workspace, peers);
+    return status;
+  }
+}
+
+async function scratchRepo(name = "Widget Kit"): Promise<{ repo: string; root: string }> {
+  const root = await mkdtemp(join(tmpdir(), "argus-bindings-"));
+  scratchDirectories.push(root);
+  const repo = join(root, name);
+  await mkdir(join(repo, ".argus", "memory"), { recursive: true });
+  return { repo, root };
+}
+
+afterEach(async () => {
+  await Promise.all(
+    scratchDirectories.splice(0).map((directory) =>
+      rm(directory, { force: true, recursive: true }),
+    ),
+  );
+});
+
+describe("agent binding convergence", () => {
+  test("uses the Honcho v3 get-or-create call sequence", async () => {
+    const requests: Array<{
+      authorization: string | null;
+      body: unknown;
+      path: string;
+    }> = [];
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        requests.push({
+          authorization: request.headers.get("authorization"),
+          body: await request.json(),
+          path: new URL(request.url).pathname,
+        });
+        return Response.json({}, { status: requests.length === 1 ? 201 : 200 });
+      },
+    });
+
+    try {
+      const client = new HttpHonchoClient(
+        `http://127.0.0.1:${server.port}`,
+        "scratch-token",
+      );
+      expect(
+        await client.ensureWorkspace({
+          id: "argus-widget-kit",
+          metadata: { repo: "/scratch/Widget Kit" },
+        }),
+      ).toBe("created");
+      expect(
+        await client.ensurePeer("argus-widget-kit", {
+          configuration: { observe_me: false },
+          id: "codex",
+        }),
+      ).toBe("existing");
+
+      expect(requests).toEqual([
+        {
+          authorization: "Bearer scratch-token",
+          body: {
+            id: "argus-widget-kit",
+            metadata: { repo: "/scratch/Widget Kit" },
+          },
+          path: "/v3/workspaces",
+        },
+        {
+          authorization: "Bearer scratch-token",
+          body: { configuration: { observe_me: false }, id: "codex" },
+          path: "/v3/workspaces/argus-widget-kit/peers",
+        },
+      ]);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("binds a repo to its Honcho workspace and four peers idempotently", async () => {
+    const { repo, root } = await scratchRepo();
+    const honcho = new FakeHoncho();
+    const options = {
+      hermesRoot: join(root, "hermes"),
+      honcho,
+      honchoUrl: "http://honcho.test:8000",
+      repo,
+    };
+
+    const first = await convergeAgentBindings(options);
+    const second = await convergeAgentBindings(options);
+
+    expect(first.honcho).toBe("created");
+    expect(second.honcho).toBe("existing");
+    expect(honcho.workspaces.get("argus-widget-kit")).toEqual({
+      id: "argus-widget-kit",
+      metadata: { repo },
+    });
+    expect([...honcho.peers.get("argus-widget-kit")!.values()]).toEqual([
+      { id: "johan" },
+      { configuration: { observe_me: false }, id: "claude-code" },
+      { configuration: { observe_me: false }, id: "codex" },
+      { configuration: { observe_me: false }, id: "hermes" },
+    ]);
+    expect(await Bun.file(join(repo, ".argus", "honcho.yaml")).text()).toBe(
+      `url: http://honcho.test:8000
+workspace: argus-widget-kit
+peers:
+  johan:
+    observe_me: true
+  claude-code:
+    observe_me: false
+  codex:
+    observe_me: false
+  hermes:
+    observe_me: false
+`,
+    );
+    expect(
+      await Bun.file(
+        join(root, "hermes", "profiles", "argus-widget-kit", "config.yaml"),
+      ).text(),
+    ).toBe(
+      `memory:
+  memory_char_limit: 12000
+  user_char_limit: 6000
+curator:
+  enabled: false
+`,
+    );
+  });
+
+  test("reports Honcho unavailability while preserving the local binding", async () => {
+    const { repo, root } = await scratchRepo("Offline Repo");
+    const honcho: HonchoClient = {
+      ensurePeer: async () => "created",
+      ensureWorkspace: async () => {
+        throw new Error("connect ECONNREFUSED 127.0.0.1:8000");
+      },
+    };
+
+    const report = await convergeAgentBindings({
+      hermesRoot: join(root, "hermes"),
+      honcho,
+      honchoUrl: "http://localhost:8000",
+      repo,
+    });
+
+    expect(report.honcho).toBe("unavailable");
+    expect(report.honchoError).toBe(
+      "connect ECONNREFUSED 127.0.0.1:8000",
+    );
+    expect(await Bun.file(join(repo, ".argus", "honcho.yaml")).exists()).toBe(
+      true,
+    );
+  });
+
+  test("creates a native Hermes profile with repo memory and curator safety", async () => {
+    const { repo, root } = await scratchRepo();
+    const hermesRoot = join(root, "hermes");
+    await mkdir(hermesRoot, { recursive: true });
+    await Bun.write(
+      join(hermesRoot, "config.yaml"),
+      "model: openai-codex/gpt-5.6-sol\nmemory:\n  memory_enabled: true\n",
+    );
+    await Bun.write(join(hermesRoot, ".env"), "PROVIDER_TOKEN=scratch\n");
+    await Bun.write(join(hermesRoot, "SOUL.md"), "# Scratch soul\n");
+
+    const report = await convergeAgentBindings({
+      hermesRoot,
+      honcho: new FakeHoncho(),
+      honchoUrl: "http://honcho.test:8000",
+      repo,
+    });
+
+    const profile = join(hermesRoot, "profiles", "argus-widget-kit");
+    expect(report.profile).toBe("argus-widget-kit");
+    expect((await lstat(profile)).isDirectory()).toBe(true);
+    expect((await lstat(join(profile, "memories"))).isSymbolicLink()).toBe(true);
+    expect(await readlink(join(profile, "memories"))).toBe(
+      join(repo, ".argus", "memory"),
+    );
+    expect(await Bun.file(join(profile, ".env")).text()).toBe(
+      "PROVIDER_TOKEN=scratch\n",
+    );
+    expect(await Bun.file(join(profile, "SOUL.md")).text()).toBe(
+      "# Scratch soul\n",
+    );
+    expect(await Bun.file(join(profile, "config.yaml")).text()).toBe(
+      `model: openai-codex/gpt-5.6-sol
+memory:
+  memory_enabled: true
+  memory_char_limit: 12000
+  user_char_limit: 6000
+curator:
+  enabled: false
+`,
+    );
+  });
+
+  test("fills only missing settings in an existing profile and repairs its memories directory", async () => {
+    const { repo, root } = await scratchRepo("Existing Profile");
+    const hermesRoot = join(root, "hermes");
+    const profile = join(
+      hermesRoot,
+      "profiles",
+      "argus-existing-profile",
+    );
+    await mkdir(join(profile, "memories"), { recursive: true });
+    await Bun.write(
+      join(profile, "config.yaml"),
+      `model: custom/model
+memory:
+  memory_char_limit: 20000
+curator:
+  enabled: false
+custom_setting: keep-me
+`,
+    );
+    await Bun.write(join(profile, ".env"), "PROFILE_ONLY=true\n");
+    await mkdir(hermesRoot, { recursive: true });
+    await Bun.write(join(hermesRoot, ".env"), "GLOBAL_ONLY=true\n");
+    const options = {
+      hermesRoot,
+      honcho: new FakeHoncho(),
+      honchoUrl: "http://honcho.test:8000",
+      repo,
+    };
+
+    await convergeAgentBindings(options);
+    const afterFirst = await Bun.file(join(profile, "config.yaml")).text();
+    await convergeAgentBindings(options);
+
+    expect((await lstat(join(profile, "memories"))).isSymbolicLink()).toBe(true);
+    expect(await Bun.file(join(profile, ".env")).text()).toBe(
+      "PROFILE_ONLY=true\n",
+    );
+    expect(afterFirst).toContain("memory_char_limit: 20000");
+    expect(afterFirst).toContain("user_char_limit: 6000");
+    expect(afterFirst).toContain("custom_setting: keep-me");
+    expect(afterFirst.match(/user_char_limit:/g)).toHaveLength(1);
+    expect(afterFirst.match(/enabled: false/g)).toHaveLength(1);
+    expect(await Bun.file(join(profile, "config.yaml")).text()).toBe(afterFirst);
+  });
+
+  test("preserves memories from an existing profile before binding the directory", async () => {
+    const { repo, root } = await scratchRepo("Profile Memories");
+    const hermesRoot = join(root, "hermes");
+    const profileMemories = join(
+      hermesRoot,
+      "profiles",
+      "argus-profile-memories",
+      "memories",
+    );
+    await mkdir(profileMemories, { recursive: true });
+    await Bun.write(join(profileMemories, "USER.md"), "Hermes knew this\n");
+    await Bun.write(
+      join(repo, ".argus", "memory", "MEMORY.md"),
+      "Argus knew that\n",
+    );
+
+    await convergeAgentBindings({
+      hermesRoot,
+      honcho: new FakeHoncho(),
+      honchoUrl: "http://honcho.test:8000",
+      repo,
+    });
+
+    expect((await lstat(profileMemories)).isSymbolicLink()).toBe(true);
+    expect(await Bun.file(join(profileMemories, "USER.md")).text()).toBe(
+      "Hermes knew this\n",
+    );
+    expect(await Bun.file(join(profileMemories, "MEMORY.md")).text()).toBe(
+      "Argus knew that\n",
+    );
+    expect((await lstat(join(profileMemories, "USER.md"))).isSymbolicLink()).toBe(
+      false,
+    );
+  });
+
+  test("raises cloned default limits and disables an enabled native curator", async () => {
+    const { repo, root } = await scratchRepo("Managed Safety");
+    const hermesRoot = join(root, "hermes");
+    await mkdir(hermesRoot, { recursive: true });
+    await Bun.write(
+      join(hermesRoot, "config.yaml"),
+      `memory:
+  memory_char_limit: 2200
+  user_char_limit: 1375
+curator:
+  enabled: true
+  interval_hours: 24
+`,
+    );
+
+    await convergeAgentBindings({
+      hermesRoot,
+      honcho: new FakeHoncho(),
+      honchoUrl: "http://honcho.test:8000",
+      repo,
+    });
+
+    expect(
+      await Bun.file(
+        join(hermesRoot, "profiles", "argus-managed-safety", "config.yaml"),
+      ).text(),
+    ).toBe(
+      `memory:
+  memory_char_limit: 12000
+  user_char_limit: 6000
+curator:
+  enabled: false
+  interval_hours: 24
+`,
+    );
+  });
+});
