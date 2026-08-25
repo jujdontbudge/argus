@@ -1,11 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { lstat } from "node:fs/promises";
+import { lstat, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
   createSandbox,
   createScenarioRegistry,
+  mechanicsScenario,
+  runScenario,
   SimulationDriverRunner,
   type AgentSpawnRequest,
 } from "../src/harness/index.ts";
@@ -104,5 +107,46 @@ describe("fake-Johan harness", () => {
       title: "Rogue session",
     });
     expect(registry.get(3)).toBeFunction();
+  });
+
+  test("mechanics scenario proves machine-state isolation, tears down, and writes a report", async () => {
+    const reportDirectory = await mkdtemp(join(tmpdir(), "argus-reports-"));
+
+    try {
+      const result = await runScenario({
+        checkout,
+        name: "mechanics-isolation",
+        reportDirectory,
+        scenario: mechanicsScenario,
+      });
+
+      expect(result.status).toBe("passed");
+      expect(result.assertions.map(({ description }) => description)).toEqual([
+        "real ~/.local/bin is outside the sandbox boundary",
+        "real ~/.argus-repos is outside the sandbox boundary",
+        "real ~/.claude is outside the sandbox boundary",
+        "real ~/.hermes is outside the sandbox boundary",
+        "real ~/argus is outside the sandbox boundary",
+        "production cmux is outside the sandbox boundary",
+      ]);
+      expect(lstat(result.sandboxRoot)).rejects.toThrow();
+
+      const artifact = await Bun.file(result.reportPath).json();
+      expect(artifact).toEqual({
+        assertions: result.assertions,
+        error: null,
+        id: result.id,
+        name: "mechanics-isolation",
+        sandboxRoot: result.sandboxRoot,
+        status: "passed",
+        up: {
+          exitCode: 1,
+          stderr: "argus up: not implemented yet\n",
+          stdout: "",
+        },
+      });
+    } finally {
+      await rm(reportDirectory, { force: true, recursive: true });
+    }
   });
 });

@@ -1,6 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 
 export interface CommandResult {
   exitCode: number;
@@ -181,7 +182,21 @@ const CORE_SCENARIOS = [
 ] as const;
 
 export type CoreScenarioNumber = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
-export type ScenarioHandler = () => Promise<void> | void;
+
+export interface ScenarioAssertion {
+  description: string;
+  passed: boolean;
+}
+
+export interface ScenarioContext {
+  assert(condition: boolean, description: string): void;
+  assertSandboxed(path: string, description: string): void;
+  sandbox: Sandbox;
+}
+
+export type ScenarioHandler = (
+  context: ScenarioContext,
+) => Promise<void> | void;
 
 export interface ScenarioSlot {
   number: CoreScenarioNumber;
@@ -219,4 +234,119 @@ export class ScenarioRegistry {
 
 export function createScenarioRegistry(): ScenarioRegistry {
   return new ScenarioRegistry();
+}
+
+export interface ScenarioRunOptions {
+  checkout: string;
+  name: string;
+  reportDirectory: string;
+  scenario: ScenarioHandler;
+}
+
+export interface ScenarioReport {
+  assertions: ScenarioAssertion[];
+  error: string | null;
+  id: string;
+  name: string;
+  sandboxRoot: string;
+  status: "failed" | "passed";
+  up: CommandResult;
+}
+
+export interface ScenarioRunResult extends ScenarioReport {
+  reportPath: string;
+}
+
+function isWithin(parent: string, child: string): boolean {
+  const pathFromParent = relative(resolve(parent), resolve(child));
+  return (
+    pathFromParent === "" ||
+    (!pathFromParent.startsWith("..") && !isAbsolute(pathFromParent))
+  );
+}
+
+function envPath(sandbox: Sandbox, name: string): string {
+  const path = sandbox.env[name];
+  if (!path) throw new Error(`sandbox environment is missing ${name}`);
+  return path;
+}
+
+export const mechanicsScenario: ScenarioHandler = ({
+  assertSandboxed,
+  sandbox,
+}) => {
+  assertSandboxed(
+    join(sandbox.home, ".local/bin"),
+    "real ~/.local/bin is outside the sandbox boundary",
+  );
+  assertSandboxed(
+    envPath(sandbox, "ARGUS_REPOS_DIR"),
+    "real ~/.argus-repos is outside the sandbox boundary",
+  );
+  assertSandboxed(
+    envPath(sandbox, "CLAUDE_CONFIG_DIR"),
+    "real ~/.claude is outside the sandbox boundary",
+  );
+  assertSandboxed(
+    envPath(sandbox, "HERMES_HOME"),
+    "real ~/.hermes is outside the sandbox boundary",
+  );
+  assertSandboxed(
+    join(sandbox.home, "argus"),
+    "real ~/argus is outside the sandbox boundary",
+  );
+  assertSandboxed(
+    envPath(sandbox, "CMUX_SOCKET_DIR"),
+    "production cmux is outside the sandbox boundary",
+  );
+};
+
+export async function runScenario(
+  options: ScenarioRunOptions,
+): Promise<ScenarioRunResult> {
+  await mkdir(options.reportDirectory, { recursive: true });
+  const id = randomUUID();
+  const sandbox = await createSandbox({ checkout: options.checkout });
+  const assertions: ScenarioAssertion[] = [];
+  let error: string | null = null;
+  let status: ScenarioReport["status"] = "passed";
+
+  const assert = (condition: boolean, description: string): void => {
+    assertions.push({ description, passed: condition });
+    if (!condition) throw new Error(`scenario assertion failed: ${description}`);
+  };
+
+  try {
+    await options.scenario({
+      assert,
+      assertSandboxed(path, description) {
+        assert(isWithin(sandbox.root, path), description);
+      },
+      sandbox,
+    });
+  } catch (caught) {
+    status = "failed";
+    error = caught instanceof Error ? caught.message : String(caught);
+  } finally {
+    try {
+      await sandbox.teardown();
+    } catch (caught) {
+      status = "failed";
+      error = caught instanceof Error ? caught.message : String(caught);
+    }
+  }
+
+  const report: ScenarioReport = {
+    assertions,
+    error,
+    id,
+    name: options.name,
+    sandboxRoot: sandbox.root,
+    status,
+    up: sandbox.up,
+  };
+  const reportPath = join(options.reportDirectory, `${id}.json`);
+  await Bun.write(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+
+  return { ...report, reportPath };
 }
