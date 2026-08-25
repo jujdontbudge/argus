@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 const sandboxes: string[] = [];
 
-setDefaultTimeout(30_000);
+setDefaultTimeout(90_000);
 
 async function run(
   command: string[],

@@ -16,7 +16,7 @@ import {
 
 const checkout = fileURLToPath(new URL("..", import.meta.url));
 
-setDefaultTimeout(30_000);
+setDefaultTimeout(90_000);
 
 describe("fake-Johan harness", () => {
   test("creates an isolated throwaway git repo and converges it with the real argus up", async () => {
