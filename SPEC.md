@@ -211,12 +211,16 @@ field doubles as the slow-poll signal (§6).
 
 ### 5.5 Retro (everything-is-a-ticket enforcement)
 
-Detects implementation work no claimed ticket covers. Two signals, git as ground truth:
+Detects implementation work no claimed ticket covers — and, since #38, work a ticket
+does claim but never asked for. Three signals, git as ground truth:
 
 - **Git signal:** commits / working-tree changes in the repo not attributable to a
   registered ticket session.
 - **Transcript signal:** the digest classifies a session as "implementation happened,
   no ticket claimed."
+- **Scope-drift signal (§14):** for a session that IS registered to a ticket, the diff
+  against that ticket's stated scope. Same eye, same scan, same brain tier; the
+  false-positive stance that governs it is in §14.
 
 On detection it auto-files a **closed**, `retro`-labeled ticket: a sub-issue of the
 nearest parent ticket where one exists (`gh issue create --parent <n>` — the
@@ -433,5 +437,23 @@ every §5-§7 feature ticket's acceptance criteria must name the scenario that g
 - Johan hijacks a ticket mid-run, steers it by hand, and the record shows it:
   `johan_touched: true`, his directives in memory, a retro sub-issue for any
   out-of-scope work he did.
+
+  **In-ticket scope drift is detected in v1** (#37/#38). The two §5.5 signals only
+  catch work no ticket *claims*; when the hijacked session IS registered to a ticket,
+  git attributes its commits to that ticket and its digest carries one, so nothing
+  looks anomalous. The Retro eye therefore asks a third question, on the same scan
+  and the same watcher: the session's actual diff against the ticket's **stated
+  scope** (title + body, read back through the `gh` seam — closed tickets included),
+  judged by the same `codex exec` brain tier as every other eye. A confirmed drift
+  files a closed `retro` sub-issue **of that ticket**, naming it, quoting its stated
+  scope and describing the out-of-scope work.
+
+  **The burden of proof is on drift, and ambiguity resolves to silence.** An in-scope
+  refactor, test update, rename, dependency change or gate fix is NOT drift, however
+  little the ticket mentioned it; only work serving a *different goal* than the ticket
+  states is. A ticket whose body states too little to measure a diff against (empty, or
+  a one-liner) is not judged at all. This asymmetry is deliberate and is enforced in
+  code, not just asked for in the prompt: one false positive costs trust in every retro
+  Argus files, while a missed drift costs one un-filed issue.
 - `argus search` answers "how did we solve X" from any past session of any agent.
 - Deleting a repo's `.argus/` harms no other repo. Nothing global held knowledge.
