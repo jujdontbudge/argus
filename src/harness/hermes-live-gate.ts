@@ -109,6 +109,36 @@ function realHalf(probe: HermesLiveProbe): HermesHalfVerdict {
   };
 }
 
+export interface ScratchDriveOutcome {
+  /** null when the drive left a `state.db` behind; otherwise why it did not. */
+  provisioningFailure: string | null;
+}
+
+/**
+ * The third skip: the gate opened, hermes ran, and there is still nothing to
+ * read.
+ *
+ * Where the line falls matters. "Could a profile be provisioned at all" is an
+ * environment question and skips; everything AFTER a `state.db` exists — its
+ * schema, its rows, what the source makes of them — is the verification, and
+ * fails. Otherwise a regression in row persistence would report as a skip, and
+ * a check that answers every regression with a skip is the thing this ticket
+ * exists to remove.
+ */
+export function refineScratchVerdict(
+  verdict: HermesHalfVerdict,
+  outcome: ScratchDriveOutcome,
+): HermesHalfVerdict {
+  if (verdict.status !== "run" || outcome.provisioningFailure === null) {
+    return verdict;
+  }
+  return {
+    half: verdict.half,
+    reason: `gate set, but the drive provisioned no profile: ${outcome.provisioningFailure}`,
+    status: "not-run",
+  };
+}
+
 export interface ScratchDriveEnv {
   /** The scratch profile directory. Everything the drive creates lands here. */
   hermesHome: string;

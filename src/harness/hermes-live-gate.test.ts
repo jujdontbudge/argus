@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   hermesDriveEnv,
   offlineProviderConfig,
+  refineScratchVerdict,
   OFFLINE_BASE_URL,
   OFFLINE_PROVIDER,
   LIVE_HERMES_GATE,
@@ -181,5 +182,48 @@ describe("the offline provider the scratch drive configures", () => {
     expect(config).toContain(`${OFFLINE_PROVIDER}:`);
     expect(config).toContain(OFFLINE_BASE_URL);
     expect(config).toContain("argus-test-placeholder-not-a-credential");
+  });
+});
+
+describe("a gate that opened but provisioned nothing", () => {
+  const ready = resolveHermesLiveGate(READY).scratch;
+  const failed = refineScratchVerdict(ready, {
+    provisioningFailure: 'hermes exited 1 and wrote no state.db: "boom"',
+  });
+
+  test("is a THIRD skip, and says which", () => {
+    // The state the old test could not express at all. "Nobody asked", "asked,
+    // and hermes is not installed" and "asked, hermes ran, and there is still
+    // nothing to read" are three different facts about this machine, and only
+    // the last one means the drive itself is broken.
+    expect(failed.status).toBe("not-run");
+    expect(failed.reason).toContain("provisioned no profile");
+    expect(failed.reason).toContain('hermes exited 1');
+  });
+
+  test("is distinguishable from the other two by its reason alone", () => {
+    const reasons = [
+      resolveHermesLiveGate({ ...READY, env: {} }).scratch,
+      resolveHermesLiveGate({ ...READY, hermesInstalled: false }).scratch,
+      failed,
+    ].map(({ reason }) => reason);
+
+    expect(new Set(reasons).size).toBe(3);
+  });
+
+  test("leaves a drive that did provision a profile alone", () => {
+    expect(refineScratchVerdict(ready, { provisioningFailure: null })).toEqual(
+      ready,
+    );
+  });
+
+  test("cannot reopen a half the gate closed", () => {
+    // Belt and braces on the ordering: a drive outcome can only ever make a
+    // verdict quieter, never louder, so a shut gate stays shut.
+    const shut = resolveHermesLiveGate({ ...READY, env: {} }).scratch;
+
+    expect(
+      refineScratchVerdict(shut, { provisioningFailure: "ignored" }),
+    ).toEqual(shut);
   });
 });
