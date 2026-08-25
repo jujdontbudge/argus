@@ -3,7 +3,11 @@ import { lstat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createSandbox } from "../src/harness/index.ts";
+import {
+  createSandbox,
+  SimulationDriverRunner,
+  type AgentSpawnRequest,
+} from "../src/harness/index.ts";
 
 const checkout = fileURLToPath(new URL("..", import.meta.url));
 
@@ -33,5 +37,45 @@ describe("fake-Johan harness", () => {
     }
 
     expect(lstat(sandbox.root)).rejects.toThrow();
+  });
+
+  test("simulation driver delegates pinned agents to isolated worktrees and tabs", async () => {
+    const sandbox = await createSandbox({ checkout });
+    const requests: AgentSpawnRequest[] = [];
+    const driver = new SimulationDriverRunner({
+      spawn: async (request) => {
+        requests.push(request);
+        return { exitCode: 0 };
+      },
+    });
+
+    try {
+      await driver.spawnTestAgents(sandbox);
+
+      expect(
+        requests
+          .map(({ agent, command }) => ({ agent, command }))
+          .sort((left, right) => left.agent.localeCompare(right.agent)),
+      ).toEqual([
+        { agent: "claude", command: ["claude", "--model", "claude-opus-5"] },
+        { agent: "codex", command: ["codex", "-c", "model_reasoning_effort=high"] },
+      ]);
+      expect(new Set(requests.map(({ cwd }) => cwd)).size).toBe(2);
+      expect(new Set(requests.map(({ tab }) => tab)).size).toBe(2);
+
+      for (const request of requests) {
+        expect(request.cwd.startsWith(join(sandbox.root, "worktrees/"))).toBe(true);
+        expect(request.tab.startsWith(`argus-test-${sandbox.id}-`)).toBe(true);
+        expect(request.env).toEqual(sandbox.env);
+        const child = Bun.spawn(
+          ["git", "-C", request.cwd, "rev-parse", "--is-inside-work-tree"],
+          { stderr: "pipe", stdout: "pipe" },
+        );
+        expect(await child.exited).toBe(0);
+        expect(await new Response(child.stdout).text()).toBe("true\n");
+      }
+    } finally {
+      await sandbox.teardown();
+    }
   });
 });
