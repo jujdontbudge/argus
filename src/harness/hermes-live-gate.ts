@@ -153,6 +153,38 @@ export function hermesDriveEnv(
   return env;
 }
 
+/** The named custom provider the scratch profile declares. */
+export const OFFLINE_PROVIDER = "argus-offline";
+
+/**
+ * Port 1 on loopback: reserved, privileged, and nothing on a developer machine
+ * listens there. The address is the second half of the safety argument — the
+ * env carries no credential, and the endpoint is unreachable — and it is what
+ * lets the drive get PAST Hermes's "no inference provider configured" wall
+ * without ever making a network call.
+ */
+export const OFFLINE_BASE_URL = "http://127.0.0.1:1/v1";
+
+/**
+ * The profile config that makes a credential-free drive persist a turn.
+ *
+ * Hermes with no provider at all refuses before writing anything: research §7's
+ * scratch run got as far as a 401 precisely because it HAD a provider, and that
+ * is why it could report on row persistence. This reproduces that state without
+ * the 401's network call — a declared provider that cannot be dialled — so the
+ * session and user rows land and the assistant row, as §7 says, does not.
+ */
+export function offlineProviderConfig(): string {
+  return `providers:
+  ${OFFLINE_PROVIDER}:
+    base_url: ${OFFLINE_BASE_URL}
+    api_key: argus-test-placeholder-not-a-credential
+    model: gpt-4o-mini
+model: gpt-4o-mini
+provider: ${OFFLINE_PROVIDER}
+`;
+}
+
 /** Where the opportunistic half looks, and the tree it must never write. */
 export const REAL_HERMES_ROOT = join(homedir(), ".hermes");
 

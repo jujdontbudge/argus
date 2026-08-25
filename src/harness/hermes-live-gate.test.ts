@@ -2,6 +2,9 @@ import { describe, expect, test } from "bun:test";
 
 import {
   hermesDriveEnv,
+  offlineProviderConfig,
+  OFFLINE_BASE_URL,
+  OFFLINE_PROVIDER,
   LIVE_HERMES_GATE,
   resolveHermesLiveGate,
   type HermesLiveProbe,
@@ -142,5 +145,41 @@ describe("the scratch drive's child environment", () => {
     expect(
       hermesDriveEnv({ ...AMBIENT, TERM: undefined }, DRIVE),
     ).not.toHaveProperty("TERM");
+  });
+});
+
+describe("the offline provider the scratch drive configures", () => {
+  test("is a loopback address, so no packet can leave this machine", () => {
+    const url = new URL(OFFLINE_BASE_URL);
+
+    expect(url.hostname).toBe("127.0.0.1");
+    expect(url.protocol).toBe("http:");
+  });
+
+  test("is REFUSED right now, on this machine", async () => {
+    // Not a shape assertion: the drive's whole safety argument is that it
+    // reaches a provider that does not answer, and this is the only assertion
+    // in the file that checks that against the machine rather than a string.
+    // The day something listens on that port, this fails instead of the drive
+    // quietly talking to it.
+    const url = new URL(OFFLINE_BASE_URL);
+    const refused = await Bun.connect({
+      hostname: url.hostname,
+      port: Number(url.port),
+      socket: { data: () => {}, open: (socket) => socket.end() },
+    }).then(
+      () => false,
+      () => true,
+    );
+
+    expect(refused).toBe(true);
+  });
+
+  test("names a placeholder key rather than carrying a credential", () => {
+    const config = offlineProviderConfig();
+
+    expect(config).toContain(`${OFFLINE_PROVIDER}:`);
+    expect(config).toContain(OFFLINE_BASE_URL);
+    expect(config).toContain("argus-test-placeholder-not-a-credential");
   });
 });
