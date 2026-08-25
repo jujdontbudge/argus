@@ -21,7 +21,8 @@ interface CommandResult {
 /** Injectable process runner; the default runs the real git CLI. */
 export type GitRunner = (args: readonly string[], cwd: string) => Promise<CommandResult>;
 
-const defaultRunner: GitRunner = async (args, cwd) => {
+/** The real git CLI; shared with the curator's backup module (#35). */
+export const defaultGitRunner: GitRunner = async (args, cwd) => {
   try {
     const child = Bun.spawn(["git", ...args], { cwd, stderr: "pipe", stdout: "pipe" });
     const [exitCode, stdout, stderr] = await Promise.all([
@@ -252,7 +253,7 @@ async function listRoots(
 }
 
 export async function scanGit(options: ScanGitOptions): Promise<GitScan> {
-  const run = options.run ?? defaultRunner;
+  const run = options.run ?? defaultGitRunner;
   const maxCommits = options.maxCommits ?? DEFAULT_MAX_COMMITS;
   const maxDiffBytes = options.maxDiffBytes ?? DEFAULT_MAX_DIFF_BYTES;
   const maxSeen = options.maxSeen ?? DEFAULT_MAX_SEEN;
