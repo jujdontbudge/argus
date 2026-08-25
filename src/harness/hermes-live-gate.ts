@@ -109,6 +109,50 @@ function realHalf(probe: HermesLiveProbe): HermesHalfVerdict {
   };
 }
 
+export interface ScratchDriveEnv {
+  /** The scratch profile directory. Everything the drive creates lands here. */
+  hermesHome: string;
+  /** The scratch HOME. Hermes also resolves a *global* root beneath it. */
+  home: string;
+}
+
+/**
+ * A credential-shaped variable name.
+ *
+ * A denylist of the providers we happen to know would be one upstream release
+ * behind forever, so this matches on SHAPE — the suffix conventions every
+ * provider's key follows — and drops the lot. Over-stripping costs the drive
+ * nothing: it is deliberately meant to reach no provider at all.
+ */
+const CREDENTIAL_SHAPED =
+  /(?:_KEY|_TOKEN|_SECRET|_PASSWORD|_CREDENTIALS|_BASE_URL|_API_BASE)$/;
+
+/**
+ * The child environment for a scratch drive.
+ *
+ * The point of this function is a negative one, and it is the hard rule of the
+ * ticket made structural: a drive that cannot SEE a credential cannot spend
+ * one. Nothing downstream has to remember to be careful, and no reviewer has
+ * to take a promise on trust — the child is simply handed an environment with
+ * no way to authenticate to anything.
+ */
+export function hermesDriveEnv(
+  ambient: Readonly<Record<string, string | undefined>>,
+  drive: ScratchDriveEnv,
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [name, value] of Object.entries(ambient)) {
+    if (value === undefined) continue;
+    if (CREDENTIAL_SHAPED.test(name)) continue;
+    env[name] = value;
+  }
+  // Last, and unconditionally: these two decide which tree the drive touches,
+  // so an ambient value must never be able to win.
+  env.HERMES_HOME = drive.hermesHome;
+  env.HOME = drive.home;
+  return env;
+}
+
 /** Where the opportunistic half looks, and the tree it must never write. */
 export const REAL_HERMES_ROOT = join(homedir(), ".hermes");
 

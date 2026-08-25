@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  hermesDriveEnv,
   LIVE_HERMES_GATE,
   resolveHermesLiveGate,
   type HermesLiveProbe,
@@ -49,5 +50,97 @@ describe("the live-Hermes gate", () => {
 
     expect(unset.status).not.toBe(absent.status);
     expect(unset.reason).not.toBe(absent.reason);
+  });
+});
+
+describe("the opportunistic real-profile half", () => {
+  test("is NOT RUN rather than SKIPPED when no profile exists — it costs nothing, so it is always asked for", () => {
+    // The whole reason there is a second half. `gate-unset` means nobody asked
+    // and nobody pays; a read-only open of a file that already exists has no
+    // price, so this half can never be in that state. Its only skip is the
+    // honest one, and it names why the machine has nothing to read.
+    for (const env of [{}, { [LIVE_HERMES_GATE]: "1" }]) {
+      const { real } = resolveHermesLiveGate({ ...READY, env });
+
+      expect(real.status).toBe("not-run");
+      expect(real.reason).toContain("a real profile appears the first time");
+    }
+  });
+
+  test("runs against a real profile whether or not the gate is set", () => {
+    for (const env of [{}, { [LIVE_HERMES_GATE]: "1" }]) {
+      const { real } = resolveHermesLiveGate({
+        ...READY,
+        env,
+        realProfile: "/home/j/.hermes/profiles/argus-widget-kit/state.db",
+      });
+
+      expect(real.status).toBe("run");
+      expect(real.reason).toContain("read-only");
+    }
+  });
+
+  test("does not need hermes installed — reading a state.db is not running Hermes", () => {
+    expect(
+      resolveHermesLiveGate({
+        env: {},
+        hermesInstalled: false,
+        realProfile: "/home/j/.hermes/profiles/argus-widget-kit/state.db",
+      }).real.status,
+    ).toBe("run");
+  });
+});
+
+describe("the scratch drive's child environment", () => {
+  /**
+   * A distinct, searchable value per ambient credential. The assertions below
+   * look for the VALUES rather than the names, so a variable that survives
+   * under a different name is still caught.
+   */
+  const AMBIENT = {
+    ANTHROPIC_API_KEY: "leaked-anthropic",
+    AWS_SECRET_ACCESS_KEY: "leaked-aws",
+    CLAUDE_CODE_OAUTH_TOKEN: "leaked-claude",
+    GEMINI_API_KEY: "leaked-gemini",
+    HERMES_HOME: "/real/home/.hermes",
+    HOME: "/real/home",
+    OPENAI_API_KEY: "leaked-openai",
+    OPENAI_BASE_URL: "leaked-base-url",
+    OPENROUTER_API_KEY: "leaked-openrouter",
+    PATH: "/usr/bin:/bin",
+    XAI_API_KEY: "leaked-xai",
+  } as const;
+
+  const DRIVE = { hermesHome: "/scratch/profiles/argus-x", home: "/scratch/home" };
+
+  test("carries no inference credential, whatever the ambient shell holds", () => {
+    const env = hermesDriveEnv(AMBIENT, DRIVE);
+
+    // The invariant that matters is about VALUES reaching the child, not about
+    // which names this function happens to know: a drive that cannot see a
+    // credential cannot spend one, whoever runs it.
+    expect(
+      Object.entries(env).filter(([, value]) => value.startsWith("leaked-")),
+    ).toEqual([]);
+  });
+
+  test("points the drive at the scratch profile and a scratch HOME", () => {
+    const env = hermesDriveEnv(AMBIENT, DRIVE);
+
+    // HERMES_HOME is where everything the drive creates lands. HOME is how
+    // Hermes resolves the *global* root it also consults — left ambient, the
+    // drive would read the real ~/.hermes.
+    expect(env.HERMES_HOME).toBe("/scratch/profiles/argus-x");
+    expect(env.HOME).toBe("/scratch/home");
+  });
+
+  test("keeps the ordinary environment, or the CLI would not be findable", () => {
+    expect(hermesDriveEnv(AMBIENT, DRIVE).PATH).toBe("/usr/bin:/bin");
+  });
+
+  test("drops an unset ambient variable rather than passing it as empty", () => {
+    expect(
+      hermesDriveEnv({ ...AMBIENT, TERM: undefined }, DRIVE),
+    ).not.toHaveProperty("TERM");
   });
 });
