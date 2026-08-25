@@ -94,6 +94,17 @@ function messageText(item: Rec, role: "user" | "assistant"): string | undefined 
   return parts.length > 0 ? parts.join("\n") : undefined;
 }
 
+function environmentCwd(text: string): string | undefined {
+  if (!text.includes("<environment_context>")) return undefined;
+  const match = /<cwd>([\s\S]*?)<\/cwd>/.exec(text);
+  return match?.[1]
+    ?.replaceAll("&amp;", "&")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'");
+}
+
 class CodexParser implements SourceParser {
   private cwd: string | undefined;
   private gitBranch: string | undefined;
@@ -101,6 +112,7 @@ class CodexParser implements SourceParser {
   private parentSessionId: string | undefined;
   private repo: string | undefined;
   private sessionId: string | undefined;
+  private sessionTs: string | undefined;
   private version: string | undefined;
 
   constructor(private readonly file: string) {}
@@ -133,11 +145,25 @@ class CodexParser implements SourceParser {
     if (!record) return [];
     const ts = str(record.timestamp);
 
+    // Before 0.32 the first line was a flat metadata object and response
+    // items were bare (not RolloutLine envelopes).
+    if (record.type === undefined && !this.sessionId) {
+      const id = str(record.id);
+      if (!id) return [];
+      this.sessionId = id;
+      this.sessionTs = ts;
+      const git = asRecord(record.git);
+      this.gitBranch = git ? str(git.branch) : undefined;
+      this.gitRepository = git ? str(git.repository_url) : undefined;
+      return [];
+    }
+
     if (record.type === "session_meta") {
       const payload = asRecord(record.payload);
       const id = payload ? str(payload.id) : undefined;
       if (!payload || !id || this.sessionId) return [];
       this.sessionId = id;
+      this.sessionTs = ts;
       const rawCwd = str(payload.cwd);
       this.cwd = rawCwd ? canonicalPath(rawCwd) : undefined;
       const git = asRecord(payload.git);
@@ -188,6 +214,35 @@ class CodexParser implements SourceParser {
           file: this.file,
         }];
       }
+    }
+
+
+    if (record.type === "message" && this.sessionId) {
+      const role = record.role;
+      if (role !== "user" && role !== "assistant") return [];
+      const text = messageText(record, role);
+      if (text === undefined) return [];
+      const events: TailEvent[] = [];
+      if (!this.cwd && role === "user") {
+        const rawCwd = environmentCwd(text);
+        if (rawCwd) {
+          this.cwd = canonicalPath(rawCwd);
+          this.repo = this.resolveRepository();
+          events.push(this.metaEvent(this.sessionTs));
+        }
+      }
+      events.push({
+        type: "message",
+        sessionId: this.sessionId,
+        role,
+        text,
+        ts: ts ?? this.sessionTs ?? "",
+        candidate:
+          role === "user" &&
+          codexCandidateText({ type: "response_item", payload: record }) !== null,
+        file: this.file,
+      });
+      return events;
     }
     return [];
   }

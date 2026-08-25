@@ -235,4 +235,56 @@ describe("Codex rollout source", () => {
       await rm(root, { force: true, recursive: true });
     }
   });
+
+  test("recovers pre-0.32 flat rollouts from the environment-context cwd", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-codex-source-"));
+    try {
+      const repo = join(root, "legacy-repo");
+      await initializeRepo(repo);
+      const codexHome = join(root, "codex");
+      const rolloutDir = join(codexHome, "sessions/2025/09/10");
+      await mkdir(rolloutDir, { recursive: true });
+      const rollout = join(
+        rolloutDir,
+        "rollout-2025-09-10T19-50-10-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.jsonl",
+      );
+      const fixture = await Bun.file(
+        join(fixtureRoot, "era-pre-0.32-flat.jsonl"),
+      ).text();
+      await writeFile(rollout, fixture.replaceAll("__CWD__", repo));
+
+      const events = await new Tailer(createCodexSource({ codexHome })).catchUp();
+
+      expect(events.map((event) => event.type)).toEqual([
+        "session-meta",
+        "message",
+        "message",
+        "message",
+      ]);
+      expect(events[0]).toEqual({
+        type: "session-meta",
+        sessionId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        agent: "codex",
+        cwd: await realpath(repo),
+        repo: await realpath(repo),
+        ts: "2025-09-10T19:50:10.000Z",
+        file: rollout,
+      });
+      expect(
+        events.filter((event) => event.type === "message").map(({ text, candidate }) => ({
+          text,
+          candidate,
+        })),
+      ).toEqual([
+        {
+          text: `<environment_context>\n  <cwd>${repo}</cwd>\n  <shell>zsh</shell>\n</environment_context>`,
+          candidate: false,
+        },
+        { text: "legacy prompt", candidate: true },
+        { text: "legacy response", candidate: false },
+      ]);
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
 });
