@@ -1,0 +1,93 @@
+==============================================================================
+ARGUS FULL REAL-DRIVER JOURNEY ACCEPTANCE — ticket #83
+==============================================================================
+Run date        2026-08-26
+checkout        /Users/johansardar/argus-worktrees/full-journey-run
+branch          build/full-journey-run
+gate            ARGUS_LIVE_FULL_JOURNEY=1
+composed gates  ARGUS_LIVE_AGENTS=1, ARGUS_LIVE_CLAUDE_SUBSCRIPTION=1
+agent policy    Claude Opus 5 + Codex sol/high, subscription CLIs only
+credentials     no API key, no token; ~/.codex/auth.json copied only into the
+                harness scratch CODEX_HOME; ~/.claude/.credentials.json was
+                never read, copied, checksummed or written by the harness
+isolation       harness-created scratch HOME, CODEX_HOME, HERMES_HOME,
+                CLAUDE_CONFIG_DIR and sandbox repo/worktrees; the explicitly
+                named Claude subscription child used the existing real HOME
+                subscription path with its cwd confined by SandboxScope
+
+The first genuine run passed every behavioral assertion and exposed one stale
+manifest claim: 13.1.batch-end-to-end still said production saw 1 of 2 live
+agent replies "until the journey is rerun". This run is that rerun. Both the
+initial and final-code runs observed 2 of 2 replies through production's own
+repo-scoped transcript source and archived both exactly once across an archiver
+kill/restart. A red-first manifest regression now preserves that finding while
+leaving the undriven merge/close leg PARTIAL.
+
+The final-code command was:
+  env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
+    -u CLAUDE_CODE_OAUTH_TOKEN \
+    ARGUS_LIVE_FULL_JOURNEY=1 ARGUS_LIVE_AGENTS=1 \
+    ARGUS_LIVE_CLAUDE_SUBSCRIPTION=1 \
+    bun test src/harness/full-journey.test.ts
+
+------------------------------------------------------------------------------
+Final-code terminal output (verbatim)
+------------------------------------------------------------------------------
+bun test v1.3.12 (700fc117)
+
+src/harness/full-journey.test.ts:
+ARGUS_LIVE_FULL_JOURNEY=1 — the FULL real-driver journey is ENABLED (this spends Johan's subscription)
+  claude  RUN      gate set, the CLI is present and no API key or token is needed
+  codex   RUN      gate set, the CLI is present and no API key or token is needed
+  SPEC §1: no Anthropic API key, no token, no metered provider — the `claude` and `codex` CLIs only
+
+live evidence:
+  claude: exit 0 from claude (20 bytes of stdout)
+  codex: exit 0 from codex (20 bytes of stdout)
+  claude: 1 live transcript file(s)
+  agents: 2 sentinel reply/replies across 2 live leg(s)
+  repo-scoped source: 2 of 2 live sentinel reply/replies visible to the watchers
+  archiver: 2 live message(s) in archive.db
+  archiver death: pid 36538 killed, pid 36552 backfilled 2/2 live message(s)
+  USER.md: 216 bytes unchanged across the live journey
+
+SPEC §13 verdicts — STRUCTURAL means real code paths over substituted components.
+A slot reaches LIVE only by recording evidence from an agent it actually spawned.
+
+ #  VERDICT    STATUS REQUIREMENTS                                   SCENARIO
+1-live. LIVE       passed 1 covered, 2 partial, 3 uncovered              Autonomous batch — FULL real-driver journey (opt-in)
+4-live. LIVE       passed 1 covered, 2 partial, 0 uncovered              The poisoning test — FULL real-driver journey (opt-in)
+6-live. LIVE       passed 1 covered, 2 partial, 0 uncovered              Watcher death — FULL real-driver journey (opt-in)
+
+0 of 3 scenarios are STRUCTURAL; 3 of 3 are LIVE.
+
+1-live. Autonomous batch — FULL real-driver journey (opt-in) — doubles: 
+   PARTIAL   13.1.batch-end-to-end  "run a ticket batch end to end"
+             both live agent legs ran end to end and production's own watchers consumed both (2 of 2 live sentinel replies were visible and archived in #83), but the batch's merge/close leg is not driven here — see 13.1.tickets-closed
+   PARTIAL   13.1.user-md  "`USER.md` byte-identical"
+             the reviewer eye's brain is not spent here, so what this proves is that production's own watchers left USER.md alone across a LIVE session — not that a live reviewer BRAIN declined to write to it
+   UNCOVERED 13.1.memory-md  "`MEMORY.md` gained project facts"
+             UNCOVERED here by choice: the reviewer eye's brain is a `claude`/`codex` CLI call per session, and the journey does not spend one. Slot 1 covers this structurally on a fixture brain
+   UNCOVERED 13.1.digests-index  "digests + INDEX updated"
+             UNCOVERED here by choice: same reason as 13.1.memory-md — the digest eye needs a brain
+   UNCOVERED 13.1.tickets-closed  "tickets closed"
+             UNCOVERED here by design: closing needs a tracker, and SPEC §13 forbids a test run writing to one. This journey uses no `gh` double at all, so it reports the gap rather than #57's PARTIAL
+
+4-live. The poisoning test — FULL real-driver journey (opt-in) — doubles: 
+   PARTIAL   13.4.user-md-untouched  "USER.md untouched"
+             the file is now READ BACK across a live session rather than inferred untouched, which is slot 4's own shortfall closed — but the traffic is one Hermes-logged dispatch per leg, not slot 4's four-message poisoning sequence
+   PARTIAL   13.4.hermes-sends  "Hermes sends registry-logged nudges into a session"
+             the SESSION is live and the transcript is real, but the harness still plays Hermes as #43's and #49's drives do: the registry row is appended here, not written by a Hermes process, and no `cmux send` carried the nudge
+
+6-live. Watcher death — FULL real-driver journey (opt-in) — doubles: 
+   PARTIAL   13.6.kill-each-watcher  "kill each watcher ... the supervisor restarts it"
+             only the archiver is killed here — one live kill, not five. Slot 6 kills all five eyes and restarts them, over a fixture transcript
+   PARTIAL   13.6.mid-run  "kill each watcher mid-run"
+             the run it dies in the middle of is a LIVE agent's transcript, which is slot 6's shortfall closed — but the kill lands as soon as the archiver registers with the supervisor, which may be before or after it committed its first batch. The exactly-once assertion covers both orders; 'mid-run' is not timed to a known in-flight batch
+
+
+ 11 pass
+ 0 fail
+ 50 expect() calls
+Ran 11 tests across 1 file. [10.08s]
+FULL_JOURNEY_EXIT=0
