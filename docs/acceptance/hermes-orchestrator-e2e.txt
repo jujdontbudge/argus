@@ -50,3 +50,105 @@ returned 1 with no watcher running at all. Proof:
 Every watcher count in this file is therefore taken with `ps`, and the `pgrep`
 form is reported beside it in §9 for the ticket's sake. A future ticket that
 trusts the bare `pgrep` number will chase a watcher that does not exist.
+
+------------------------------------------------------------------------------
+2. argus init / argus up — #94 verified fixed, live
+------------------------------------------------------------------------------
+The first attempt's BLOCKER was that `argus up` registered an EMPTY skills
+directory. This run, on the same code path:
+
+  $ argus init
+    wiring: claude skills adapter OK (1 canonical skill readable through .claude/skills)
+  $ argus up
+    GitHub tracker: sandbox/kit
+    Hermes profile: argus-repo-ce1c31548b672468042fc3066a3356a3f0776c98f1c98619c140a87e77a02b13
+    wiring: Hermes skills binding OK (profile skills.external_dirs includes .argus/skills)
+    Argus converged /private/tmp/argus-82-run2/repo
+
+The line the first attempt reported as the tell — "0 canonical skills to read
+yet" — now reads "1 canonical skill readable". The file is really there:
+
+  $ find .argus/skills -type f
+    .argus/skills/argus-orchestrator/SKILL.md
+  $ diff -q skills/argus-orchestrator/SKILL.md \
+           .argus/skills/argus-orchestrator/SKILL.md
+    (identical)
+
+  $ grep -A2 '^skills:' $HERMES_HOME/profiles/argus-repo-ce1c.../config.yaml
+    skills:
+      external_dirs:
+        - "/private/tmp/argus-82-run2/repo/.argus/skills"
+
+And — the check the first attempt could not make, because there was no skill to
+see — Hermes itself can read it through that binding:
+
+  $ hermes -z 'List the names of every skill available to you... If a skill
+               named argus-orchestrator is available, say ARGUS-ORCHESTRATOR
+               VISIBLE and quote the first line of its "Dispatch the frontier"
+               section.'
+    argus-orchestrator
+    ARGUS-ORCHESTRATOR VISIBLE
+    "Repeat this loop up to the concurrency cap in `.argus/config.yaml`; use `3` when the"
+
+#94 is fixed end to end: seeded by `up`, registered in the profile, and READ BY
+HERMES. That is strictly further than any previous #82 run reached.
+
+------------------------------------------------------------------------------
+3. The sandbox and its batch
+------------------------------------------------------------------------------
+The sandbox repo is a real bun+TypeScript kit whose two gates are the two
+`argus complete` actually runs (`DEFAULT_GATES`, src/complete/gates.ts:27) —
+`bun x tsc --noEmit` and `bun test`. Both green before the batch: 4 pass,
+0 fail across 2 files.
+
+Three tickets, genuinely small and mechanical, seeded on the sandbox tracker:
+
+  #1  Add a clamp helper to src/numbers.ts
+  #2  Add a wordCount helper to src/text.ts
+  #3  Add a median helper to src/numbers.ts
+
+THE TRACKER IS A SHIM, AND THAT IS A LIMIT OF THIS RUN. The sandbox repo has
+no GitHub remote and must never get one, but Argus reaches its tracker only
+through `gh`. So `$SANDBOX/bin/gh` is a local issue store implementing exactly
+the `gh` surface Argus uses (issue list/view/edit/close/comment/create, api
+user, api .../dependencies/blocked_by, api .../sub_issues, repo view, label
+list/create). It logs every call and FAILS LOUDLY on any verb it does not
+implement, so a gap shows up as an error rather than as a plausible empty
+result. What this run therefore does NOT prove is Argus against real GitHub
+semantics — sub-issue graphs, dependency edges and assignment races are all
+stubbed to the empty/simple case.
+
+------------------------------------------------------------------------------
+4. The drive — Hermes, not the ticket author
+------------------------------------------------------------------------------
+The mission prompt deliberately gives Hermes the JOB, never the steps. It is
+the same prompt shape the first attempt used, so the two runs compare:
+
+  You are mission control for the Argus repository at /private/tmp/argus-82-run2/repo.
+  Use the repo's argus-orchestrator skill. Never implement worker tickets yourself.
+  Three tickets are open on this repo's tracker. Deploy, monitor and close that batch.
+  `argus`, `gh`, `cmux` and `git` are on PATH.
+  When you are done, report exactly what you did and what, if anything, stopped you.
+
+  $ hermes -z "$(cat mission.txt)" -s argus-orchestrator --yolo
+
+  hermes 0.16.0 (2026.6.5), provider openai-codex, model gpt-5.6-sol,
+  reasoning_effort high. No API key in the environment: `env -i` builds the
+  child environment from an explicit list that contains none.
+
+PROOF OF WHO ACTED. Every `argus`, `cmux`, `gh` and `codex` call goes through a
+PATH shim that logs it before running the real thing. In $SANDBOX/log/argus.log
+the first TWO lines are the ticket author's setup (§2); everything from
+`argus --help` down was issued by Hermes:
+
+  $ argus init          <- ticket author (§2)
+      -> exit 0
+  $ argus up            <- ticket author (§2)
+      -> exit 0
+  $ argus --help        <- Hermes from here down
+      -> exit 0
+  $ argus dispatch --help
+      -> exit 1
+  $ argus status
+      -> exit 0
+  $ argus dispatch
