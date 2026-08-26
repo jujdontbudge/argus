@@ -22,7 +22,12 @@ import {
   type ProvenanceRecord,
   type SessionRecord,
 } from "../../provenance";
-import { fileAlertEmitter, retryForever, type StuckAlert } from "../backpressure";
+import {
+  fileAlertEmitter,
+  retryForever,
+  type RetryFailure,
+  type StuckAlert,
+} from "../backpressure";
 import { createCodexBrain, type Brain } from "../brain";
 import { createBrainCap, defaultBrainSlotsDirectory, type BrainCap } from "../cap";
 import { Coalescer, type CoalesceWindow } from "../coalesce";
@@ -81,6 +86,7 @@ export interface DigestEyeOptions {
   sleep?: (ms: number) => Promise<void>;
   /** Stuck-alert sink; defaults to a §6 event file in `.argus/events/`. */
   onAlert?: (alert: StuckAlert) => void | Promise<void>;
+  onFailure?: (failure: RetryFailure) => void | Promise<void>;
   /** Backoff tuning passthrough (tests shrink it). */
   baseDelayMs?: number;
   maxDelayMs?: number;
@@ -293,6 +299,9 @@ export class DigestEye {
       const verdict = await retryForever(() => this.evaluateOnce(batch), {
         eye: "digest",
         onAlert: this.onAlert,
+        ...(this.options.onFailure !== undefined && {
+          onFailure: this.options.onFailure,
+        }),
         ...(this.options.baseDelayMs !== undefined && {
           baseDelayMs: this.options.baseDelayMs,
         }),
@@ -403,6 +412,7 @@ export interface OpenDigestOverrides {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   onAlert?: (alert: StuckAlert) => void | Promise<void>;
+  onFailure?: (failure: RetryFailure) => void | Promise<void>;
   signal?: AbortSignal;
 }
 
@@ -422,6 +432,9 @@ export async function openDigest(
     brain:
       overrides.brain ??
       createCodexBrain({
+        ...(process.env.ARGUS_CODEX_EXECUTABLE !== undefined && {
+          binary: process.env.ARGUS_CODEX_EXECUTABLE,
+        }),
         model: config.brain.model,
         reasoningEffort: config.brain.reasoningEffort,
       }),
@@ -433,6 +446,7 @@ export async function openDigest(
     ...(overrides.now !== undefined && { now: overrides.now }),
     ...(overrides.sleep !== undefined && { sleep: overrides.sleep }),
     ...(overrides.onAlert !== undefined && { onAlert: overrides.onAlert }),
+    ...(overrides.onFailure !== undefined && { onFailure: overrides.onFailure }),
     ...(overrides.signal !== undefined && { signal: overrides.signal }),
   });
 }

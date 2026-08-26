@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { claudeProjectDir } from "../src/tailing/claude-code.ts";
@@ -46,6 +46,192 @@ async function watchWorld() {
 }
 
 describe("argus watch", () => {
+  test("the production reviewer uses its pinned brain without API credentials", async () => {
+    const world = await watchWorld();
+    const bin = join(world.root, "bin");
+    const explicitRecord = join(world.root, "explicit-codex.json");
+    const pathRecord = join(world.root, "path-codex.json");
+    const explicitCodex = join(world.root, "explicit-codex");
+    const pathCodex = join(bin, "codex");
+    const fixture = (record: string) => `#!/usr/bin/env bun
+await Bun.write(${JSON.stringify(record)}, JSON.stringify({
+  apiKey: Bun.env.ANTHROPIC_API_KEY ?? null,
+  argv: Bun.argv.slice(2),
+  authToken: Bun.env.ANTHROPIC_AUTH_TOKEN ?? null,
+}));
+console.error("fixture brain unavailable");
+process.exit(42);
+`;
+    await Promise.all([
+      mkdir(bin, { recursive: true }),
+      Bun.write(
+        join(world.repo, ".argus", "config.yaml"),
+        "reviewer:\n  quiet_window_seconds: 1\n  max_wait_seconds: 1\ncurator:\n  enabled: false\n",
+      ),
+      Bun.write(explicitCodex, fixture(explicitRecord)),
+      Bun.write(pathCodex, fixture(pathRecord)),
+    ]);
+    await Promise.all([chmod(explicitCodex, 0o755), chmod(pathCodex, 0o755)]);
+    const transcriptDirectory = claudeProjectDir(
+      world.repo,
+      join(world.env.CLAUDE_CONFIG_DIR, "projects"),
+    );
+    await mkdir(transcriptDirectory, { recursive: true });
+    await Bun.write(
+      join(transcriptDirectory, "pinned-brain.jsonl"),
+      `${JSON.stringify({
+        type: "user",
+        message: { role: "user", content: "Exercise the production brain path." },
+        timestamp: "2026-08-25T12:00:00.000Z",
+        promptSource: "typed",
+        uuid: "pinned-brain-u-1",
+        sessionId: "pinned-brain-session",
+        cwd: world.repo,
+        version: "test",
+      })}\n`,
+    );
+    const child = Bun.spawn(
+      [process.execPath, cli, "watch", "reviewer", "--repo", world.repo],
+      {
+        env: {
+          ...world.env,
+          ANTHROPIC_API_KEY: "must-not-reach-brain",
+          ANTHROPIC_AUTH_TOKEN: "must-not-reach-brain",
+          ARGUS_CODEX_EXECUTABLE: explicitCodex,
+          ARGUS_WATCH_POLL_MS: "20",
+          PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin`,
+        },
+        stderr: "pipe",
+        stdout: "pipe",
+      },
+    );
+    try {
+      for (
+        let attempt = 0;
+        !(await Bun.file(explicitRecord).exists()) && attempt < 200;
+        attempt += 1
+      ) {
+        await Bun.sleep(20);
+      }
+
+      const invocation = (await Bun.file(explicitRecord).json()) as {
+        apiKey: string | null;
+        argv: string[];
+        authToken: string | null;
+      };
+      expect(invocation.apiKey).toBeNull();
+      expect(invocation.argv[0]).toBe("exec");
+      expect(invocation.authToken).toBeNull();
+      expect(await Bun.file(pathRecord).exists()).toBe(false);
+    } finally {
+      child.kill("SIGTERM");
+      await child.exited;
+      await rm(world.root, { force: true, recursive: true });
+    }
+  }, 30_000);
+
+  test("status fails visibly when a live production reviewer cannot invoke its brain", async () => {
+    const world = await watchWorld();
+    const codex = join(world.root, "failing-codex");
+    const invocation = join(world.root, "failing-codex-invoked");
+    const statusPath = join(world.root, "state", "supervisor-status.json");
+    await Promise.all([
+      Bun.write(
+        join(world.repo, ".argus", "config.yaml"),
+        "reviewer:\n  quiet_window_seconds: 1\n  max_wait_seconds: 1\ncurator:\n  enabled: false\n",
+      ),
+      Bun.write(
+        codex,
+        `#!/usr/bin/env bun
+await Bun.write(${JSON.stringify(invocation)}, "invoked\\n");
+console.error("fixture brain unavailable");
+process.exit(42);
+`,
+      ),
+    ]);
+    await chmod(codex, 0o755);
+    const transcriptDirectory = claudeProjectDir(
+      world.repo,
+      join(world.env.CLAUDE_CONFIG_DIR, "projects"),
+    );
+    await mkdir(transcriptDirectory, { recursive: true });
+    await Bun.write(
+      join(transcriptDirectory, "degraded-reviewer.jsonl"),
+      `${JSON.stringify({
+        type: "user",
+        message: { role: "user", content: "Make the unavailable brain observable." },
+        timestamp: "2026-08-25T12:00:00.000Z",
+        promptSource: "typed",
+        uuid: "degraded-reviewer-u-1",
+        sessionId: "degraded-reviewer-session",
+        cwd: world.repo,
+        version: "test",
+      })}\n`,
+    );
+    const env = {
+      ...world.env,
+      ARGUS_CODEX_EXECUTABLE: codex,
+      ARGUS_SUPERVISOR_STATUS_FILE: statusPath,
+      ARGUS_WATCH_POLL_MS: "20",
+      PATH: `${dirname(process.execPath)}:/usr/bin:/bin`,
+    };
+    const watcher = Bun.spawn(
+      [process.execPath, cli, "watch", "reviewer", "--repo", world.repo],
+      { env, stderr: "pipe", stdout: "pipe" },
+    );
+    await Bun.write(
+      statusPath,
+      JSON.stringify({
+        updatedAt: new Date().toISOString(),
+        watchers: [
+          { eye: "reviewer", pid: watcher.pid, repo: world.repo, state: "running" },
+        ],
+      }),
+    );
+    try {
+      const healthPath = join(
+        world.repo,
+        ".argus",
+        "eyes",
+        "reviewer",
+        "health.json",
+      );
+      let degraded = false;
+      for (let attempt = 0; !degraded && attempt < 200; attempt += 1) {
+        await Bun.sleep(20);
+        try {
+          degraded =
+            ((await Bun.file(healthPath).json()) as { lastError: unknown })
+              .lastError !== null;
+        } catch {
+          // The watcher may not have published its first health snapshot yet.
+        }
+      }
+      const status = Bun.spawn([process.execPath, cli, "status"], {
+        cwd: world.repo,
+        env,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [exitCode, stdout, stderr] = await Promise.all([
+        status.exited,
+        new Response(status.stdout).text(),
+        new Response(status.stderr).text(),
+      ]);
+
+      expect(exitCode).toBe(1);
+      expect(stderr).toBe("");
+      expect(stdout).toContain(`${world.repo}  reviewer  degraded`);
+      expect(stdout).toContain("BACKLOG");
+      expect(stdout).toContain("brain nonzero-exit: exit 42: fixture brain unavailable");
+      expect(await Bun.file(invocation).exists()).toBe(true);
+    } finally {
+      watcher.kill("SIGTERM");
+      await watcher.exited;
+      await rm(world.root, { force: true, recursive: true });
+    }
+  }, 30_000);
+
   test("all five eye commands stay alive and stop cleanly on SIGTERM", async () => {
     const world = await watchWorld();
     try {

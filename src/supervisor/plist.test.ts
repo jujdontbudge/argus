@@ -7,7 +7,10 @@ describe("supervisor launchd plist", () => {
     const options = {
       bunPath: "/opt/homebrew/bin/bun",
       cliPath: "/Applications/Argus & Tools/src/cli.ts",
+      codexPath: "/Users/test/.local/bin/codex",
+      ghPath: "/opt/homebrew/bin/gh",
       label: "dev.argus.test-supervisor",
+      path: "/Users/test/.local/bin:/opt/homebrew/bin:/usr/bin:/bin",
       registryPath: "/tmp/argus-test/repos",
       statusPath: "/tmp/argus-test/status.json",
     };
@@ -30,6 +33,12 @@ describe("supervisor launchd plist", () => {
   </array>
   <key>EnvironmentVariables</key>
   <dict>
+    <key>PATH</key>
+    <string>/Users/test/.local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>ARGUS_CODEX_EXECUTABLE</key>
+    <string>/Users/test/.local/bin/codex</string>
+    <key>ARGUS_GH_EXECUTABLE</key>
+    <string>/opt/homebrew/bin/gh</string>
     <key>ARGUS_REPOS_FILE</key>
     <string>/tmp/argus-test/repos</string>
     <key>ARGUS_SUPERVISOR_STATUS_FILE</key>

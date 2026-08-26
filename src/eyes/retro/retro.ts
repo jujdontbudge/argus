@@ -30,7 +30,12 @@ import {
   type ProvenanceRecord,
   type SessionRecord,
 } from "../../provenance";
-import { fileAlertEmitter, retryForever, type StuckAlert } from "../backpressure";
+import {
+  fileAlertEmitter,
+  retryForever,
+  type RetryFailure,
+  type StuckAlert,
+} from "../backpressure";
 import { createCodexBrain, type Brain, type BrainOutcome } from "../brain";
 import { createBrainCap, defaultBrainSlotsDirectory, type BrainCap } from "../cap";
 import { Coalescer, type CoalesceWindow } from "../coalesce";
@@ -137,6 +142,7 @@ export interface RetroEyeOptions {
   sleep?: (ms: number) => Promise<void>;
   /** Stuck-alert sink; defaults to a §6 event file in `.argus/events/`. */
   onAlert?: (alert: StuckAlert) => void | Promise<void>;
+  onFailure?: (failure: RetryFailure) => void | Promise<void>;
   /** Audit sink; defaults to stderr — degradation must be visible. */
   onAudit?: (audit: RetroAudit) => void | Promise<void>;
   baseDelayMs?: number;
@@ -562,6 +568,9 @@ export class RetroEye {
         {
           eye: "retro",
           onAlert: this.onAlert,
+          ...(this.options.onFailure !== undefined && {
+            onFailure: this.options.onFailure,
+          }),
           ...(this.options.baseDelayMs !== undefined && {
             baseDelayMs: this.options.baseDelayMs,
           }),
@@ -978,6 +987,7 @@ export interface OpenRetroOverrides {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   onAlert?: (alert: StuckAlert) => void | Promise<void>;
+  onFailure?: (failure: RetryFailure) => void | Promise<void>;
   onAudit?: (audit: RetroAudit) => void | Promise<void>;
   signal?: AbortSignal;
 }
@@ -998,6 +1008,9 @@ export async function openRetro(
     brain:
       overrides.brain ??
       createCodexBrain({
+        ...(process.env.ARGUS_CODEX_EXECUTABLE !== undefined && {
+          binary: process.env.ARGUS_CODEX_EXECUTABLE,
+        }),
         model: config.brain.model,
         reasoningEffort: config.brain.reasoningEffort,
       }),
@@ -1011,6 +1024,7 @@ export async function openRetro(
     ...(overrides.now !== undefined && { now: overrides.now }),
     ...(overrides.sleep !== undefined && { sleep: overrides.sleep }),
     ...(overrides.onAlert !== undefined && { onAlert: overrides.onAlert }),
+    ...(overrides.onFailure !== undefined && { onFailure: overrides.onFailure }),
     ...(overrides.onAudit !== undefined && { onAudit: overrides.onAudit }),
     ...(overrides.signal !== undefined && { signal: overrides.signal }),
   });

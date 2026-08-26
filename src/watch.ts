@@ -8,9 +8,11 @@ import { Tailer, type TranscriptSource } from "./tailing/index.ts";
 import { ProvenanceFeed } from "./eyes/source.ts";
 import { parseArgusEvent } from "./events/schema.ts";
 import { acquireWatchLease } from "./watch/lease.ts";
+import { EyeHealthReporter } from "./supervisor/health.ts";
 
 interface OpenWatcher {
   readonly resource: unknown;
+  backlog(): number | Promise<number>;
   close?(): void;
   tick?(): Promise<unknown>;
 }
@@ -80,6 +82,7 @@ async function openEye(
   source: TranscriptSource,
   signal: AbortSignal,
   registryPath: string,
+  health: EyeHealthReporter,
 ): Promise<OpenWatcher> {
   const cursorPath = join(repo, ".argus", "eyes", eye, "cursors.json");
   const feed = new ProvenanceFeed(
@@ -99,9 +102,15 @@ async function openEye(
   switch (eye) {
     case "reviewer": {
       const { openReviewer } = await import("./eyes/reviewer/reviewer.ts");
-      const resource = await openReviewer(repo, { signal });
+      let resource: Awaited<ReturnType<typeof openReviewer>>;
+      resource = await openReviewer(repo, {
+        signal,
+        onFailure: ({ lastError }) =>
+          health.failure(lastError, resource.pendingCount()),
+      });
       return {
         resource,
+        backlog: () => resource.pendingCount(),
         async tick() {
           await ingest((batch) => resource.ingest(batch.records));
           await resource.tick();
@@ -110,7 +119,12 @@ async function openEye(
     }
     case "digest": {
       const { openDigest } = await import("./eyes/digest/digest.ts");
-      const resource = await openDigest(repo, { signal });
+      let resource: Awaited<ReturnType<typeof openDigest>>;
+      resource = await openDigest(repo, {
+        signal,
+        onFailure: ({ lastError }) =>
+          health.failure(lastError, resource.pendingCount()),
+      });
       const lifecyclePath = join(
         repo,
         ".argus",
@@ -121,6 +135,7 @@ async function openEye(
       const seenLifecycle = new Set(Object.keys(await loadCursors(lifecyclePath)));
       return {
         resource,
+        backlog: () => resource.pendingCount(),
         async tick() {
           await ingest((batch) => resource.ingest(batch.records));
           await consumeLifecycleEvents(repo, seenLifecycle, (event) =>
@@ -136,9 +151,15 @@ async function openEye(
     }
     case "retro": {
       const { openRetro } = await import("./eyes/retro/retro.ts");
-      const resource = await openRetro(repo, { signal });
+      let resource: Awaited<ReturnType<typeof openRetro>>;
+      resource = await openRetro(repo, {
+        signal,
+        onFailure: ({ lastError }) =>
+          health.failure(lastError, resource.dueAt() === null ? 0 : 1),
+      });
       return {
         resource,
+        backlog: () => (resource.dueAt() === null ? 0 : 1),
         async tick() {
           await ingest(async (batch) => {
             for (const session of batch.sessions) await resource.observeSession(session);
@@ -154,6 +175,7 @@ async function openEye(
       const tailer = new Tailer(source, { cursors: resource.cursors() });
       return {
         resource,
+        backlog: () => 0,
         close: () => resource.close(),
         async tick() {
           const { classifier, audits } = classifierFromRegistry(
@@ -168,9 +190,17 @@ async function openEye(
     }
     case "honcho": {
       const { openHoncho } = await import("./eyes/honcho/honcho.ts");
-      const resource = await openHoncho(repo, { signal });
+      let resource: Awaited<ReturnType<typeof openHoncho>>;
+      resource = await openHoncho(repo, {
+        signal,
+        retry: {
+          onFailure: async ({ lastError }) =>
+            health.failure(lastError, await resource.pendingCount()),
+        },
+      });
       return {
         resource,
+        backlog: () => resource.pendingCount(),
         close: () => resource.close(),
         tick: () => ingest((batch) => resource.ingest(batch.records)),
       };
@@ -214,6 +244,7 @@ async function runLoop(
     }
   }, pollMilliseconds);
   let lease: Awaited<ReturnType<typeof acquireWatchLease>> | undefined;
+  const health = new EyeHealthReporter(repo, eye);
   try {
     lease = await acquireWatchLease(
       repo,
@@ -222,6 +253,7 @@ async function runLoop(
       pollMilliseconds,
     );
     if (lease === null) return 0;
+    await health.start();
     while (!controller.signal.aborted) {
       if (!(await isEnrolled(registryPath, repo))) return 0;
       try {
@@ -234,11 +266,15 @@ async function runLoop(
           source,
           controller.signal,
           registryPath,
+          health,
         );
         await watcher.tick?.();
+        await health.success(await watcher.backlog());
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await health.failure(message, watcher === undefined ? 0 : await watcher.backlog());
         console.error(
-          `argus watch ${eye}: recoverable error: ${error instanceof Error ? error.message : String(error)}`,
+          `argus watch ${eye}: recoverable error: ${message}`,
         );
       }
       await Bun.sleep(pollMilliseconds);

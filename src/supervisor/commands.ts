@@ -26,5 +26,5 @@ export async function status(): Promise<number> {
     originRefusalStatus(),
   ]);
   console.log(formatSupervisorStatus(rows, refusals).trimEnd());
-  return 0;
+  return rows.some(({ state }) => state === "degraded") ? 1 : 0;
 }

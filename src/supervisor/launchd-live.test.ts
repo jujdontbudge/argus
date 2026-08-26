@@ -30,7 +30,10 @@ await new Promise(() => {});
       renderSupervisorPlist({
         bunPath: process.execPath,
         cliPath: script,
+        codexPath: "/usr/bin/false",
+        ghPath: "/usr/bin/false",
         label,
+        path: "/usr/bin:/bin",
         registryPath: join(root, "repos"),
         statusPath: join(root, "status.json"),
       }),

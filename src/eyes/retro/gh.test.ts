@@ -1,8 +1,62 @@
 import { describe, expect, test } from "bun:test";
+import { chmod, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createFakeGh } from "./fake-gh";
 import { detectTracker } from "./gh";
 
+const ghModule = fileURLToPath(new URL("./gh.ts", import.meta.url));
+
 describe("tracker detection (ADR-0001 loud degradation)", () => {
+  test("the production runner uses the launchd-pinned gh executable", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-pinned-gh-"));
+    const executable = join(root, "gh-explicit");
+    const record = join(root, "invocation.json");
+    try {
+      await Bun.write(
+        executable,
+        `#!/usr/bin/env bun
+await Bun.write(${JSON.stringify(record)}, JSON.stringify(Bun.argv.slice(2)));
+console.log("JohanSardar/argus");
+`,
+      );
+      await chmod(executable, 0o755);
+      const driver = Bun.spawn(
+        [
+          process.execPath,
+          "-e",
+          `import { detectTracker } from ${JSON.stringify(ghModule)}; console.log((await detectTracker(${JSON.stringify(root)}))?.repo ?? "none");`,
+        ],
+        {
+          env: {
+            ...Bun.env,
+            ARGUS_GH_EXECUTABLE: executable,
+          },
+          stderr: "pipe",
+          stdout: "pipe",
+        },
+      );
+      const [exitCode, stdout] = await Promise.all([
+        driver.exited,
+        new Response(driver.stdout).text(),
+      ]);
+
+      expect(exitCode).toBe(0);
+      expect(stdout.trim()).toBe("JohanSardar/argus");
+      expect(await Bun.file(record).json()).toEqual([
+        "repo",
+        "view",
+        "--json",
+        "nameWithOwner",
+        "--jq",
+        ".nameWithOwner",
+      ]);
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
   test("a reachable GitHub repo yields a tracker named owner/name", async () => {
     const gh = createFakeGh({ repo: "JohanSardar/argus" });
     const tracker = await detectTracker("/repo", gh.run);

@@ -34,7 +34,11 @@ export type GhRunner = (
 
 const defaultRunner: GhRunner = async (args, cwd) => {
   try {
-    const child = Bun.spawn(["gh", ...args], { cwd, stderr: "pipe", stdout: "pipe" });
+    const child = Bun.spawn([process.env.ARGUS_GH_EXECUTABLE ?? "gh", ...args], {
+      cwd,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
     const [exitCode, stdout, stderr] = await Promise.all([
       child.exited,
       new Response(child.stdout).text(),

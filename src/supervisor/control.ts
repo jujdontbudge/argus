@@ -1,4 +1,5 @@
-import { join } from "node:path";
+import { accessSync, constants } from "node:fs";
+import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -7,6 +8,7 @@ import {
   type Launchctl,
   type SupervisorJobOptions,
 } from "./launchd.ts";
+import { readEyeHealth } from "./health.ts";
 import { disableRepo, readEnabledRepos } from "./registry.ts";
 import { EYE_NAMES, type EyeName, type SupervisorStatus } from "./runtime.ts";
 import {
@@ -78,6 +80,42 @@ export interface SupervisorConfiguration {
   manageLaunchd: boolean;
 }
 
+function executablePath(
+  name: string,
+  override: string | undefined,
+  path: string | undefined,
+): string {
+  if (override !== undefined && override.trim() !== "") return override;
+  for (const directory of (path ?? "").split(delimiter)) {
+    if (directory === "") continue;
+    const candidate = join(directory, name);
+    try {
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // Keep searching the installer's explicit PATH.
+    }
+  }
+  return name;
+}
+
+function launchdPath(
+  envPath: string | undefined,
+  executables: readonly string[],
+): string {
+  const directories = [
+    ...executables.filter(isAbsolute).map(dirname),
+    ...(envPath ?? "").split(delimiter),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+  ].filter((value) => value !== "");
+  return [...new Set(directories)].join(delimiter);
+}
+
 export function supervisorConfiguration(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): SupervisorConfiguration {
@@ -98,12 +136,22 @@ export function supervisorConfiguration(
   const manageLaunchd =
     env.ARGUS_SUPERVISOR_CONTROL !== "disabled" &&
     (!customRegistry || env.ARGUS_LAUNCHCTL !== undefined);
+  const bunPath = process.execPath;
+  const codexPath = executablePath(
+    "codex",
+    env.ARGUS_CODEX_EXECUTABLE,
+    env.PATH,
+  );
+  const ghPath = executablePath("gh", env.ARGUS_GH_EXECUTABLE, env.PATH);
 
   return {
     job: {
-      bunPath: process.execPath,
+      bunPath,
       cliPath: fileURLToPath(new URL("../cli.ts", import.meta.url)),
+      codexPath,
+      ghPath,
       label,
+      path: launchdPath(env.PATH, [bunPath, codexPath, ghPath]),
       plistPath,
       registryPath,
       statusPath,
@@ -137,10 +185,13 @@ export async function stopRepo(
 }
 
 export interface ProcessStatusRow {
+  backlog: number | null;
   eye: EyeName;
+  lastError: string | null;
+  lastSuccess: string | null;
   pid: number | null;
   repo: string;
-  state: "running" | "stopped";
+  state: "degraded" | "running" | "stopped";
 }
 
 function isAlive(pid: number): boolean {
@@ -167,19 +218,31 @@ export async function supervisorStatus(
     readEnabledRepos(configuration.job.registryPath),
     cachedStatus(configuration.job.statusPath),
   ]);
-  return repos.flatMap((repo) =>
-    EYE_NAMES.map((eye) => {
-      const watcher = status?.watchers.find(
-        (candidate) => candidate.repo === repo && candidate.eye === eye,
-      );
-      const running = watcher !== undefined && isAlive(watcher.pid);
-      return {
-        eye,
-        pid: running ? watcher.pid : null,
-        repo,
-        state: running ? "running" : "stopped",
-      };
-    }),
+  return Promise.all(
+    repos.flatMap((repo) =>
+      EYE_NAMES.map(async (eye) => {
+        const watcher = status?.watchers.find(
+          (candidate) => candidate.repo === repo && candidate.eye === eye,
+        );
+        const running = watcher !== undefined && isAlive(watcher.pid);
+        const health = running ? await readEyeHealth(repo, eye) : null;
+        const currentHealth = health?.pid === watcher?.pid ? health : null;
+        const degraded =
+          currentHealth?.lastError !== null && currentHealth !== null;
+        return {
+          backlog: currentHealth?.backlog ?? null,
+          eye,
+          lastError:
+            currentHealth?.lastError === null || currentHealth === null
+              ? null
+              : `${currentHealth.lastError.at}: ${currentHealth.lastError.message}`,
+          lastSuccess: currentHealth?.lastSuccess ?? null,
+          pid: running ? watcher.pid : null,
+          repo,
+          state: !running ? "stopped" : degraded ? "degraded" : "running",
+        };
+      }),
+    ),
   );
 }
 
@@ -198,8 +261,24 @@ export function formatSupervisorStatus(
   originRefusals: readonly OriginRefusalStatus[] = [],
 ): string {
   const values = [
-    ["REPO", "EYE", "STATE", "PID"],
-    ...rows.map((row) => [row.repo, row.eye, row.state, row.pid?.toString() ?? "-"]),
+    [
+      "REPO",
+      "EYE",
+      "STATE",
+      "PID",
+      "LAST SUCCESS",
+      "BACKLOG",
+      "LAST ERROR",
+    ],
+    ...rows.map((row) => [
+      row.repo,
+      row.eye,
+      row.state,
+      row.pid?.toString() ?? "-",
+      row.lastSuccess ?? "-",
+      row.backlog?.toString() ?? "-",
+      row.lastError?.replaceAll(/\r?\n/g, " \\n ") ?? "-",
+    ]),
   ];
   const widths = values[0]!.map((_, column) =>
     Math.max(...values.map((row) => row[column]!.length)),

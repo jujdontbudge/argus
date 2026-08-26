@@ -19,9 +19,19 @@ export interface StuckAlert {
   at: string;
 }
 
+export interface RetryFailure {
+  at: string;
+  attempts: number;
+  eye: string;
+  lastError: string;
+  stuckForMs: number;
+}
+
 export interface RetryForeverOptions {
   /** Alert sink; `fileAlertEmitter` writes §6 event files. */
   onAlert: (alert: StuckAlert) => void | Promise<void>;
+  /** Immediate health sink; unlike onAlert, this runs on every failed attempt. */
+  onFailure?: (failure: RetryFailure) => void | Promise<void>;
   /** Eye name stamped into alerts. */
   eye?: string;
   /** First backoff delay; doubles per failure. */
@@ -91,15 +101,19 @@ export async function retryForever<T>(
     } catch (error) {
       if (options.signal?.aborted) throw aborted();
       const stuckForMs = now() - startedAt;
+      const failure: RetryFailure = {
+        at: new Date(now()).toISOString(),
+        attempts,
+        eye: options.eye ?? "unknown",
+        lastError: error instanceof Error ? error.message : String(error),
+        stuckForMs,
+      };
+      await options.onFailure?.(failure);
       if (!alerted && stuckForMs > stuckAfterMs) {
         alerted = true;
         await options.onAlert({
           type: "eye-stuck",
-          eye: options.eye ?? "unknown",
-          stuckForMs,
-          attempts,
-          lastError: error instanceof Error ? error.message : String(error),
-          at: new Date(now()).toISOString(),
+          ...failure,
         });
       }
       await sleepUntilRetry(

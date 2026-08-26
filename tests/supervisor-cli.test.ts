@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
@@ -50,6 +50,10 @@ if (args[0] === "bootout") await rm(Bun.env.FAKE_LAUNCHCTL_STATE!, { force: true
   );
   await chmod(launchctl, 0o755);
   const env = {
+    ANTHROPIC_API_KEY: "must-not-reach-launchd",
+    ANTHROPIC_AUTH_TOKEN: "must-not-reach-launchd",
+    ARGUS_CODEX_EXECUTABLE: join(bin, "codex"),
+    ARGUS_GH_EXECUTABLE: join(bin, "gh"),
     ARGUS_LAUNCHCTL: launchctl,
     ARGUS_LAUNCHD_DOMAIN: "gui/424242",
     ARGUS_REPOS_FILE: join(root, "state", "repos"),
@@ -63,6 +67,7 @@ if (args[0] === "bootout") await rm(Bun.env.FAKE_LAUNCHCTL_STATE!, { force: true
     GIT_COMMITTER_EMAIL: "supervisor-test@invalid.example",
     GIT_COMMITTER_NAME: "Supervisor Test",
     HOME: join(root, "home"),
+    PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin`,
   };
   return { env, repoA, repoB, root };
 }
@@ -91,6 +96,37 @@ describe("argus supervisor CLI", () => {
       ["bootstrap", "gui/424242", env.ARGUS_SUPERVISOR_PLIST],
       ["kickstart", "-k", "gui/424242/dev.argus.scratch-cli"],
     ]);
+  });
+
+  test("up pins the watcher executables and PATH without API credentials", async () => {
+    const { env, repoA } = await setup();
+
+    const result = await run(["up"], repoA, env);
+    const plist = await Bun.file(env.ARGUS_SUPERVISOR_PLIST).text();
+    const expectedPath = [
+      dirname(process.execPath),
+      ...env.PATH.split(":"),
+      "/opt/homebrew/bin",
+      "/usr/local/bin",
+      "/usr/sbin",
+      "/sbin",
+    ]
+      .filter(
+        (directory, index, directories) =>
+          directories.indexOf(directory) === index,
+      )
+      .join(":");
+
+    expect(result.exitCode).toBe(0);
+    expect(plist).toContain(`<key>PATH</key>\n    <string>${expectedPath}</string>`);
+    expect(plist).toContain(
+      `<key>ARGUS_CODEX_EXECUTABLE</key>\n    <string>${env.ARGUS_CODEX_EXECUTABLE}</string>`,
+    );
+    expect(plist).toContain(
+      `<key>ARGUS_GH_EXECUTABLE</key>\n    <string>${env.ARGUS_GH_EXECUTABLE}</string>`,
+    );
+    expect(plist).not.toContain("ANTHROPIC_API_KEY");
+    expect(plist).not.toContain("ANTHROPIC_AUTH_TOKEN");
   });
 
   test("status prints every enabled repo and eye as a readable process table", async () => {
