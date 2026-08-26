@@ -25,6 +25,8 @@ export interface FakeGhIssue {
   assignees: string[];
   /** Issue numbers this one is blocked by (GitHub issue dependencies). */
   blockedBy: number[];
+  /** Comments posted on it, in order — #57 comments every refusal. */
+  comments: string[];
 }
 
 export interface FakeGhSeed {
@@ -52,8 +54,10 @@ export interface FakeGhOptions {
   failUser?: string;
   /** `gh issue list` fails: no frontier can be read. */
   failList?: string;
-  /** `gh issue edit` (assign/unassign) fails: the claim cannot be made. */
+  /** `gh issue edit` (assign/unassign/body) fails: the claim cannot be made. */
   failEdit?: string;
+  /** `gh issue comment` fails: a refusal cannot be explained on the ticket. */
+  failComment?: string;
   /** The dependency/sub-issue reads fail: blocked-ness is UNKNOWN. */
   failDependencies?: string;
   /** Runs before each call — lets a test simulate a lost claim race. */
@@ -96,6 +100,7 @@ export function createFakeGh(options: FakeGhOptions = {}): FakeGh {
       parent: seed.parent ?? null,
       assignees: [...(seed.assignees ?? [])],
       blockedBy: [...(seed.blockedBy ?? [])],
+      comments: [],
     };
     issues.push(issue);
     nextNumber = Math.max(nextNumber, seed.number + 1);
@@ -120,10 +125,18 @@ export function createFakeGh(options: FakeGhOptions = {}): FakeGh {
     if (command === "issue" && subcommand === "list") {
       if (options.failList) return err(options.failList);
       const state = flag(args, "--state") ?? "open";
+      // #57 finds the wayfinder map by label, so the fake must filter by one.
+      const labels: string[] = [];
+      for (let index = 0; index < args.length; index += 1) {
+        if (args[index] === "--label" && args[index + 1] !== undefined) {
+          labels.push(args[index + 1]!);
+        }
+      }
       return ok(
         JSON.stringify(
           issues
             .filter((issue) => state === "all" || issue.state === state)
+            .filter((issue) => labels.every((label) => issue.labels.includes(label)))
             .map((issue) => ({
               number: Number(issue.number),
               title: issue.title,
@@ -172,15 +185,25 @@ export function createFakeGh(options: FakeGhOptions = {}): FakeGh {
       const issue = issues.find((entry) => entry.number === args[2]);
       if (!issue) return err(`no issue ${args[2]}`);
       for (let index = 0; index < args.length; index += 1) {
-        const login = args[index + 1];
-        if (login === undefined) continue;
-        if (args[index] === "--add-assignee" && !issue.assignees.includes(login)) {
-          issue.assignees.push(login);
+        const value = args[index + 1];
+        if (value === undefined) continue;
+        if (args[index] === "--add-assignee" && !issue.assignees.includes(value)) {
+          issue.assignees.push(value);
         }
         if (args[index] === "--remove-assignee") {
-          issue.assignees = issue.assignees.filter((entry) => entry !== login);
+          issue.assignees = issue.assignees.filter((entry) => entry !== value);
         }
+        // The wayfinder map update (#57) rewrites the map issue's body.
+        if (args[index] === "--body") issue.body = value;
       }
+      return ok("");
+    }
+
+    if (command === "issue" && subcommand === "comment") {
+      if (options.failComment) return err(options.failComment);
+      const issue = issues.find((entry) => entry.number === args[2]);
+      if (!issue) return err(`no issue ${args[2]}`);
+      issue.comments.push(flag(args, "--body") ?? "");
       return ok("");
     }
 
@@ -190,6 +213,8 @@ export function createFakeGh(options: FakeGhOptions = {}): FakeGh {
       if (!issue) return err(`no issue ${args[2]}`);
       issue.state = "closed";
       issue.closeReason = flag(args, "--reason") ?? null;
+      const closing = flag(args, "--comment");
+      if (closing !== undefined) issue.comments.push(closing);
       return ok("");
     }
 

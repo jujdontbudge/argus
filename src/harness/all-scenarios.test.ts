@@ -27,6 +27,7 @@ const CONTRIBUTED: Record<number, string[]> = {
     "every autonomous-batch message reached the archive", // #26 archiver
     "Hermes-side messages reached the normalized stream", // #23 hermes
     "Codex autonomous-session messages fed the normalized stream", // #22 codex
+    "the autonomous batch closed its ticket on the tracker", // #57 completion
   ],
   2: [
     "Johan is the observable Honcho peer", // #28 bindings

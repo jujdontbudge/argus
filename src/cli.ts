@@ -14,6 +14,7 @@ Commands:
   status   inspect this repo's eyes
   watch    run one eye
   dispatch run one AFK ticket-dispatch pass (SPEC §7.3)
+  complete verify, merge, close and map finished tickets (SPEC §7.3.4)
   signals  consume push events and run one slow-poll fallback sweep
   search   search the transcript archive
   install  install argus from this checkout
@@ -120,6 +121,42 @@ async function dispatch(): Promise<number> {
   );
   for (const reason of report.degraded) console.error(`DEGRADED: ${reason}`);
   // A degraded pass is a visible failure, never a quiet success (ADR-0001).
+  return report.degraded.length > 0 ? 1 : 0;
+}
+
+/**
+ * `argus complete` — one pass of SPEC §7.3.4's verify/merge/close/map loop
+ * (#57).
+ *
+ * One pass, like `argus dispatch`, and for the same reason: everything it
+ * needs it reads back from the world — this sweep's completion signals and the
+ * durable verification queue — so running it again is safe and running it on a
+ * cron is the whole behaviour.
+ *
+ * A pass that REFUSED something exits non-zero. A red gate is not a crash, but
+ * it is also not a success, and a cron that only ever sees 0 is a cron nobody
+ * ever looks at (ADR-0001's posture).
+ */
+async function complete(): Promise<number> {
+  const { gitRoot } = await import("./up/git.ts");
+  const repo = await gitRoot(process.cwd());
+  if (repo === null) {
+    console.error("argus complete: current directory is not inside a git repository");
+    return 1;
+  }
+
+  const { completeReadyTickets } = await import("./complete/index.ts");
+  const report = await completeReadyTickets({ repo });
+
+  for (const outcome of report.completed) {
+    console.log(`#${outcome.ticket}: ${outcome.status} — ${outcome.detail}`);
+  }
+  const merged = report.completed.filter(({ status }) => status === "merged").length;
+  console.log(
+    `${merged} merged and closed into ${report.base}; ` +
+      `${report.queued} still awaiting verification`,
+  );
+  for (const reason of report.degraded) console.error(`DEGRADED: ${reason}`);
   return report.degraded.length > 0 ? 1 : 0;
 }
 
@@ -231,6 +268,10 @@ export async function main(args: string[]): Promise<number> {
 
   if (args[0] === "dispatch") {
     return dispatch();
+  }
+
+  if (args[0] === "complete") {
+    return complete();
   }
 
   if (args[0] === "search") {

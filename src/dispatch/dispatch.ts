@@ -9,7 +9,10 @@
  *      dispatch to the routed agent — the last four ARE `deployWorker` (#55),
  *      which this module builds on rather than reimplements
  *   3. concurrency cap 3, from `.argus/config.yaml` — `./slots.ts`
- *   4. (#57's) verify/merge/close — deliberately absent
+ *   4. (#57's) verify/merge/close — not done here. What IS here is the
+ *      hand-off: a dead session that left commits is the one thing recovery
+ *      can tell apart from a dead session that left nothing, so recovery
+ *      enqueues it for #57's loop instead of making #57 re-derive it.
  *
  * WHERE THE CAP IS ENFORCED IS THE POINT. AUDIT.md §4 item 2 recorded the cap
  * as prose because the config file only ever carried the brain's budget; the
@@ -39,6 +42,7 @@ import {
 } from "../deploy";
 import type { CmuxRun } from "../events";
 import { loadEyesConfig } from "../eyes/config";
+import { enqueueVerification } from "../complete/queue.ts";
 import { runGh, trackerRepoName, type GhRunner } from "../eyes/retro/gh";
 import { claimingLogin, claimTicket, releaseClaim } from "./claim.ts";
 import { readFrontier, type ExcludedTicket, type FrontierTicket } from "./frontier.ts";
@@ -186,6 +190,19 @@ export async function dispatchFrontier(
   });
   report.recovered = recovery.recovered;
   report.degraded.push(...recovery.degraded);
+
+  // The one place dead-with-work is distinguished from dead-with-nothing is
+  // recovery, so it is also the place that hand-off happens: a dead session
+  // that left commits becomes #57's work item here rather than being
+  // re-derived there from a pid this pass has already reaped.
+  for (const recovered of recovery.recovered) {
+    if (recovered.outcome !== "awaiting-verification") continue;
+    await enqueueVerification(repo, {
+      source: "recovery",
+      ticket: recovered.ticket,
+      ...(options.now !== undefined && { now: options.now }),
+    });
+  }
   let inFlight = recovery.live.length;
   report.inFlight = inFlight;
 
