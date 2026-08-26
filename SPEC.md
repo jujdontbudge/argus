@@ -337,8 +337,13 @@ Push-first, poll as safety net:
   happened to be selected while reporting success. The send seam therefore resolves the
   handle against cmux's own listing first and degrades rather than misdelivers
   (`src/events/notify.ts`).
-- **Poll:** Hermes cron sweeps `INDEX.md` + `cmux read-screen` on a slow interval as
-  backup. Polling alone burns Hermes turns; push alone dies silently; both together
+- **Poll:** the repo-scoped Hermes profile runs `argus signals --repo <repo>` every
+  five minutes. Each sweep reads bounded terminal candidates from `INDEX.md`, confirms
+  their digest frontmatter, and resolves registered worker handles before a bounded
+  `cmux read-screen`. Push delivery and polling share one durable `(session, status)`
+  cursor, so a successful push is never delivered again; a degraded or absent push
+  remains visible to the poll. Empty sweeps emit no stdout, so Hermes cron skips the
+  agent turn. Polling alone burns Hermes turns; push alone dies silently; both together
   don't.
 
 ---
@@ -438,9 +443,13 @@ knowledge beyond the list of enabled repos. This is the single exception to
   adapters + AGENTS.md pointer block, create tracker labels (`retro`, wayfinder set),
   verify the Matt Pocock tracker wiring (`setup-matt-pocock-skills`) and lay it down
   if missing, register the repo with the supervisor, install the §6 push hooks (Claude
-  `Stop` + Codex `notify`), and start this repo's eyes. cmux hooks are reported as
-  optional and are never a convergence requirement (§3, #7).
+  `Stop` + Codex `notify`), install the repo-scoped Hermes slow-poll cron, and start
+  this repo's eyes. cmux hooks are reported as optional and are never a convergence
+  requirement (§3, #7).
 - `argus down | status` — stop/inspect this repo's eyes.
+- `argus signals [--repo <path>]` — consume unseen durable events and run one bounded
+  INDEX/digest/read-screen fallback sweep; normally invoked by the installed Hermes
+  cron job.
 - `argus search "<query>"` — FTS query over `archive.db`.
 
 ---

@@ -39,7 +39,15 @@ describe("§13 event push-path scenario", () => {
       expect(descriptions).toContain("no push event files exist — hooks are disabled");
       expect(descriptions).toContain("the finished session surfaced status=done in INDEX.md");
       expect(descriptions).toContain("hooks promptly wrote finish and block event files");
-      expect(descriptions).toContain("every mission-control send was logged before cmux");
+      expect(descriptions).toContain(
+        "the production slow poll delivered finish and block when no push arrived",
+      );
+      expect(descriptions).toContain(
+        "successful pushes were not delivered again by the slow poll",
+      );
+      expect(descriptions).toContain(
+        "every guarded mission-control send was logged before cmux",
+      );
     } finally {
       await rm(reportDirectory, { force: true, recursive: true });
     }
