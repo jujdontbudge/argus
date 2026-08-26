@@ -6,13 +6,28 @@
  * vocabulary for the same three statuses. This module does the same: same
  * `LiveHalfStatus`, same `liveHalfTitle`, same banner words.
  *
- * It is a SEPARATE gate from `ARGUS_LIVE_AGENTS` on purpose, and that is the
- * ticket's central safety claim rather than a naming preference. The two
- * modes cost different things: the hermetic drive spends a token provisioned
- * for automation, and this one spends Johan's own subscription under his own
- * identity, in his own session list. Opening one must never open the other,
- * so `ARGUS_LIVE_AGENTS=1` leaves this gate shut and vice versa. The modes
- * differ by deliberate choice, never by a forgotten argument.
+ * AMENDED, and the amendment reverses this module's original wiring. It began
+ * as a gate strictly separate from `ARGUS_LIVE_AGENTS`, on the reasoning that
+ * #43's gate asks for the HERMETIC drive — which spends a token provisioned
+ * for automation — and must never silently spend Johan's own quota instead.
+ *
+ * SPEC §1 removed the choice that argued for: **Argus must never require
+ * Anthropic API access**, and Johan's plan permits none, so no such token can
+ * exist on this machine. Keeping the gates separate would not have produced a
+ * hermetic run; it would have produced NO Claude run, for want of a credential
+ * that cannot be minted — the exact outcome §1 forbids. So `ARGUS_LIVE_AGENTS=1`
+ * opens this gate too: whoever asks for the live Claude drive gets the drive,
+ * and subscription mode is what that drive is by default.
+ *
+ * `ARGUS_LIVE_CLAUDE_SUBSCRIPTION=1` stays, for running the Claude half alone
+ * without also burning a Codex call.
+ *
+ * WHAT STILL SEPARATES THE MODES is not an env var and never was: it is the
+ * SPAWNER's name. `createSubscriptionAgentSpawner` is the only function in the
+ * tree that puts the real `HOME` into a child, and it must be named to be
+ * called. No env var reaches the real home. So the modes still differ by
+ * deliberate choice, never by a forgotten argument — the choice just lives
+ * where it is enforced instead of where it was merely announced.
  *
  * Pure by construction like both predecessors: every input arrives in the
  * probe, so all states are testable without touching the real environment.
@@ -21,9 +36,14 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { LIVE_HALF_BANNER, type LiveHalfOutcome, type LiveHalfStatus } from "./live-gate.ts";
+import {
+  LIVE_AGENT_GATE,
+  LIVE_HALF_BANNER,
+  type LiveHalfOutcome,
+  type LiveHalfStatus,
+} from "./live-gate.ts";
 
-/** Opt in with `ARGUS_LIVE_CLAUDE_SUBSCRIPTION=1`. Never implied by #43's gate. */
+/** Opt in with `ARGUS_LIVE_CLAUDE_SUBSCRIPTION=1` — or with #43's gate. */
 export const LIVE_SUBSCRIPTION_GATE = "ARGUS_LIVE_CLAUDE_SUBSCRIPTION";
 
 /**
@@ -48,14 +68,28 @@ export interface SubscriptionProbe {
 export interface SubscriptionGate {
   claude: LiveHalfOutcome;
   enabled: boolean;
+  /**
+   * WHICH variable opened it, or `null` if none did.
+   *
+   * Two gates open this drive, so the banner cannot hard-code one name without
+   * telling a reader to unset a variable they never set. Whoever spent a
+   * subscription call is entitled to know what spent it.
+   */
+  openedBy: string | null;
 }
 
 const GATE_SHUT =
   `${LIVE_SUBSCRIPTION_GATE} is unset — the default gate never spends Johan's subscription`;
 
 export function resolveSubscriptionGate(probe: SubscriptionProbe): SubscriptionGate {
-  const enabled = probe.env[LIVE_SUBSCRIPTION_GATE] === "1";
-  return { claude: half(enabled, probe), enabled };
+  // Either gate. #43's asks for the live Claude drive, and since SPEC §1 this
+  // IS the live Claude drive; this one asks for it without the Codex burn.
+  const openedBy =
+    [LIVE_SUBSCRIPTION_GATE, LIVE_AGENT_GATE].find(
+      (name) => probe.env[name] === "1",
+    ) ?? null;
+  const enabled = openedBy !== null;
+  return { claude: half(enabled, probe), enabled, openedBy };
 }
 
 function half(enabled: boolean, probe: SubscriptionProbe): LiveHalfOutcome {
@@ -85,12 +119,13 @@ function missingForSubscription(probe: SubscriptionProbe): string | null {
 export function describeSubscriptionGate(gate: SubscriptionGate): string {
   const banner: Readonly<Record<LiveHalfStatus, string>> = LIVE_HALF_BANNER;
   if (!gate.enabled) {
-    return `argus: subscription-mode Claude drive SKIPPED — set ${LIVE_SUBSCRIPTION_GATE}=1 to run it; it spends Johan's own subscription (no token)`;
+    return `argus: subscription-mode Claude drive SKIPPED — set ${LIVE_SUBSCRIPTION_GATE}=1 (or ${LIVE_AGENT_GATE}=1) to run it; it spends Johan's own subscription (no token)`;
   }
   return [
-    `${LIVE_SUBSCRIPTION_GATE}=1 — the subscription-mode Claude drive is ENABLED`,
+    `${gate.openedBy}=1 — the subscription-mode Claude drive is ENABLED`,
     `  claude  ${banner[gate.claude.status]}  ${gate.claude.reason}`,
     "  real HOME, sandbox cwd, no token: the blast radius here is scripted scope, not an OS boundary",
+    "  SPEC §1: Argus never requires Anthropic API access — this is the default live-Claude path",
   ].join("\n");
 }
 

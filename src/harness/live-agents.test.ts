@@ -23,6 +23,7 @@ import { createIsolatedAgentSpawner, createSandbox, type Sandbox } from "./index
 import {
   CODEX_AUTH_FILE,
   describeLiveAgentGate,
+  hermeticClaudeHalf,
   liveHalfTitle,
   LIVE_AGENT_GATE,
   probeLiveAgents,
@@ -47,6 +48,13 @@ import {
  * CODEX_HOME, HERMES_HOME, XDG and ARGUS_REPOS_FILE, a throwaway git repo and
  * a throwaway worktree per agent — plus #41's refusal, which rejects any
  * HOME/CLAUDE_CONFIG_DIR under the real home before a process starts.
+ *
+ * AMENDED BY #49. The Claude drive in this file is the OPTIONAL hermetic one,
+ * and it registers only when a `CLAUDE_CODE_OAUTH_TOKEN` actually exists. SPEC
+ * §1 forbids requiring Anthropic API access, so the REQUIRED Claude drive is
+ * the subscription one in `subscription-drive.test.ts`, which #43's gate also
+ * opens. Untokened, this file's Claude drive is SKIPPED — the stricter mode
+ * was not selected — and never NOT RUN, because the half is running elsewhere.
  */
 const checkout = fileURLToPath(new URL("../../", import.meta.url));
 const gate = resolveLiveAgentGate(probeLiveAgents());
@@ -121,7 +129,7 @@ const DISPATCH =
   "nothing else. Do not run any commands and do not write any files.";
 
 test(
-  "the Claude half is isolated already — only the subscription call is unrun",
+  "the optional hermetic path still refuses to run untokened, and says so first",
   async () => {
     const sandbox = await createSandbox({ checkout });
 
@@ -134,8 +142,15 @@ test(
       // The refusal that fires is the one that proves the other did NOT: #41
       // rejects a real-home HOME/CLAUDE_CONFIG_DIR *before* the token is even
       // considered, so reaching the token message means this sandbox env is
-      // already outside the real home. The day a token is provisioned, the
-      // only untested thing left in that drive is the API call itself.
+      // already outside the real home.
+      //
+      // #49 keeps this refusal exactly as it was. The hermetic spawner is the
+      // stricter mode, and it must still refuse rather than fall back: a
+      // caller who NAMED `createIsolatedAgentSpawner` asked for an OS-enforced
+      // boundary, and quietly giving them a real-home session instead would be
+      // the "differ by a forgotten argument" failure §13 forbids. The fallback
+      // to subscription mode happens in the GATE, which chooses which drive
+      // registers — never inside a spawner, which cannot change what it is.
       expect(
         spawner.spawn({
           agent: "claude",
@@ -157,6 +172,12 @@ test("the default gate is closed, and both drives say so in their names", () => 
   // bare `test(`, or titled with a constant, this is what notices.
   if (Bun.env[LIVE_AGENT_GATE] === "1") {
     expect(gate.enabled).toBe(true);
+    // #49's invariant, asserted on the REAL environment of whoever opened the
+    // gate: with the gate open, the Claude half is never NOT RUN unless the
+    // CLI itself is missing. A missing token selects subscription mode.
+    expect(
+      gate.claude.status === "not-run" ? gate.claude.reason : "run-or-skipped",
+    ).toBe(probeLiveAgents().claudeInstalled ? "run-or-skipped" : "the claude CLI is not on PATH");
     return;
   }
   expect(gate.enabled).toBe(false);
@@ -265,10 +286,15 @@ test.skipIf(gate.codex.status !== "run")(
   LIVE_BUDGET_MS,
 );
 
-test.skipIf(gate.claude.status !== "run")(
+// The OPTIONAL stricter drive. Registered under `hermeticClaudeHalf`, not the
+// gate's own Claude verdict: untokened, that verdict now says RUN in
+// SUBSCRIPTION mode, which is a different spawner in a different file.
+const hermetic = hermeticClaudeHalf(gate);
+
+test.skipIf(hermetic.status !== "run")(
   liveHalfTitle(
-    "§13 live drive: a real Claude Opus 5 session through the harness seam",
-    gate.claude,
+    "§13 live drive (OPTIONAL hermetic mode): a real Claude Opus 5 session through the harness seam",
+    hermetic,
   ),
   async () => {
     const sandbox = await createSandbox({ checkout });
