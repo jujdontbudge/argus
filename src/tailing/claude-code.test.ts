@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { claudeProjectDir, createClaudeCodeSource } from "./claude-code";
@@ -26,6 +26,23 @@ function userLine(overrides: Record<string, unknown> = {}): string {
 
 function parserFor(file = "/tmp/proj-slug/s-1.jsonl") {
   return createClaudeCodeSource({ dir: "/tmp/proj-slug" }).createParser(file);
+}
+
+async function runGit(cwd: string, args: string[]): Promise<void> {
+  const child = Bun.spawn(["git", "-C", cwd, ...args], {
+    env: {
+      ...Bun.env,
+      GIT_AUTHOR_EMAIL: "fixture@invalid.example",
+      GIT_AUTHOR_NAME: "Argus Fixture",
+      GIT_COMMITTER_EMAIL: "fixture@invalid.example",
+      GIT_COMMITTER_NAME: "Argus Fixture",
+    },
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  if ((await child.exited) !== 0) {
+    throw new Error(await new Response(child.stderr).text());
+  }
 }
 
 describe("claude-code source", () => {
@@ -64,6 +81,29 @@ describe("claude-code source", () => {
 });
 
 describe("claude-code parser", () => {
+  test("resolves a real linked-worktree cwd to its parent repository", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-claude-source-"));
+    try {
+      const parent = join(root, "parent");
+      const worktree = join(root, "worktrees/ticket-51");
+      await mkdir(parent, { recursive: true });
+      await runGit(parent, ["init", "--quiet"]);
+      await runGit(parent, ["commit", "--quiet", "--allow-empty", "-m", "fixture"]);
+      await mkdir(join(root, "worktrees"), { recursive: true });
+      await runGit(parent, ["worktree", "add", "--quiet", "--detach", worktree]);
+
+      const events = parserFor().parseLine(userLine({ cwd: worktree }));
+
+      expect(events[0]).toMatchObject({
+        type: "session-meta",
+        cwd: worktree,
+        repo: await realpath(parent),
+      });
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
   test("a typed user record yields session-meta on first sight, then the message", () => {
     const parser = parserFor();
 
