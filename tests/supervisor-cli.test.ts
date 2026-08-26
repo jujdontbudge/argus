@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { EyeHealthReporter } from "../src/supervisor/health.ts";
+
 const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 const roots: string[] = [];
 
@@ -141,6 +143,7 @@ describe("argus supervisor CLI", () => {
         watchers: [{ eye: "reviewer", pid: process.pid, repo: repoA, state: "running" }],
       }),
     );
+    await new EyeHealthReporter(repoA, "reviewer").start();
 
     const result = await run(["status"], repoA, env);
 
