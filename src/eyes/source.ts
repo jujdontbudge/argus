@@ -10,8 +10,7 @@ import {
   type SessionRecord,
 } from "../provenance/index.ts";
 import {
-  claudeProjectDir,
-  createClaudeCodeSource,
+  createClaudeCodeProjectsSource,
   createCodexSource,
   createHermesSource,
   readNewLines,
@@ -21,9 +20,14 @@ import {
   type CursorMap,
   Tailer,
 } from "../tailing/index.ts";
+import { canonicalPath, repositoryFor } from "../tailing/codex.ts";
 import { loadHonchoBinding } from "./honcho/honcho.ts";
 
-function codexForRepo(source: TranscriptSource, repo: string): TranscriptSource {
+function sessionsForRepo(
+  source: TranscriptSource,
+  repo: string,
+): TranscriptSource {
+  const resolvedRepo = repositoryFor(repo) ?? canonicalPath(repo);
   return {
     ...source,
     createParser(file: string): SourceParser {
@@ -33,10 +37,12 @@ function codexForRepo(source: TranscriptSource, repo: string): TranscriptSource 
         parseLine(line: string): TailEvent[] {
           const events = parser.parseLine(line);
           for (const event of events) {
-            if (
-              event.type === "session-meta" &&
-              (event.repo === repo || event.cwd === repo)
-            ) {
+            if (event.type !== "session-meta") continue;
+            const eventRepo = [event.repo, event.cwd]
+              .filter((path): path is string => path !== undefined)
+              .map((path) => repositoryFor(path) ?? canonicalPath(path))
+              .find((path) => path !== undefined);
+            if (eventRepo === resolvedRepo) {
               accepted.add(event.sessionId);
             }
           }
@@ -100,10 +106,13 @@ export async function createRepoTranscriptSource(
   const hermesRoot = env.HERMES_HOME ?? join(home, ".hermes");
   const { workspace } = await loadHonchoBinding(repo);
   return combine([
-    createClaudeCodeSource({
-      dir: claudeProjectDir(repo, join(claudeRoot, "projects")),
-    }),
-    codexForRepo(createCodexSource({ codexHome }), repo),
+    sessionsForRepo(
+      createClaudeCodeProjectsSource({
+        projectsRoot: join(claudeRoot, "projects"),
+      }),
+      repo,
+    ),
+    sessionsForRepo(createCodexSource({ codexHome }), repo),
     createHermesSource({ hermesRoot, profiles: [workspace] }),
   ]);
 }

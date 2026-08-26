@@ -24,6 +24,11 @@ export interface ClaudeCodeSourceOptions {
   dir: string;
 }
 
+export interface ClaudeCodeProjectsSourceOptions {
+  /** Root containing every Claude project slug directory. */
+  projectsRoot: string;
+}
+
 type Rec = Record<string, unknown>;
 
 function asRecord(value: unknown): Rec | null {
@@ -162,6 +167,39 @@ export function createClaudeCodeSource(
         .filter((name) => name.endsWith(".jsonl"))
         .sort()
         .map((name) => join(dir, name));
+    },
+    createParser: (file) => new ClaudeCodeParser(file),
+  };
+}
+
+/**
+ * Discover transcripts across Claude's project directories. Repo-scoped
+ * callers must filter the parsed session metadata by repository identity;
+ * project slugs are storage locations, not provenance.
+ */
+export function createClaudeCodeProjectsSource(
+  options: ClaudeCodeProjectsSourceOptions,
+): TranscriptSource {
+  const { projectsRoot } = options;
+  return {
+    id: "claude-code",
+    watchPaths: () => [projectsRoot],
+    listFiles: async () => {
+      const projects = await readdir(projectsRoot, { withFileTypes: true }).catch(
+        () => [],
+      );
+      const files = await Promise.all(
+        projects
+          .filter((project) => project.isDirectory())
+          .map(async (project) => {
+            const dir = join(projectsRoot, project.name);
+            const names = await readdir(dir).catch(() => [] as string[]);
+            return names
+              .filter((name) => name.endsWith(".jsonl"))
+              .map((name) => join(dir, name));
+          }),
+      );
+      return files.flat().sort();
     },
     createParser: (file) => new ClaudeCodeParser(file),
   };

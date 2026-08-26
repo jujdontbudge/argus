@@ -388,14 +388,12 @@ export function fullJourneyScenario(options: FullJourneyOptions): ScenarioHandle
     recordLiveEvidence(
       `agents: ${spoken.length} sentinel reply/replies across ${agents.length} live leg(s)`,
     );
-    // OBSERVED, and reported rather than fixed: this is normally FEWER than
-    // `spoken`. `createRepoTranscriptSource` reads the repo's OWN Claude slug,
-    // and a session driven into a worktree writes under the worktree's slug,
-    // so the Claude leg is invisible to a repo-scoped watcher while the Codex
-    // leg — matched by `codexForRepo` on session-meta — is not. Relocating the
-    // transcript under the repo slug would make both legs "visible" by writing
-    // it somewhere its session never ran, which is the class of convenience
-    // this journey exists to refuse.
+    // #75: production enumerates Claude's real project directories and admits
+    // sessions by their resolved repository identity, just as it does Codex.
+    // Hold that source to every reply the agents actually spoke. The archived
+    // #74 run remains honest evidence of the old 1-of-2 result; this stronger
+    // assertion must pass on the next explicitly authorised live run rather
+    // than fabricating 2-of-2 by relocating a transcript.
     const visible = sentinelMessages(
       await new Tailer(
         await createRepoTranscriptSource(
@@ -405,8 +403,8 @@ export function fullJourneyScenario(options: FullJourneyOptions): ScenarioHandle
       ).catchUp(),
     );
     assert(
-      visible.length > 0,
-      "production's own repo-scoped source presents the live reply to the watchers",
+      visible.length === spoken.length,
+      "production's own repo-scoped source presents every live reply to the watchers",
     );
     recordLiveEvidence(
       `repo-scoped source: ${visible.length} of ${spoken.length} live sentinel reply/replies visible to the watchers`,
@@ -688,7 +686,7 @@ export const FULL_JOURNEY_MANIFESTS: readonly LabeledScenarioManifest[] = [
         ],
         id: "13.1.batch-end-to-end",
         shortfall:
-          "a live session ran end to end and production's own watchers consumed it, but the batch's merge/close leg is not driven here — see 13.1.tickets-closed. And only ONE leg's words reach the watchers: a session run in a worktree writes its Claude transcript under the WORKTREE's slug, which `createRepoTranscriptSource` (repo slug only) never reads, so the archived live evidence is the Codex leg's. The journey reports that ratio as evidence rather than papering over it by relocating a transcript to a directory its session never wrote to",
+          "a live session ran end to end and production's own watchers consumed it, but the batch's merge/close leg is not driven here — see 13.1.tickets-closed. #75 makes the next live run require every leg's words to reach the watchers, but #74's archived live evidence remains 1 of 2 until that opt-in journey is explicitly rerun; the historical shortfall is not claimed lifted by a structural regression test",
         spec: "run a ticket batch end to end",
       },
       {
@@ -775,7 +773,7 @@ export const FULL_JOURNEY_MANIFESTS: readonly LabeledScenarioManifest[] = [
       {
         assertions: [
           "the real archiver watcher archived the live agent's own words",
-          "production's own repo-scoped source presents the live reply to the watchers",
+          "production's own repo-scoped source presents every live reply to the watchers",
           "across the kill the archive holds every live sentinel message exactly once — none lost, none duplicated",
         ],
         id: "13.6.backfill",

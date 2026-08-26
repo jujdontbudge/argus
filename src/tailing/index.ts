@@ -10,6 +10,8 @@
 export {
   claudeProjectDir,
   createClaudeCodeSource,
+  createClaudeCodeProjectsSource,
+  type ClaudeCodeProjectsSourceOptions,
   type ClaudeCodeSourceOptions,
 } from "./claude-code";
 export {
