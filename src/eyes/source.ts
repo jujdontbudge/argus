@@ -21,6 +21,7 @@ import {
   type CursorMap,
   Tailer,
 } from "../tailing/index.ts";
+import { recordOriginRefusals } from "../provenance/origin-audit.ts";
 import { loadHonchoBinding } from "./honcho/honcho.ts";
 
 function codexForRepo(source: TranscriptSource, repo: string): TranscriptSource {
@@ -166,6 +167,17 @@ export class ProvenanceFeed {
       if (output.record !== null) records.push(output.record);
     }
     audits.push(...this.#classifier.sweep(Date.now()));
-    return { audits, records, sessions };
+    const recordedOriginRefusals = new Set(
+      await recordOriginRefusals(this.#repo, audits),
+    );
+    return {
+      audits: audits.filter(
+        (audit) =>
+          audit.type !== "claude-origin-kind-refused" ||
+          recordedOriginRefusals.has(audit),
+      ),
+      records,
+      sessions,
+    };
   }
 }

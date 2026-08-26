@@ -91,6 +91,13 @@ export type ProvenanceAuditEvent =
       tag: string;
       text: string;
       classifiedAs: "system" | "johan";
+    }
+  /** Claude refused a user-role record because its origin kind was not human. */
+  | {
+      type: "claude-origin-kind-refused";
+      sessionId: string;
+      ts: string;
+      kind: string;
     };
 
 export interface ClassifyOutput {
@@ -310,7 +317,18 @@ export class ProvenanceClassifier {
       return { record: { ...base, author: "agent", via: "assistant" }, audits: [] };
     }
     if (!event.candidate) {
-      return { record: { ...base, author: "system", via: "non-candidate" }, audits: [] };
+      return {
+        record: { ...base, author: "system", via: "non-candidate" },
+        audits:
+          event.origin !== undefined && event.origin !== "human"
+            ? [{
+                type: "claude-origin-kind-refused",
+                sessionId: event.sessionId,
+                ts: event.ts,
+                kind: event.origin,
+              }]
+            : [],
+      };
     }
     const hash = hashText(event.text);
     if (state.dispatchHashes?.has(hash)) {
