@@ -313,23 +313,62 @@ const AGENT_COMMANDS: Readonly<Record<TestAgent, readonly string[]>> = {
   codex: ["codex", "-c", "model_reasoning_effort=high"],
 };
 
-export class SimulationDriverRunner {
-  constructor(private readonly spawner: AgentSpawner) {}
+/**
+ * How a driven agent is invoked, per agent, given its scratch worktree.
+ *
+ * ADDITIVE, #63. The defaults stay `AGENT_COMMANDS`, which are the INTERACTIVE
+ * invocations SPEC §13 names — and which no caller could ever have driven to
+ * completion, because an interactive session never exits. That is a large part
+ * of why `SimulationDriverRunner` had no caller outside its own unit test:
+ * starting it was possible, finishing it was not. These hooks let the full
+ * real-driver journey issue the headless forms (`claude -p`, `codex exec`) and
+ * hand Codex its scratch `CODEX_HOME`, without changing what the class is or
+ * what any existing caller gets.
+ */
+export interface SimulationDriverOptions {
+  /** Which agents to drive. Defaults to both, as SPEC §13 names both. */
+  agents?: readonly TestAgent[];
+  command?(agent: TestAgent, cwd: string): readonly string[];
+}
 
-  async spawnTestAgents(sandbox: Sandbox): Promise<AgentSpawnResult[]> {
-    const agents: TestAgent[] = ["claude", "codex"];
+/** One driven agent: what ran, where, and what it returned. */
+export interface DrivenAgent {
+  agent: TestAgent;
+  command: readonly string[];
+  cwd: string;
+  result: AgentSpawnResult;
+  tab: string;
+}
+
+export class SimulationDriverRunner {
+  constructor(
+    private readonly spawner: AgentSpawner,
+    private readonly options: SimulationDriverOptions = {},
+  ) {}
+
+  /** The full record of the drive — worktrees, commands and results. */
+  async drive(sandbox: Sandbox): Promise<DrivenAgent[]> {
+    const agents = this.options.agents ?? (["claude", "codex"] as TestAgent[]);
     return Promise.all(
-      agents.map(async (agent) => {
+      agents.map(async (agent): Promise<DrivenAgent> => {
         const cwd = await sandbox.createWorktree(agent);
-        return this.spawner.spawn({
+        const command =
+          this.options.command?.(agent, cwd) ?? AGENT_COMMANDS[agent];
+        const tab = `argus-test-${sandbox.id}-${agent}`;
+        const result = await this.spawner.spawn({
           agent,
-          command: AGENT_COMMANDS[agent],
+          command,
           cwd,
           env: sandbox.env,
-          tab: `argus-test-${sandbox.id}-${agent}`,
+          tab,
         });
+        return { agent, command, cwd, result, tab };
       }),
     );
+  }
+
+  async spawnTestAgents(sandbox: Sandbox): Promise<AgentSpawnResult[]> {
+    return (await this.drive(sandbox)).map(({ result }) => result);
   }
 }
 
@@ -353,9 +392,29 @@ export interface ScenarioAssertion {
   passed: boolean;
 }
 
+/**
+ * Ticket #63 — what a scenario's pass is actually worth.
+ *
+ * STRUCTURAL: real code paths over substituted components — fixture brains, a
+ * fake `gh`, an in-memory Honcho, a stub `cmux`, hand-authored hook payloads.
+ * LIVE: a real agent ran under this scenario and its own output was graded.
+ *
+ * Deliberately NOT a declaration. A report is LIVE only if the scenario called
+ * `recordLiveEvidence`, and the only thing that can honestly call it is code
+ * that spawned an agent, so the verdict cannot be improved by editing a
+ * manifest. `verdicts.ts` narrows it further with the slot's declared doubles.
+ */
+export type ScenarioVerdict = "LIVE" | "STRUCTURAL";
+
 export interface ScenarioContext {
   assert(condition: boolean, description: string): void;
   assertSandboxed(path: string, description: string): void;
+  /**
+   * Record that a real agent ran, and what it produced. This is the ONLY way
+   * a report reaches the LIVE verdict; a scenario that never spawns an agent
+   * has nothing truthful to pass here, which is exactly the point.
+   */
+  recordLiveEvidence(evidence: string): void;
   sandbox: Sandbox;
 }
 
@@ -566,11 +625,15 @@ export interface ScenarioReport {
   assertions: ScenarioAssertion[];
   error: string | null;
   id: string;
+  /** Everything a live agent actually produced under this run. Usually empty. */
+  liveEvidence: string[];
   name: string;
   sandboxRoot: string;
   status: "failed" | "passed";
   teardown: "completed" | "failed";
   up: CommandResult;
+  /** #63: no scenario reports a bare pass. See `ScenarioVerdict`. */
+  verdict: ScenarioVerdict;
 }
 
 export interface ScenarioRunResult extends ScenarioReport {
@@ -853,6 +916,7 @@ export async function runScenario(
   const id = randomUUID();
   const sandbox = await createSandbox({ checkout: options.checkout });
   const assertions: ScenarioAssertion[] = [];
+  const liveEvidence: string[] = [];
   let error: string | null = null;
   let status: ScenarioReport["status"] = "passed";
   let teardown: ScenarioReport["teardown"] = "completed";
@@ -867,6 +931,9 @@ export async function runScenario(
       assert,
       assertSandboxed(path, description) {
         assert(isWithin(sandbox.root, path), description);
+      },
+      recordLiveEvidence(evidence) {
+        liveEvidence.push(evidence);
       },
       sandbox,
     });
@@ -887,11 +954,15 @@ export async function runScenario(
     assertions,
     error,
     id,
+    liveEvidence,
     name: options.name,
     sandboxRoot: sandbox.root,
     status,
     teardown,
     up: sandbox.up,
+    // Evidence, never assertion: a run that spawned no agent has no evidence
+    // to record, so it cannot claim to have covered the live system.
+    verdict: liveEvidence.length > 0 ? "LIVE" : "STRUCTURAL",
   };
   const reportPath = join(options.reportDirectory, `${id}.json`);
   await Bun.write(reportPath, `${JSON.stringify(report, null, 2)}\n`);

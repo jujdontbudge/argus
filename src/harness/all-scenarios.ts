@@ -26,6 +26,14 @@
  * scenario 4 keeps 4 of its 5, and the suite still reports ten green. That is
  * what `all-scenarios.test.ts` pins: not just that the slots are filled, but
  * that each contributing ticket's own assertion is still in the transcript.
+ *
+ * AMENDED BY #63, which is the step this docblock stops one short of. A
+ * LOSSLESS composition of all ten slots still overstates itself, because
+ * every slot drives fixture brains, a fake `gh`, an in-memory Honcho, a stub
+ * `cmux` and hand-authored hook payloads. "Ten green" is therefore never the
+ * honest summary; `verdicts.ts` holds the SPEC §13-derived assertion
+ * manifests and the STRUCTURAL/LIVE verdict each slot actually earns, and the
+ * suite prints them rather than a bare pass.
  */
 import { registerCompletionScenarios } from "../complete/scenarios.ts";
 import { registerEventScenarios } from "../events/scenarios.ts";

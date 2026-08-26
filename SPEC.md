@@ -492,6 +492,21 @@ Codex, makes untracked implementation edits, and drops preference statements mid
 Every feature ships with its scenario; pass/fail is asserted by the harness, never
 eyeballed.
 
+**Verdicts, not bare passes (ticket #63).** A green scenario states only that its
+own assertions held, and every slot in the core suite runs against substituted
+components — fixture eye brains, a fake `gh`, an in-memory Honcho, a stub `cmux`,
+hand-authored hook payloads. So no scenario reports a bare pass. Each reports a
+**STRUCTURAL** or **LIVE** verdict, graded against an assertion manifest derived
+from the scenario text below rather than from whatever the slot happens to
+assert, so a requirement this section states and no slot covers is printed as a
+gap instead of being defined out of existence by the assertion list. LIVE is
+unreachable by declaration: it requires evidence recorded from an agent the
+scenario itself spawned. The one path that earns it is the opt-in FULL
+real-driver journey (`ARGUS_LIVE_FULL_JOURNEY=1`), which starts the simulation
+driver against real agents and then runs production's own watcher processes over
+what they wrote. It has its own gate — `ARGUS_LIVE_AGENTS` does not open it,
+because it costs far more — and the same three statuses as every other live half.
+
 **Test agents and isolation (Johan directive, 2026-08-24; amended 2026-08-25).** The
 governing rule is the original one, and it is defined at the **repo** level: every
 agent that runs uses the throwaway sandbox repo and scratch tabs/worktrees only,

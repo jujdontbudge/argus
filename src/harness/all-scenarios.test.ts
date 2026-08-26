@@ -7,7 +7,13 @@ import {
   createFullScenarioRegistry,
   registerAllScenarios,
 } from "./all-scenarios.ts";
-import { createScenarioRegistry, runScenarios } from "./index.ts";
+import {
+  createScenarioRegistry,
+  runScenarios,
+  type CoreScenarioNumber,
+  type ScenarioReport,
+} from "./index.ts";
+import { gradeAll, renderVerdictTable } from "./verdicts.ts";
 import { registerArchiverScenarios } from "../eyes/archiver/scenarios.ts";
 import { registerDigestScenarios } from "../eyes/digest/scenarios.ts";
 import { registerHermesScenarios } from "../tailing/hermes-scenarios.ts";
@@ -71,6 +77,35 @@ const CONTRIBUTED: Record<number, string[]> = {
   ],
 };
 
+/**
+ * #63 — the audit's central finding, as a number that cannot drift.
+ *
+ * Of 40 SPEC-derived requirements across the ten slots, 4 are COVERED with no
+ * known shortfall, 34 are PARTIAL and 2 are UNCOVERED. All four gaps the audit
+ * named are in here — scenario 1's closure (13.1.tickets-closed), scenario 7's
+ * native hook (13.7.native-hook), scenario 9's representation
+ * (13.9.representation-johan-only) and scenario 10's dormant peer
+ * (13.10.no-other-instance-noticed) — and none of them is a failing test.
+ * Downgrading a claim is what success looks like for this ticket, so `covered`
+ * going DOWN is not a failure. Changing silently is.
+ */
+const PINNED_COVERAGE: Record<number, {
+  covered: number;
+  partial: number;
+  uncovered: number;
+}> = {
+  1: { covered: 0, partial: 7, uncovered: 0 },
+  2: { covered: 0, partial: 3, uncovered: 1 },
+  3: { covered: 0, partial: 4, uncovered: 0 },
+  4: { covered: 0, partial: 3, uncovered: 0 },
+  5: { covered: 1, partial: 2, uncovered: 0 },
+  6: { covered: 1, partial: 2, uncovered: 0 },
+  7: { covered: 1, partial: 3, uncovered: 0 },
+  8: { covered: 0, partial: 3, uncovered: 0 },
+  9: { covered: 0, partial: 2, uncovered: 1 },
+  10: { covered: 1, partial: 1, uncovered: 0 },
+};
+
 describe("the full SPEC §13 suite", () => {
   test("registers all ten scenario slots", () => {
     const slots = createFullScenarioRegistry().list();
@@ -113,7 +148,7 @@ describe("the full SPEC §13 suite", () => {
   }, 120_000);
 
   test(
-    "all ten scenarios pass with every ticket's half still asserted",
+    "all ten scenarios run STRUCTURAL, with every ticket's half asserted and every SPEC §13 gap named",
     async () => {
       const registry = createScenarioRegistry();
       registerAllScenarios(registry);
@@ -131,8 +166,10 @@ describe("the full SPEC §13 suite", () => {
             })),
         });
 
+        const byslot = new Map<CoreScenarioNumber, ScenarioReport>();
         for (const report of reports) {
-          const slot = Number.parseInt(report.name, 10);
+          const slot = Number.parseInt(report.name, 10) as CoreScenarioNumber;
+          byslot.set(slot, report);
           const failed = report.assertions.filter(({ passed }) => !passed);
           expect({
             slot,
@@ -151,6 +188,51 @@ describe("the full SPEC §13 suite", () => {
               .toEqual({ slot, contributed, present: true });
           }
         }
+
+        // #63 — the surface this ticket exists to build. Printed on every
+        // suite run, because "ten green" was never the honest summary and a
+        // verdict nobody sees is the same overclaim in a nicer data structure.
+        const grades = gradeAll(byslot);
+        console.log(renderVerdictTable(grades));
+
+        // NOT RUN is what a bare pass hid. Every slot drives fixture brains,
+        // a fake `gh`, an in-memory Honcho, a stub `cmux` and hand-authored
+        // hook payloads, so every slot is STRUCTURAL — and the only way that
+        // changes is a slot recording evidence from an agent it spawned.
+        expect(grades.map(({ number, verdict }) => ({ number, verdict }))).toEqual(
+          ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as CoreScenarioNumber[]).map(
+            (number) => ({ number, verdict: "STRUCTURAL" as const }),
+          ),
+        );
+
+        // A manifest requirement whose assertion vanished. This is the one
+        // grade that IS a regression: the suite lost a half, or a manifest
+        // names an assertion the slot never produced.
+        expect(
+          grades.flatMap(({ number, requirements }) =>
+            requirements
+              .filter(({ coverage }) => coverage === "missing")
+              .map(({ absent, id }) => ({ absent, id, number })),
+          ),
+        ).toEqual([]);
+
+        // THE HONEST NUMBERS, pinned. Not a target — a statement of where the
+        // suite is. `partial` and `uncovered` are findings, not failures, so
+        // the assertion is EQUALITY: a gap cannot appear silently, and closing
+        // one requires deleting its shortfall in `verdicts.ts` and editing
+        // this literal, which is the only way these numbers may improve.
+        expect(
+          Object.fromEntries(
+            grades.map(({ counts, number }) => [
+              number,
+              {
+                covered: counts.covered,
+                partial: counts.partial,
+                uncovered: counts.uncovered,
+              },
+            ]),
+          ),
+        ).toEqual(PINNED_COVERAGE);
       } finally {
         await rm(reportDirectory, { force: true, recursive: true });
       }
