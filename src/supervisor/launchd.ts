@@ -48,6 +48,10 @@ export async function convergeSupervisorJob(
   const loaded = await launchctl.isLoaded();
   let reloaded = false;
 
+  if (options.logPath !== undefined) {
+    await mkdir(dirname(options.logPath), { recursive: true });
+  }
+
   if (changed) {
     await mkdir(dirname(options.plistPath), { recursive: true });
     const temporaryPath = `${options.plistPath}.${process.pid}.tmp`;

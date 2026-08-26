@@ -1,5 +1,6 @@
 import { accessSync, constants } from "node:fs";
-import { delimiter, dirname, isAbsolute, join } from "node:path";
+import { tmpdir } from "node:os";
+import { delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -118,6 +119,14 @@ function launchdPath(
   return [...new Set(directories)].join(delimiter);
 }
 
+function isWithin(parent: string, child: string): boolean {
+  const pathFromParent = relative(resolve(parent), resolve(child));
+  return (
+    pathFromParent === "" ||
+    (!pathFromParent.startsWith("..") && !isAbsolute(pathFromParent))
+  );
+}
+
 export function supervisorConfiguration(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): SupervisorConfiguration {
@@ -133,11 +142,18 @@ export function supervisorConfiguration(
   const plistPath =
     env.ARGUS_SUPERVISOR_PLIST ??
     join(home, "Library", "LaunchAgents", `${label}.plist`);
+  const logPath =
+    env.ARGUS_SUPERVISOR_LOG_FILE ??
+    join(home, "Library", "Logs", "Argus", "supervisor.log");
   const launchctlExecutable = env.ARGUS_LAUNCHCTL ?? "/bin/launchctl";
   const customRegistry = env.ARGUS_REPOS_FILE !== undefined;
+  const scratchHome = ["/tmp", "/private/tmp", tmpdir()].some((root) =>
+    isWithin(root, home),
+  );
   const manageLaunchd =
     env.ARGUS_SUPERVISOR_CONTROL !== "disabled" &&
-    (!customRegistry || env.ARGUS_LAUNCHCTL !== undefined);
+    (!customRegistry || env.ARGUS_LAUNCHCTL !== undefined) &&
+    (!scratchHome || env.ARGUS_ALLOW_SCRATCH_LAUNCHD === "1");
   const bunPath = process.execPath;
   const codexPath = executablePath(
     "codex",
@@ -153,10 +169,18 @@ export function supervisorConfiguration(
       codexPath,
       ghPath,
       label,
+      logPath,
       path: launchdPath(env.PATH, [bunPath, codexPath, ghPath]),
       plistPath,
+      restartDelayMilliseconds: env.ARGUS_SUPERVISOR_RESTART_MS ?? "1000",
+      restartLimit: env.ARGUS_SUPERVISOR_RESTART_LIMIT ?? "5",
+      restartMaxDelayMilliseconds:
+        env.ARGUS_SUPERVISOR_RESTART_MAX_MS ?? "60000",
+      restartWindowMilliseconds:
+        env.ARGUS_SUPERVISOR_RESTART_WINDOW_MS ?? "300000",
       registryPath,
       statusPath,
+      watchMaxRssMiB: env.ARGUS_WATCH_MAX_RSS_MB ?? "512",
     },
     launchctl: new CommandLaunchctl(launchctlExecutable, domain, label),
     manageLaunchd,

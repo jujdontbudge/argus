@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -115,6 +115,73 @@ describe("watcher supervisor", () => {
     );
   });
 
+  test("backs off exponentially and gives up after the restart-window limit", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-supervisor-"));
+    roots.push(root);
+    const registryPath = join(root, "repos");
+    const statusPath = join(root, "status.json");
+    const repo = join(root, "repo");
+    await Bun.write(registryPath, `${repo}\n`);
+    let nextPid = 250;
+    let now = 0;
+    const delays: number[] = [];
+    const spawned: FakeProcess[] = [];
+    const errorLog = spyOn(console, "error").mockImplementation(() => {});
+    const supervisor = new WatcherSupervisor({
+      now: () => now,
+      registryPath,
+      restartDelayMilliseconds: 10,
+      restartLimit: 3,
+      restartMaxDelayMilliseconds: 100,
+      restartWindowMilliseconds: 1_000,
+      sleep: async (milliseconds) => {
+        delays.push(milliseconds);
+        now += milliseconds;
+      },
+      spawn: () => {
+        const process = new FakeProcess(nextPid++);
+        spawned.push(process);
+        return process;
+      },
+      statusPath,
+    });
+    try {
+      await supervisor.reconcile();
+      for (let crash = 0; crash < 4; crash += 1) {
+        spawned.at(-1)!.crash();
+        const expected = 6 + Math.min(crash, 2);
+        for (
+          let attempt = 0;
+          (spawned.length < expected || errorLog.mock.calls.length < crash + 1) &&
+          attempt < 20;
+          attempt += 1
+        ) {
+          await Bun.sleep(1);
+        }
+      }
+
+      expect(delays).toEqual([10, 20, 40]);
+      expect(spawned).toHaveLength(8);
+      expect((await Bun.file(statusPath).json()).watchers).toHaveLength(4);
+      const messages = errorLog.mock.calls.map((call) => String(call[0]));
+      expect(messages).toContainEqual(
+        expect.stringContaining("restart 1/3 in 10ms"),
+      );
+      expect(messages).toContainEqual(
+        expect.stringContaining("restart 2/3 in 20ms"),
+      );
+      expect(messages).toContainEqual(
+        expect.stringContaining("restart 3/3 in 40ms"),
+      );
+      expect(messages).toContainEqual(
+        expect.stringContaining("restart limit reached; giving up"),
+      );
+    } finally {
+      errorLog.mockRestore();
+      await supervisor.stop();
+    }
+  });
+
   test("the daemon observes registry removal and terminates every child on shutdown", async () => {
     const root = await mkdtemp(join(tmpdir(), "argus-supervisor-"));
     roots.push(root);
@@ -151,5 +218,52 @@ describe("watcher supervisor", () => {
 
     expect(spawned).toHaveLength(5);
     expect(spawned.every((process) => process.killed)).toBe(true);
+  });
+
+  test("a second live watcher fleet queues on the cross-process lock", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-supervisor-"));
+    roots.push(root);
+    const registryPath = join(root, "repos");
+    const repo = join(root, "repo");
+    const fleetLockPath = join(root, "live-watcher-fleet.lock");
+    await Bun.write(registryPath, `${repo}\n`);
+    let nextPid = 400;
+    const firstSpawned: FakeProcess[] = [];
+    const secondSpawned: FakeProcess[] = [];
+    const first = new WatcherSupervisor({
+      fleetLockPath,
+      registryPath,
+      spawn: () => {
+        const process = new FakeProcess(nextPid++);
+        firstSpawned.push(process);
+        return process;
+      },
+      statusPath: join(root, "first-status.json"),
+    });
+    const second = new WatcherSupervisor({
+      fleetLockPath,
+      registryPath,
+      spawn: () => {
+        const process = new FakeProcess(nextPid++);
+        secondSpawned.push(process);
+        return process;
+      },
+      statusPath: join(root, "second-status.json"),
+    });
+    try {
+      await first.reconcile();
+      const queued = second.reconcile();
+      await Bun.sleep(25);
+
+      expect(firstSpawned).toHaveLength(5);
+      expect(secondSpawned).toHaveLength(0);
+
+      await first.stop();
+      await queued;
+      expect(secondSpawned).toHaveLength(5);
+    } finally {
+      await first.stop();
+      await second.stop();
+    }
   });
 });

@@ -4,9 +4,15 @@ export interface SupervisorPlistOptions {
   codexPath: string;
   ghPath: string;
   label: string;
+  logPath?: string;
   path: string;
+  restartDelayMilliseconds?: string;
+  restartLimit?: string;
+  restartMaxDelayMilliseconds?: string;
+  restartWindowMilliseconds?: string;
   registryPath: string;
   statusPath: string;
+  watchMaxRssMiB?: string;
 }
 
 function xml(value: string): string {
@@ -45,7 +51,19 @@ export function renderSupervisorPlist(
     <string>${xml(options.registryPath)}</string>
     <key>ARGUS_SUPERVISOR_STATUS_FILE</key>
     <string>${xml(options.statusPath)}</string>
+    <key>ARGUS_SUPERVISOR_RESTART_MS</key>
+    <string>${xml(options.restartDelayMilliseconds ?? "1000")}</string>
+    <key>ARGUS_SUPERVISOR_RESTART_LIMIT</key>
+    <string>${xml(options.restartLimit ?? "5")}</string>
+    <key>ARGUS_SUPERVISOR_RESTART_MAX_MS</key>
+    <string>${xml(options.restartMaxDelayMilliseconds ?? "60000")}</string>
+    <key>ARGUS_SUPERVISOR_RESTART_WINDOW_MS</key>
+    <string>${xml(options.restartWindowMilliseconds ?? "300000")}</string>
+    <key>ARGUS_WATCH_MAX_RSS_MB</key>
+    <string>${xml(options.watchMaxRssMiB ?? "512")}</string>
   </dict>
+  <key>StandardErrorPath</key>
+  <string>${xml(options.logPath ?? `${options.statusPath}.log`)}</string>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>

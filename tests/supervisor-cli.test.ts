@@ -52,6 +52,7 @@ if (args[0] === "bootout") await rm(Bun.env.FAKE_LAUNCHCTL_STATE!, { force: true
   const env = {
     ANTHROPIC_API_KEY: "must-not-reach-launchd",
     ANTHROPIC_AUTH_TOKEN: "must-not-reach-launchd",
+    ARGUS_ALLOW_SCRATCH_LAUNCHD: "1",
     ARGUS_CODEX_EXECUTABLE: join(bin, "codex"),
     ARGUS_GH_EXECUTABLE: join(bin, "gh"),
     ARGUS_LAUNCHCTL: launchctl,

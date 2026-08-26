@@ -453,6 +453,31 @@ starts them on login, restarts them on crash. It makes no decisions and holds no
 knowledge beyond the list of enabled repos. This is the single exception to
 "nothing global."
 
+Each watcher has a hard RSS ceiling of **512 MiB** by default, configurable with
+`ARGUS_WATCH_MAX_RSS_MB`. It checks its own resident memory on every poll and exits
+cleanly after logging the measured RSS and configured ceiling when the cap is
+crossed; the supervisor then performs the logged restart.
+
+Watcher restarts use exponential backoff from one second up to 60 seconds. After
+five restarts for the same repo/eye within five minutes, the supervisor gives up
+until that rolling window clears instead of spinning forever. The base delay, cap,
+limit, and window are configurable with `ARGUS_SUPERVISOR_RESTART_MS`,
+`ARGUS_SUPERVISOR_RESTART_MAX_MS`, `ARGUS_SUPERVISOR_RESTART_LIMIT`, and
+`ARGUS_SUPERVISOR_RESTART_WINDOW_MS`. Watcher exits, retry delays, and brakes are
+written to `~/Library/Logs/Argus/supervisor.log` by the LaunchAgent.
+
+Test harnesses set `ARGUS_SUPERVISOR_CONTROL=disabled`, and a `HOME` under a
+temporary directory cannot register a LaunchAgent unless the dedicated launchd
+test explicitly sets `ARGUS_ALLOW_SCRATCH_LAUNCHD=1`. Thus a sandbox `argus up`
+cannot leave a keepalive job in the user's GUI domain after its worker dies.
+
+**#81 workstream D soak acceptance:** after a warm-up sample, record every eye's
+RSS and PID at fixed intervals for multiple hours. RSS must have no sustained
+positive slope or unbounded high-water growth, every eye must stay below its hard
+ceiling, and the PID set plus supervisor restart log must show zero unplanned
+restarts. A ceiling-triggered restart fails the soak; it is a last-resort brake,
+not evidence that memory use is flat.
+
 ---
 
 ## 10. CLI
