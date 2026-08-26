@@ -346,6 +346,12 @@ test.skipIf(hermetic.status !== "run")(
       );
       const records = await classify(sandbox, events);
 
+      // #50 is what makes this assertion true of a real transcript. `claude
+      // -p` records its prompt `promptSource: "sdk"`, which the candidate
+      // filter did not admit until #50, so this drive would have failed here
+      // the first time it ever ran — and it had never run, because it needs a
+      // token nobody had provisioned. The subscription drive proves the same
+      // path live without one; this stays as the hermetic mode's copy.
       expect(
         records.some(
           (record) =>
