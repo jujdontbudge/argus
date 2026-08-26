@@ -65,7 +65,20 @@ export function shellQuote(text: string): string {
 }
 
 /**
- * `env -u … claude --session-id … $'…'`, as one line a shell will accept.
+ * `cd … && env -u … claude --session-id … $'…'`, as one line a shell accepts.
+ *
+ * THE `cd` IS NOT COSMETIC (#89). `WorkerSpawnRequest.cwd` is how every other
+ * route puts a session in the right directory — `Bun.spawn` takes it as an
+ * argument — and this route is typed into a shell, so it has to become a
+ * command or it does not happen. Until #95 it did not need to: the grill got
+ * `cmux new-workspace --cwd <repo>`, so the shell was BORN in R. #95 replaced
+ * that with `new-surface`, which has no `--cwd` and inherits the workspace's
+ * directory, and nothing replaced the cwd. A live drive (#89) then measured
+ * the consequence: a grill dispatched for a sandbox repo started a real Claude
+ * session in `~/argus` instead, because that is where the host workspace was.
+ * Every downstream store is repo-scoped, so all five stayed empty while
+ * `startGrill` reported `started` — SPEC §7.2's "a cmux workspace in R" lost
+ * its "in R" silently.
  *
  * The `env -u` prefix is SPEC §1 item 7 — "Argus never requires Anthropic API
  * access" — carried onto this path. Every other spawn in the tree gets it from
@@ -76,9 +89,20 @@ export function shellQuote(text: string): string {
  * itself, so the two paths cannot drift apart into "subscription mode
  * everywhere except the grill".
  */
-export function launchLine(executable: string, argv: readonly string[]): string {
+export function launchLine(
+  executable: string,
+  argv: readonly string[],
+  cwd?: string,
+): string {
   const unset = STRIPPED_ENV.flatMap((name) => ["-u", name]);
-  return ["env", ...unset, executable, ...argv.slice(1)].map(shellQuote).join(" ");
+  const command = ["env", ...unset, executable, ...argv.slice(1)]
+    .map(shellQuote)
+    .join(" ");
+  if (cwd === undefined) return command;
+  // `&&`, never `;`: a `cd` that fails must not leave the session starting in
+  // whatever directory the shell happened to be in, which is the whole failure
+  // this argument exists to close.
+  return `cd ${shellQuote(cwd)} && ${command}`;
 }
 
 export interface CmuxLaunchOptions {
@@ -122,7 +146,9 @@ export interface CmuxLaunchOptions {
 export function createCmuxLaunch(options: CmuxLaunchOptions): WorkerSpawn {
   const send = createCmuxSend(options.cmux ?? runCmux);
   return async (request): Promise<WorkerProcess> => {
-    const line = launchLine(request.executable, request.command);
+    // `request.cwd` is the repo `deployWorker` resolved (`checkout: "repo"`
+    // for a grill). Dropping it is how #89's drive ran in the wrong repo.
+    const line = launchLine(request.executable, request.command, request.cwd);
     const delivered = await send({
       surface: options.surface,
       text: line,

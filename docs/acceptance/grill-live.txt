@@ -1,0 +1,355 @@
+==============================================================================
+ARGUS LIVE GRILL VERIFICATION — ticket #89 (SPEC §14, first bullet)
+==============================================================================
+run on          2026-08-26, this machine
+gate            ARGUS_LIVE_GRILL — reached `run`
+bun             1.3.12
+claude          2.1.246 (Claude Code)          model claude-opus-5
+codex           codex-cli 0.149.1              eye brains, gpt-5.6-luna @ low
+cmux            0.62.2 (77) [6c203b514]
+Honcho          local, http://localhost:8000, health 200
+pocock-plus     1.2.3-johan.7 (active install per installed_plugins.json)
+
+THE BULLET, VERBATIM (SPEC.md:729-731):
+
+  "A grill session run through Hermes ends with: decisions in the digest,
+  durable facts in MEMORY.md, Johan-authored preferences in USER.md, the
+  exchange in Honcho and `archive.db` — with zero manual capture."
+
+Note the line numbers: the ticket cites SPEC.md:704-706, which is §13's
+scenario list. The bullet is at 729-731. The ticket also paraphrases it as "a
+grill session with Johan"; the SPEC says "run through Hermes", and says
+"Johan-authored preferences in USER.md" rather than "USER.md facts". Both
+differences matter and neither is smoothed over below.
+
+It had never been run. All ten §13 scenarios are AFK scenarios, and before
+this ticket `grep -rl grill src/harness/` returned nothing: the one flow §14
+opens with was the one flow no end-to-end scenario had ever exercised.
+
+------------------------------------------------------------------------------
+0. what was real, and what was not
+------------------------------------------------------------------------------
+REAL
+  the grill entry point   `startGrill` itself (src/grill/grill.ts), not a copy
+  the dispatch prompt     `grillPrompt`, and the registry's copy of it
+  the ordering            tab -> registry row (fsync) -> first keystroke
+  the session             one interactive `claude --model claude-opus-5`,
+                          Johan's subscription, no token, no API key
+  the answer              `sendToWorker` — registry-logged, §5 rule 2
+  the watchers            five real `argus watch` processes under the real
+                          `WatcherSupervisor`, holding the fleet lock
+  the eye brains          real `codex exec` (luna @ low — #54, unchanged)
+  the stores              written by production; nothing below was written by
+                          the driver
+
+SUBSTITUTED — one, and it is the honest limit
+  Johan                   a driver cannot be Johan. §7.2 step 3 is "Johan
+                          answers in the terminal directly"; the answer here
+                          goes through `sendToWorker`, so it is registry-logged
+                          by construction, so it classifies hermes-authored.
+
+NOT SUBSTITUTED, though it was at first. This driver was written against a
+`startGrill` that shelled `cmux new-workspace`, which Directive 14 forbids the
+harness to do, and it carried a seam rewriting that verb into `new-surface`.
+#95 then made a deployed session a TAB in the workspace Argus already runs in.
+The substitution became the production behaviour and was deleted rather than
+kept as a double that no longer doubles anything. cmux is REAL here.
+
+------------------------------------------------------------------------------
+1. the routed skill id, resolved against this machine
+------------------------------------------------------------------------------
+`src/grill/skills.ts` states the hazard in its own docblock:
+
+  "`claude` given a skill id that does not exist does not fail — it carries on
+  and does something adjacent, which is the worst possible failure for a
+  planning entry point."
+
+and `skills.test.ts:42-44` then asserts `GRILL_MODES.spec.skill` equals the
+literal `"pocock-plus:to-spec"` it was built from. A constant against a
+constant: the rename it warns about cannot fail it.
+
+`src/grill/installed.ts` (new) resolves each id the way the session will — the
+repo's canonical `.argus/skills/` first (SPEC §8.2), then the ACTIVE install
+named by `~/.claude/plugins/installed_plugins.json`. Not a glob over the
+cache: the cache holds 1.2.3-johan.2, .3 and .7 side by side, and three of the
+five skills exist in all of them, so a glob answers "installed" for a version
+`claude` will never load.
+
+  mode       id                           result    model-invocable
+  diagnosis  pocock-plus:diagnosing-bugs  resolved  yes
+  grilling   pocock-plus:grilling         resolved  yes
+  review     pocock-plus:code-review      resolved  yes
+  spec       pocock-plus:to-spec          resolved  NO
+  tickets    pocock-plus:to-tickets       resolved  NO
+
+  source for all five: pocock-plus (the repo's canonical store is empty)
+
+FINDING A — two of the five routed modes cannot work. `to-spec` and
+`to-tickets` carry `disable-model-invocation: true` in their frontmatter. They
+exist, they are reachable as slash commands, and a MODEL cannot invoke them.
+The grill dispatch prompt says "Use the <id> skill and <charter>." — a request
+for a model invocation, and for these two it is unsatisfiable. `claude` does
+not fail; it carries on and does something adjacent, which is the docblock's
+sentence reached by a route the docblock did not anticipate. `argus grill
+--mode spec` and `--mode tickets` are affected. NOT fixed here: the fix is a
+choice between changing the prompt to a slash invocation and changing the
+route, and that is a decision, not a repair.
+
+------------------------------------------------------------------------------
+2. assertion 1 — the skill was loaded BY NAME, on this machine
+------------------------------------------------------------------------------
+Not "the constant matched". From the session's own transcript:
+
+  SKILL CALL: {"skill": "pocock-plus:grilling",
+               "args": "Argus watcher fleet supervision: launchd vs long-lived
+                        parent process (scripted single-round verification
+                        run, ticket #89)"}
+
+and the skill's body arrived as tool output, naming its own base directory:
+
+  Base directory for this skill:
+    /Users/johansardar/pocock-plus/skills/productivity/grilling
+
+Worth recording: that is the MARKETPLACE SOURCE directory, not the versioned
+cache path `installed_plugins.json` names. `johan-plugins` is a `directory`
+marketplace pointed at /Users/johansardar/pocock-plus, and the loader reads
+the source tree. The existence answer is the same either way — both trees
+carry all five skills — but the PATH `installed.ts` reports is the cache copy,
+not the file that was read. Recorded rather than silently corrected.
+
+The dispatch prompt was also checked byte-for-byte against the registry's
+copy, because a prompt that differs by one byte misses the dispatch hash and
+classifies as JOHAN — the USER.md poisoning path reached through a quoting bug:
+
+  expected 1212 bytes / delivered 1212 bytes / BYTE-IDENTICAL: true
+
+This is not free, and the mechanism is worth writing down. `cmux send --help`
+documents "Escape sequences: \n and \r send Enter, \t sends Tab", and
+`shellQuote` escapes exactly those three characters to keep the launch line on
+one physical line. Every one of them is re-expanded by the transport back into
+the keystroke it was escaping, so the line arrives in ~20 pieces and zsh sits
+in `quote>` continuation between them. It survives because a real newline
+inside `$'…'` IS a literal newline: the reassembled argv is identical. Measured
+here, not reasoned about — but it survives by accident, not by design, and
+`launch.ts` says its shape is "asserted against a real shell in
+launch.test.ts": that test asserts against a real shell and never against a
+real cmux, which is where the behaviour lives.
+
+------------------------------------------------------------------------------
+3. THE THREE WALLS — why this took four live drives, not one
+------------------------------------------------------------------------------
+Every one of these reported SUCCESS at every layer above it.
+
+FINDING B — the launch line dropped the deployment's cwd. FIXED.
+  Drive 2 started a real Claude session, loaded the skill by name, ran a
+  complete grill — and all five stores stayed empty. Its transcript landed in
+    ~/.claude/projects/-Users-johansardar-argus/
+  The grill dispatched for a sandbox repo ran in Johan's REAL ~/argus, because
+  `openWorkerTab` opens a tab in the workspace named by CMUX_WORKSPACE_ID and
+  a tab inherits that workspace's directory. `WorkerSpawnRequest.cwd` carried
+  the right path the whole time — every other route hands it to `Bun.spawn` —
+  and `createCmuxLaunch` never read it. It did not need to before #95: the
+  grill got `cmux new-workspace --cwd <repo>` and the shell was BORN in R.
+  #95 replaced that with `new-surface`, which has no `--cwd`, and nothing
+  replaced the cwd. SPEC §7.2's "a cmux workspace in R" lost its "in R".
+  Silently, because `cmux send` exits 0 whatever the shell does next, so
+  `createCmuxLaunch` reported delivered, `deployWorker` reported started, and
+  `startGrill` returned a session id and a durable registry row for a session
+  running in the wrong repository.
+  Fixed in this ticket: `launchLine` now takes the cwd and emits
+  `cd <cwd> && env -u … claude …`. `&&`, not `;`, so a failed cd cannot fall
+  through into the wrong directory. Three tests in launch.test.ts, one of them
+  through a real zsh.
+  Blast radius of the bug as measured: the session obeyed its prompt ("Read
+  the repo freely, write no code, and commit nothing") and ~/argus was left
+  with no modifications — `git status` showed only Johan's own pre-existing
+  untracked CONTEXT.md. It could as easily not have.
+
+FINDING C — the grill blocks forever on the trust-folder dialog. NOT FIXED.
+  With the cwd fixed, drive 3 got as far as:
+    "Quick safety check: Is this a project you created or one you trust?
+     ❯ 1. Yes, I trust this folder   2. No, exit"
+  and stopped. A grill into a directory `claude` has never seen sits on that
+  modal with no transcript, no turn, and nothing in the flow noticing: the
+  launch line ran, `startGrill` returned `started`, the registry row is
+  durable, and the five watchers watch an empty repo. Only `dispatch-expired`
+  would ever mark it, minutes later. This bites any FIRST grill in a new repo
+  or worktree, which is the normal case for a fresh checkout.
+  The driver answers the dialog (a menu selection lands in a TUI, not in a
+  transcript, so it is not a §5 rule 2 send and is not logged as one) and
+  reports it as a finding. Production has no such answer.
+
+FINDING D — the watchers looked for the transcript in the wrong home.
+  Harness-side, and stated because it is the tension #49 created rather than a
+  slip. Subscription mode must run the session under the REAL HOME — that is
+  where the credential is — so its transcript lands in the real
+  ~/.claude/projects. `createRepoTranscriptSource` reads
+  `CLAUDE_CONFIG_DIR ?? $HOME/.claude`, and the sandbox points
+  CLAUDE_CONFIG_DIR at an empty scratch directory. Drive 3 therefore archived
+  zero messages from a session that had run perfectly, which reads exactly
+  like five broken eyes. The driver now gives the watchers the real projects
+  root and nothing else from the real home; the read is repo-scoped by
+  `sessionsForRepo`, so only this sandbox's transcript is consumed, and
+  nothing is written there.
+
+------------------------------------------------------------------------------
+4. THE FIVE STORES — before and after, final drive
+------------------------------------------------------------------------------
+sandbox    /var/…/T/argus-harness-ZBXAdd/scratch-argus-harness-ZBXAdd
+session    47261a9e-100d-41eb-8fbc-ab4e06bd55fb   (adhoc — §7.5 exempts grills)
+tab        AB2A8AAD-… in workspace 2D3B8B38-… (CMUX_WORKSPACE_ID), closed after
+registry   1 session row, 1 send row
+watchers   5/5 (reviewer archiver honcho digest retro)
+
+1. DIGEST — `.argus/sessions/` + INDEX.md                          FILLED
+   before: no digest files, INDEX.md absent
+   after:  adhoc-47261a9e-100d-41eb-8fbc-ab4e06bd55fb.md
+
+     ---
+     agent: claude
+     ticket: null
+     status: done
+     started_by: hermes
+     johan_touched: false
+     ---
+
+     ## 2026-08-26T22:14:04.242Z
+
+     The scripted one-round grill concluded. The response acknowledged the
+     answer with `ARGUS-89-GRILL-OK`, explained that a long-lived parent
+     process would die with its terminal or session while launchd survives
+     terminal exit and reboot and can restart crashed watchers, and recorded
+     the decision to supervise the Argus watcher fleet with launchd. No
+     further questions were asked, and nothing was implemented, written, or
+     committed.
+
+   INDEX.md gained its line:
+     - adhoc-47261a9e-….md — agent=claude ticket=null status=done
+       started_by=hermes johan_touched=false — Decision reached: use launchd
+       to supervise the Argus watcher fleet; grill complete.
+
+   `started_by=hermes` and `johan_touched=false` are both correct and both
+   load-bearing: the session was dispatched by Argus and Johan never typed.
+
+2. MEMORY.md — durable project facts                               FILLED
+   before: header only, no fact lines, no fact files
+   after:  one fact line, and the per-fact file beside it —
+
+     .argus/memory/watcher-fleet-supervised-by-launchd.md
+     ---
+     name: watcher-fleet-supervised-by-launchd
+     description: Watcher fleet supervision decision
+     metadata:
+       type: project
+     ---
+
+     The Argus watcher fleet is supervised by launchd rather than a
+     long-lived parent process.
+
+   Canonical index + per-fact-file format, SPEC §4/§8. The decision reached in
+   the grill, captured with zero manual capture.
+
+3. USER.md — Johan-authored preferences               BYTE-IDENTICAL, AS ASSERTED
+   before sha256 ba32f7cb42f40e3f973a872875d99640ffe1745369e27807411ee872a5ffc90d  216 bytes
+   after  sha256 ba32f7cb42f40e3f973a872875d99640ffe1745369e27807411ee872a5ffc90d  216 bytes
+
+   This is the honest limit, and it is the assertion — not a store that failed.
+   The stand-in answer is registry-logged by construction, so it classifies
+   hermes-authored, so the Reviewer's USER.md gate ("registry-verified
+   JOHAN-AUTHORED findings only") must reject anything derived from it. The
+   gate held.
+
+   THE BULLET'S REAL USER.md CLAIM IS NOT VERIFIED BY THIS RUN. "Johan-authored
+   preferences in USER.md" needs Johan at the keyboard. Faking a Johan-authored
+   message to turn this green would forge the one provenance record the whole
+   §5 chain exists to protect. #78's driver threw rather than pretend; this one
+   asserts byte-identity and records the rest as a cannot-simulate gap in
+   docs/coverage/FEATURE-TEST-MATRIX.md §5.
+
+4. HONCHO — the repo's workspace                                   FILLED
+   workspace argus-scratch-argus-harness-zbxadd-50db5050…
+   before: {} (workspace freshly created, no messages)
+   after:  { "claude-code": 1, "hermes": 1 }
+
+   Correct peer attribution, and the absence is the assertion: the session's
+   own turn went to `claude-code`, the registry-logged dispatch to `hermes`,
+   and the `johan` peer received NOTHING — consistent with store 3. Scratch
+   workspace deleted from Johan's instance afterwards; verified 0 remaining.
+
+5. ARCHIVE — `.argus/archive.db`                                   FILLED
+   before: no database
+   after:  2 rows, 1 with role=assistant
+
+   An earlier drive of the same shape recorded 3 rows / 2 assistant. The
+   difference is the snapshot instant, not a loss: the registry-logged send's
+   transcript message lands after the assistant turn, and this drive's window
+   closed first. "archive.db contains EVERY message of the session" is
+   therefore NOT proven to the letter by this drive — the count is consistent
+   with the transcript at the moment it was read, and no assertion here holds
+   it to a fixed total.
+
+------------------------------------------------------------------------------
+5. RESOURCE SAFETY — Directive 14
+------------------------------------------------------------------------------
+Peak fleet RSS (this process + all five watchers), sampled:
+
+  t+  0s   5 watchers    1076.2 MiB
+  t+  2s   5 watchers    5229.5 MiB
+  t+  5s   5 watchers    5737.5 MiB
+  t+  8s   5 watchers    3769.5 MiB
+  t+ 10s   5 watchers    2585.7 MiB
+  t+ 15s   5 watchers    6412.2 MiB   <- peak
+  t+ 27s   5 watchers     369.3 MiB
+  t+ 37s   5 watchers     395.4 MiB
+  t+ 47s   5 watchers     401.6 MiB
+  t+ 57s   5 watchers     407.8 MiB
+  t+ 67s   5 watchers     419.2 MiB
+  t+ 77s   5 watchers     426.6 MiB
+  t+ 87s   5 watchers     432.6 MiB
+
+FINDING E — a startup spike, and then a sustained positive slope.
+  The spike (peak 6.4 GiB at t+15s, 3.4 GiB on the previous drive) is five bun
+  processes loading and the first `codex exec` brains starting; it clears
+  within ~25s. The slope after it does not clear: 369 -> 433 MiB over 60s,
+  about +1 MiB/s across the fleet, monotonic across every sample and
+  reproduced on both drives. Extrapolated naively that is ~3.8 GiB/hour, which
+  is the order of the ~60GB #86 was about. This run was too short to say
+  whether it plateaus. Filed as a finding per Directive 14 — "sustained
+  positive slope is a finding worth filing even if the stores fill" — and it
+  is not diagnosed here.
+
+No watcher was ever killed by this driver except through `SandboxScope`, and
+every pid was adopted in the same read that discovered it. The fleet lock at
+LIVE_WATCHER_FLEET_LOCK_PATH was held for the whole drive.
+
+An earlier drive was SIGTERM'd by a tool timeout mid-run, so its `finally`
+never completed. Watcher count after that death: 0. The
+ARGUS_WATCH_OWNER_PID contract in `createSandboxWatcherSpawner` held — the
+children exited with their owner rather than orphaning to launchd.
+
+Also fixed: `removeScratchWorkspace` retried for 5s against a service that
+takes ~60s to delete a workspace, and reported "scratch cleanup timed out" for
+a deletion that had been accepted and was still running. The budget is now
+150s. Verified 0 argus-scratch workspaces remaining on the instance.
+
+------------------------------------------------------------------------------
+6. VERDICT
+------------------------------------------------------------------------------
+SPEC §14 bullet 1, as stated: FOUR OF FIVE STORES VERIFIED LIVE, one
+(USER.md) verified only in its negative form.
+
+  digest      FILLED, with decisions, frontmatter and an INDEX line
+  MEMORY.md   FILLED, one project fact plus its per-fact file
+  Honcho      FILLED, correct peers, `johan` untouched
+  archive.db  FILLED (see the caveat in §4.5 — "every message" not proven)
+  USER.md     byte-identical, which is the correct outcome for a
+              hermes-authored answer and is NOT the bullet's claim
+
+"with zero manual capture" holds: nothing in §4 was written by the driver.
+
+It did not work the first three times, and none of the three failures was
+visible from inside the system. That is the result worth keeping.
+
+No §13 verdict double is retired by this run. This is a §14 drive, not a §13
+slot; `src/harness/verdicts.ts` is untouched, and the ten core slots still
+grade STRUCTURAL for exactly the reasons #63 wrote down.

@@ -105,7 +105,10 @@ export async function removeScratchWorkspace(
       { method: "DELETE", headers },
     );
   }
-  for (let attempt = 0; attempt < 50; attempt += 1) {
+  // The service deletes asynchronously and a real scratch workspace has been
+  // measured taking ~60s to disappear (#89); a 5s budget reported "timed out"
+  // for a deletion that had in fact been accepted and was still running.
+  for (let attempt = 0; attempt < 300; attempt += 1) {
     const response = await fetch(
       `${LIVE_HONCHO_URL}/v3/workspaces/${encodedWorkspace}`,
       { method: "DELETE", headers },
@@ -114,7 +117,7 @@ export async function removeScratchWorkspace(
     if (response.status !== 409) {
       throw new Error(`scratch cleanup failed: Honcho ${response.status}`);
     }
-    await Bun.sleep(100);
+    await Bun.sleep(500);
   }
   throw new Error(`scratch cleanup timed out for ${workspace}`);
 }

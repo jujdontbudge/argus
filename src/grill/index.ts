@@ -21,6 +21,15 @@ export {
   type GrillResult,
 } from "./grill.ts";
 export {
+  installedPluginSkills,
+  verifyEveryGrillSkill,
+  verifyGrillSkill,
+  INSTALLED_PLUGINS_FILE,
+  type GrillSkillVerification,
+  type InstalledSkill,
+  type SkillResolution,
+} from "./installed.ts";
+export {
   createCmuxLaunch,
   launchLine,
   shellQuote,
