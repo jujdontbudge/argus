@@ -333,8 +333,8 @@ export async function openReviewer(
         ...(process.env.ARGUS_CODEX_EXECUTABLE !== undefined && {
           binary: process.env.ARGUS_CODEX_EXECUTABLE,
         }),
-        model: config.brain.model,
-        reasoningEffort: config.brain.reasoningEffort,
+        model: config.reviewer.brain.model,
+        reasoningEffort: config.reviewer.brain.reasoningEffort,
       }),
     cap: createBrainCap({
       directory: overrides.capDirectory ?? defaultBrainSlotsDirectory(),

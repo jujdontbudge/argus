@@ -17,7 +17,11 @@ describe("the retro eye's cadence knob", () => {
   test("defaults to the slowest cadence of the eyes — it files tickets, not notes", async () => {
     await withRepo(async (repo) => {
       const config = await loadEyesConfig(repo);
-      expect(config.retro).toEqual({ quietWindowSeconds: 60, maxWaitSeconds: 600 });
+      expect(config.retro).toEqual({
+        brain: { model: "gpt-5.6-luna", reasoningEffort: "low" },
+        quietWindowSeconds: 60,
+        maxWaitSeconds: 600,
+      });
       expect(config.retro.maxWaitSeconds).toBeGreaterThan(
         DEFAULT_EYES_CONFIG.digest.maxWaitSeconds,
       );
@@ -32,7 +36,11 @@ describe("the retro eye's cadence knob", () => {
         "retro:\n  quiet_window_seconds: 5\n  max_wait_seconds: 9\n",
       );
       const config = await loadEyesConfig(repo);
-      expect(config.retro).toEqual({ quietWindowSeconds: 5, maxWaitSeconds: 9 });
+      expect(config.retro).toEqual({
+        brain: { model: "gpt-5.6-luna", reasoningEffort: "low" },
+        quietWindowSeconds: 5,
+        maxWaitSeconds: 9,
+      });
     });
   });
 });

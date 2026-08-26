@@ -1011,8 +1011,8 @@ export async function openRetro(
         ...(process.env.ARGUS_CODEX_EXECUTABLE !== undefined && {
           binary: process.env.ARGUS_CODEX_EXECUTABLE,
         }),
-        model: config.brain.model,
-        reasoningEffort: config.brain.reasoningEffort,
+        model: config.retro.brain.model,
+        reasoningEffort: config.retro.brain.reasoningEffort,
       }),
     cap: createBrainCap({
       directory: overrides.capDirectory ?? defaultBrainSlotsDirectory(),
