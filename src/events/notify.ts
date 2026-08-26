@@ -61,33 +61,94 @@ async function appendDurably(path: string, row: unknown): Promise<void> {
   }
 }
 
-/** Production seam: one logical line, followed by exactly one Enter key. */
-export const sendWithCmux: CmuxSend = async (request) => {
-  const target = request.surface
-    ? ["--surface", request.surface]
-    : ["--workspace", request.workspace];
-  const typed = Bun.spawn(["cmux", "send", ...target, "--", request.text], {
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-  const typedExit = await typed.exited;
-  const typedError = await new Response(typed.stderr).text();
-  if (typedExit !== 0) {
-    return { ok: false, error: typedError.trim() || `cmux send exited ${typedExit}` };
-  }
-  const entered = Bun.spawn(["cmux", "send-key", ...target, "--", "enter"], {
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-  const enteredExit = await entered.exited;
-  const enteredError = await new Response(entered.stderr).text();
-  return enteredExit === 0
-    ? { ok: true }
-    : {
-        ok: false,
-        error: enteredError.trim() || `cmux send-key exited ${enteredExit}`,
-      };
+export interface CmuxRunResult {
+  exitCode: number;
+  stderr: string;
+  stdout: string;
+}
+
+/** The one place this module shells out; injected so the seam is testable. */
+export type CmuxRun = (args: readonly string[]) => Promise<CmuxRunResult>;
+
+const runCmux: CmuxRun = async (args) => {
+  const child = Bun.spawn(["cmux", ...args], { stderr: "pipe", stdout: "pipe" });
+  const [exitCode, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  return { exitCode, stderr, stdout };
 };
+
+/** `  workspace:14  argus` / `* surface:84  argus-dispatcher` → the ref. */
+function listedRefs(stdout: string): Set<string> {
+  const refs = new Set<string>();
+  for (const line of stdout.split(/\r?\n/)) {
+    const match = /^[\s*]*((?:workspace|surface):[A-Za-z0-9-]+)\b/.exec(line);
+    if (match) refs.add(match[1]!);
+  }
+  return refs;
+}
+
+/**
+ * Ticket #7, measured against a real cmux 0.62.2: an unresolvable handle is
+ * NOT an error there. `cmux send --workspace workspace:9999` exits 0 and acts
+ * on the FOCUSED workspace, and `read-screen --surface surface:99999` reads it
+ * back — so a stale mission handle in the registry does not degrade, it types
+ * an `[argus]` line into whichever human or worker session is selected and
+ * reports success. §6 delivery would fail silently while §5 got poisoned.
+ *
+ * So the seam resolves the handle against cmux's own listing before typing
+ * anything, and refuses when it does not resolve. The refusal reaches
+ * `notifyMissionControl` as `ok: false`, which is already the durable
+ * `ARGUS EVENT DELIVERY DEGRADED` path; the event file is untouched either way.
+ */
+export function createCmuxSend(run: CmuxRun = runCmux): CmuxSend {
+  const failed = (result: CmuxRunResult, what: string): string =>
+    result.stderr.trim() || `cmux ${what} exited ${result.exitCode}`;
+
+  return async (request) => {
+    const workspaces = await run(["list-workspaces"]);
+    if (workspaces.exitCode !== 0) {
+      return { ok: false, error: failed(workspaces, "list-workspaces") };
+    }
+    if (!listedRefs(workspaces.stdout).has(request.workspace)) {
+      return {
+        ok: false,
+        error: `cmux does not resolve ${request.workspace}; refusing to type into the focused workspace instead`,
+      };
+    }
+    if (request.surface !== undefined) {
+      const surfaces = await run([
+        "list-pane-surfaces",
+        "--workspace",
+        request.workspace,
+      ]);
+      if (surfaces.exitCode !== 0) {
+        return { ok: false, error: failed(surfaces, "list-pane-surfaces") };
+      }
+      if (!listedRefs(surfaces.stdout).has(request.surface)) {
+        return {
+          ok: false,
+          error: `cmux does not resolve ${request.surface} in ${request.workspace}; refusing to type into the focused surface instead`,
+        };
+      }
+    }
+
+    const target = request.surface
+      ? ["--surface", request.surface]
+      : ["--workspace", request.workspace];
+    const typed = await run(["send", ...target, "--", request.text]);
+    if (typed.exitCode !== 0) return { ok: false, error: failed(typed, "send") };
+    const entered = await run(["send-key", ...target, "--", "enter"]);
+    return entered.exitCode === 0
+      ? { ok: true }
+      : { ok: false, error: failed(entered, "send-key") };
+  };
+}
+
+/** Production seam: one logical line, followed by exactly one Enter key. */
+export const sendWithCmux: CmuxSend = createCmuxSend();
 
 /** Registry-first delivery into the latest registered Hermes mission session. */
 export async function notifyMissionControl(
