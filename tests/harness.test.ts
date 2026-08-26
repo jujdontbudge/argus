@@ -32,6 +32,7 @@ describe("fake-Johan harness", () => {
       expect(sandbox.env.XDG_DATA_HOME).toBe(join(sandbox.root, "state/data"));
       expect(sandbox.env.XDG_STATE_HOME).toBe(join(sandbox.root, "state/state"));
       expect(sandbox.env.ARGUS_REPOS_FILE).toBe(join(sandbox.root, "state/argus-repos"));
+      expect(sandbox.env.ARGUS_SUPERVISOR_CONTROL).toBe("disabled");
       expect(sandbox.env.CLAUDE_CONFIG_DIR).toBe(join(sandbox.root, "state/claude"));
       expect(sandbox.env.CODEX_HOME).toBe(join(sandbox.root, "state/codex"));
       expect(sandbox.env.HERMES_HOME).toBe(join(sandbox.root, "state/hermes"));

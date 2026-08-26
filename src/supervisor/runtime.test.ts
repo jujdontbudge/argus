@@ -219,4 +219,51 @@ describe("watcher supervisor", () => {
     expect(spawned).toHaveLength(5);
     expect(spawned.every((process) => process.killed)).toBe(true);
   });
+
+  test("a second live watcher fleet queues on the cross-process lock", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-supervisor-"));
+    roots.push(root);
+    const registryPath = join(root, "repos");
+    const repo = join(root, "repo");
+    const fleetLockPath = join(root, "live-watcher-fleet.lock");
+    await Bun.write(registryPath, `${repo}\n`);
+    let nextPid = 400;
+    const firstSpawned: FakeProcess[] = [];
+    const secondSpawned: FakeProcess[] = [];
+    const first = new WatcherSupervisor({
+      fleetLockPath,
+      registryPath,
+      spawn: () => {
+        const process = new FakeProcess(nextPid++);
+        firstSpawned.push(process);
+        return process;
+      },
+      statusPath: join(root, "first-status.json"),
+    });
+    const second = new WatcherSupervisor({
+      fleetLockPath,
+      registryPath,
+      spawn: () => {
+        const process = new FakeProcess(nextPid++);
+        secondSpawned.push(process);
+        return process;
+      },
+      statusPath: join(root, "second-status.json"),
+    });
+    try {
+      await first.reconcile();
+      const queued = second.reconcile();
+      await Bun.sleep(25);
+
+      expect(firstSpawned).toHaveLength(5);
+      expect(secondSpawned).toHaveLength(0);
+
+      await first.stop();
+      await queued;
+      expect(secondSpawned).toHaveLength(5);
+    } finally {
+      await first.stop();
+      await second.stop();
+    }
+  });
 });
