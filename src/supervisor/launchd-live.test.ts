@@ -29,9 +29,13 @@ await new Promise(() => {});
       plistPath,
       renderSupervisorPlist({
         bunPath: process.execPath,
+        claudeConfigPath: join(root, "home", ".claude"),
         cliPath: script,
+        codexHomePath: join(root, "home", ".codex"),
         codexPath: "/usr/bin/false",
         ghPath: "/usr/bin/false",
+        hermesHomePath: join(root, "home", ".hermes"),
+        homePath: join(root, "home"),
         label,
         path: "/usr/bin:/bin",
         registryPath: join(root, "repos"),

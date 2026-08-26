@@ -149,9 +149,14 @@ export function supervisorConfiguration(
   return {
     job: {
       bunPath,
+      claudeConfigPath:
+        env.CLAUDE_CONFIG_DIR ?? join(home, ".claude"),
       cliPath: fileURLToPath(new URL("../cli.ts", import.meta.url)),
+      codexHomePath: env.CODEX_HOME ?? join(home, ".codex"),
       codexPath,
       ghPath,
+      hermesHomePath: env.HERMES_HOME ?? join(home, ".hermes"),
+      homePath: home,
       label,
       path: launchdPath(env.PATH, [bunPath, codexPath, ghPath]),
       plistPath,

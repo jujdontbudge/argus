@@ -6,9 +6,13 @@ describe("supervisor launchd plist", () => {
   test("renders a byte-stable launch-at-login job with explicit sandboxable paths", () => {
     const options = {
       bunPath: "/opt/homebrew/bin/bun",
+      claudeConfigPath: "/Users/test/.claude",
       cliPath: "/Applications/Argus & Tools/src/cli.ts",
+      codexHomePath: "/Users/test/.codex",
       codexPath: "/Users/test/.local/bin/codex",
       ghPath: "/opt/homebrew/bin/gh",
+      hermesHomePath: "/Users/test/.hermes",
+      homePath: "/Users/test",
       label: "dev.argus.test-supervisor",
       path: "/Users/test/.local/bin:/opt/homebrew/bin:/usr/bin:/bin",
       registryPath: "/tmp/argus-test/repos",
@@ -33,6 +37,14 @@ describe("supervisor launchd plist", () => {
   </array>
   <key>EnvironmentVariables</key>
   <dict>
+    <key>HOME</key>
+    <string>/Users/test</string>
+    <key>CODEX_HOME</key>
+    <string>/Users/test/.codex</string>
+    <key>HERMES_HOME</key>
+    <string>/Users/test/.hermes</string>
+    <key>CLAUDE_CONFIG_DIR</key>
+    <string>/Users/test/.claude</string>
     <key>PATH</key>
     <string>/Users/test/.local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
     <key>ARGUS_CODEX_EXECUTABLE</key>

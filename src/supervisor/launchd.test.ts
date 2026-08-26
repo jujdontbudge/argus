@@ -40,9 +40,13 @@ async function scratch() {
   roots.push(root);
   return {
     bunPath: "/scratch/bun",
+    claudeConfigPath: "/scratch/home/.claude",
     cliPath: "/scratch/argus/src/cli.ts",
+    codexHomePath: "/scratch/home/.codex",
     codexPath: "/scratch/bin/codex",
     ghPath: "/scratch/bin/gh",
+    hermesHomePath: "/scratch/home/.hermes",
+    homePath: "/scratch/home",
     label: "dev.argus.scratch",
     path: "/scratch/bin:/usr/bin:/bin",
     plistPath: join(root, "dev.argus.scratch.plist"),
