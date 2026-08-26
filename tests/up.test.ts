@@ -118,17 +118,17 @@ describe("argus up", () => {
       });
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain(
-        "Honcho binding: argus-scratch-fake-honcho (created)",
-      );
-      expect(result.stdout).toContain(
-        "Hermes profile: argus-scratch-fake-honcho",
-      );
       expect(requests).toHaveLength(5);
+      const workspace = (requests[0]!.body as { id: string }).id;
+      expect(workspace).toMatch(/^argus-scratch-fake-honcho-[a-f0-9]{64}$/);
+      expect(result.stdout).toContain(
+        `Honcho binding: ${workspace} (created)`,
+      );
+      expect(result.stdout).toContain(`Hermes profile: ${workspace}`);
       expect(requests[0]).toEqual({
         body: {
-          id: "argus-scratch-fake-honcho",
-          metadata: { repo },
+          id: workspace,
+          metadata: { repo: await realpath(repo) },
         },
         path: "/v3/workspaces",
       });
@@ -138,7 +138,7 @@ describe("argus up", () => {
             join(
               env.HERMES_HOME!,
               "profiles",
-              "argus-scratch-fake-honcho",
+              workspace,
               "memories",
             ),
           )
