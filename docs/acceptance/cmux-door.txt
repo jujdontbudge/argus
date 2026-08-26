@@ -1,0 +1,419 @@
+==============================================================================
+ARGUS LIVE CMUX DOOR VERIFICATION — ticket #90 (sub-issue of #81, from #84's map)
+==============================================================================
+run on          2026-08-26, this machine
+worktree        /Users/johansardar/argus-worktrees/cmux-door  (build/cmux-door)
+gate            ARGUS_LIVE_CMUX — reached `ran`
+bun             1.3.12
+cmux            0.62.2 (77) [6c203b514]        <- #7's behaviour is version-specific
+model calls     ZERO. Real cmux only, as the ticket specifies.
+load at start   5.74   load at gate run   10.60
+
+WHY THE VERSION LINE IS FIRST. #7's hazard is a property of one build. A future
+cmux that fixes it should make this verification SAY SO rather than pass
+quietly, so the version is recorded here and the ref/UUID asymmetry is asserted
+by `resolveHandleForm` in production code (`src/harness/cmux-door.ts`), not
+copied into a document that cannot notice an upgrade.
+
+------------------------------------------------------------------------------
+0. what the ticket asked for, and what had moved under it
+------------------------------------------------------------------------------
+#90 asks this driver to call `createCmuxWorkspace`, "including its
+list-before/list-after ref discovery". That function no longer exists: #95
+deleted it, because R6 forbids Argus to create a workspace at all. The
+production entry point is now `openWorkerTab` (`src/deploy/tab.ts`), which
+opens a TAB in the workspace Argus is already running in and keeps the
+list-before/list-after discovery. This driver drives what production has.
+
+It created ZERO cmux workspaces. Every surface it closed was one it opened.
+
+The ticket's second premise — "nothing ever closes a workspace ... every
+dispatched ticket leaks a workspace" — is also stale as of #95. See §7.
+
+------------------------------------------------------------------------------
+1. THE MEASUREMENT THAT MATTERS: refs fail OPEN, UUIDs fail CLOSED
+------------------------------------------------------------------------------
+#7 recorded that "an unresolvable --workspace / --surface" is treated as the
+FOCUSED one and exits 0. Driven against the real binary that is true of ONE
+handle form and false of the other, and the difference is the whole ticket.
+
+Read-only probe matrix, cmux 0.62.2, verbatim exit codes and first stderr line:
+
+  COMMAND                                              EXIT  RESULT
+  ---------------------------------------------------  ----  ------------------
+  list-pane-surfaces --workspace workspace:9999           0   answered for a
+                                                              workspace it was
+                                                              not asked about
+  list-pane-surfaces --workspace 00000000-0000-...        1   not_found: Pane or
+                                                              workspace not found
+  read-screen --workspace workspace:9999                  0   dumped another
+                                                              workspace's screen
+  read-screen --workspace 00000000-0000-...               1   not_found:
+                                                              Workspace not found
+  read-screen --surface surface:99999                     1   internal_error:
+                                                              Terminal surface
+                                                              not found
+  read-screen --surface <freed surface:64>                1   invalid_params:
+                                                              Surface is not a
+                                                              terminal
+  list-panes --workspace workspace:9999                   0   answered for
+                                                              another workspace
+  surface-health --workspace workspace:9999               0   answered for
+                                                              another workspace
+  identify --workspace workspace:9999                     0   answered
+  tree --workspace workspace:9999                         1   invalid_params:
+                                                              Missing or invalid
+                                                              workspace_id
+
+And the destructive verb, which is the one that can hurt Johan:
+
+  close-surface --surface 00000000-... --workspace 00000000-...
+      -> exit 1, "Error: not_found: Workspace not found",  NOTHING closed
+  close-surface --surface 00000000-... --workspace <argus UUID>
+      -> exit 1, "Error: not_found: Surface not found",    NOTHING closed
+
+  tree diff around both: EMPTY. Verified with
+  `cmux --id-format both tree --all` before and after each call.
+
+  An unresolvable SHORT REF fails OPEN.
+  An unresolvable UUID fails CLOSED.
+
+The first probe is worth reading twice. `list-pane-surfaces --workspace
+workspace:9999` returned, byte for byte, what `list-pane-surfaces` with no
+argument returned. It is not that cmux ignored the flag and errored; it
+answered confidently for a workspace nobody named.
+
+WHOSE WORKSPACE IT ANSWERS FOR. `cmux identify` at that moment reported
+`focused` = workspace:1 / **surface:2 "Argus loop monitoring" — Johan's tab**.
+So at the instant this ticket started, a stray `close-surface --surface
+<dead ref>` from anywhere on this machine would have closed Johan's loop
+monitor. That is the #98 shape, live and armed, not a hypothetical.
+
+Stripping the caller context (`env -u CMUX_SURFACE_ID -u CMUX_WORKSPACE_ID ...`)
+changed nothing: the fallback is to the FOCUSED surface, not the caller's, so
+"the call came from a safe place" is not a defence.
+
+------------------------------------------------------------------------------
+2. THE RESOLVE-THEN-ACT RACE, measured — and it is not what we believed
+------------------------------------------------------------------------------
+The ticket asks: resolve a ref, mutate the workspace, then use the ref. Does
+the ref name something else by then? Measured on four throwaway tabs of my own
+in workspace:1, every step bracketed by a whole-machine tree snapshot.
+
+  R1  create three tabs             -> surface:63, surface:64, surface:65
+                                       (new-surface PRINTS the ref, see §6)
+  R2  close surface:64 BY UUID      -> exit 0. surface:63 and surface:65 kept
+                                       their refs exactly. NO renumbering.
+  R3  create a fourth tab after
+      surface:64's ref was freed    -> got surface:66, NOT surface:64.
+                                       A freed ref is NOT recycled.
+  R4  reorder-surface surface:65
+      to index 0                    -> exit 0. surface:65 kept its ref; only
+                                       its position moved. NO renumbering.
+
+CONCLUSION, and it corrects our own documentation. Short refs do NOT remap.
+They come from a monotonic counter (this cmux process is at 66 while the oldest
+live surfaces still hold refs 1-23), they survive close, create and reorder,
+and a freed ref is never handed to a different surface. The skill
+(`skills/argus-orchestrator/SKILL.md`) said "short refs are positional and cmux
+REMAPS them as surfaces open and close". That is wrong, and it is a dangerous
+kind of wrong, because it implies re-resolving immediately before the call is
+the fix. It is not, and the real mechanism is worse:
+
+  A ref that resolves to NOTHING is not an error. It is a redirect.
+
+So the ref that killed a tab was never a ref that pointed somewhere else. It
+was a ref that pointed NOWHERE — freed by an earlier close, or minted by a
+previous cmux process — and cmux answered for the focused surface instead.
+
+THE RACE THAT REMAINS IS REAL, AND UUIDs DO NOT CLOSE IT. Resolve-then-act is
+not atomic: between `tree --all` and `close-surface`, another session can close
+the surface you just resolved. What UUIDs change is the CONSEQUENCE of losing
+that race. Lose it holding a UUID and the verb errors `not_found` and closes
+nothing. Lose it holding a ref and the verb closes whatever Johan is looking at
+and exits 0. The window cannot be removed from outside cmux; the blast radius
+can, and only the handle form removes it.
+
+TWO MORE THINGS THAT DEFEAT "I CHECKED FIRST":
+  - Focus moves on its own. Across this run `identify.focused` walked
+    surface:2 -> surface:6 -> surface:4 with no action by me, because other
+    sessions were working. A safety argument that ends "and I verified what was
+    focused" has already expired by the time the next call runs.
+  - Refs are renumbered from scratch when cmux restarts. A ref persisted into a
+    registry row outlives the process that gave it meaning; a UUID persisted
+    the same way just stops resolving. Not measured — measuring it means
+    restarting Johan's cmux, which I refused (§8).
+
+  A THIRD ADDRESSING FORM, undocumented in our tree: cmux accepts a bare index
+  in the same flag, and it is positional and DIFFERENT from the typed ref.
+  `cmux list-pane-surfaces --workspace 1` answered for a different workspace
+  than `--workspace workspace:1`. Dropping the prefix silently changes which
+  workspace you mean.
+
+------------------------------------------------------------------------------
+3. RECOMMENDATION: destructive cmux verbs take UUIDs ONLY
+------------------------------------------------------------------------------
+The ticket asked me to measure before agreeing that UUID-only is strictly
+stronger than resolve-then-act. Measured, and I agree, but for a sharper reason
+than the one offered:
+
+UUID-only is not a stronger version of the same defence. It is a DIFFERENT KIND
+of defence. Resolve-then-act is a check the caller performs and can lose; the
+handle form decides how the BINARY behaves when the check has already been lost.
+Guard and UUID are not alternatives — the guard narrows the window, the UUID
+makes losing the window a no-op — but if only one can be relied on it must be
+the UUID, because it is the only one that still holds when our code is wrong.
+
+Concretely: `close-surface` given a dead UUID exits 1 and closes nothing
+(measured twice above, tree diff empty both times). Given a dead ref it exits 0
+and closes the focused surface. No amount of pre-resolution changes either.
+
+Status in the tree today: production already complies. `openWorkerTab` returns
+`surface.id` (a UUID) and `closeWorkerTab` is called with it; `CMUX_WORKSPACE_ID`
+is a UUID. The gap was in what we TELL agents, and in one selector — see §4/§5.
+
+------------------------------------------------------------------------------
+4. A PRODUCTION BUG THIS DRIVE FOUND: mission delivery rejected UUIDs
+------------------------------------------------------------------------------
+`missionSession` in `src/events/notify.ts` selected the mission row with
+
+    session.agent === "hermes" && session.workspace?.startsWith("workspace:")
+
+That prefix test predates #95. Since #95 a worker's tab is addressed by the
+UUID in `CMUX_WORKSPACE_ID`, so the selector rejected every UUID-addressed
+mission and `notifyMissionControl` degraded with "Hermes mission-control
+workspace is absent from the registry" — for a workspace that was present and
+resolvable. It also selected FOR the short-ref form, i.e. for the one handle
+form measured above to fail OPEN.
+
+Counterfactual, measured rather than argued. Same scratch registry, workspace
+written as a UUID, cmux stubbed so only the selector varies:
+
+    with the #90 fix   -> {"status":"sent"}
+    predicate reverted -> {"status":"degraded","reason":"Hermes mission-control
+                           workspace is absent from the registry"}
+    fix restored       -> {"status":"sent"}
+
+Fixed here (the selector now accepts either form; resolution stays where it
+belongs, in `createCmuxSend`, which checks the handle against cmux's own
+inventory and refuses). Regression test:
+`src/events/events.test.ts` — "#90: a mission workspace addressed by UUID is
+found, not reported absent".
+
+This is why the ticket exists. The fake runner in `src/events/scenarios.ts`
+answers `workspace:scenario-7`, a short ref, so every test of this path used the
+one form the code accepted. A real cmux hands out UUIDs and the bug appeared on
+the first live call.
+
+------------------------------------------------------------------------------
+5. THE LIVE DRIVE — production seams, real binary, all eleven checks
+------------------------------------------------------------------------------
+Driver: `src/harness/cmux-door.ts`, gate `ARGUS_LIVE_CMUX=1`, its own gate; no
+other opt-in opens it. Run twice, identical results. Second run verbatim:
+
+  status  : ran
+  version : cmux 0.62.2 (77) [6c203b514]
+  workspace: 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10        ("argus", workspace:1)
+  surface  : 28476ABB-C120-4C50-BD40-C1317B713AC3        (opened by the driver)
+  census before: {"surfaces":24,"workspaces":8}
+  census after : {"surfaces":24,"workspaces":8}
+  census unchanged: true
+
+  [PASS] unresolvable SHORT REF fails open (#7's hazard, still present)
+           workspace:99999 -> exit 0 and answered for a workspace it was not asked about
+  [PASS] unresolvable UUID fails closed (why destructive verbs take UUIDs only)
+           00000000-0000-0000-0000-000000000000 -> exit 1 Error: not_found: Pane or workspace not found
+  [PASS] openWorkerTab
+           surface 28476ABB-C120-4C50-BD40-C1317B713AC3 in 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10
+  [PASS] the discovered ref names the tab that was created, and no other
+           surface 28476ABB-C120-4C50-BD40-C1317B713AC3 resolves in 1 workspace(s): 2D3B8B38-...
+  [PASS] notifyMissionControl reached the tab
+           cmux send + send-key enter exited 0
+  [PASS] the registry row was written BEFORE the send
+           sends.jsonl already held the row when cmux was called (1 row(s))
+  [PASS] the line sent in step 2 appears in step 3's read-screen output
+           1 signal(s); worker screen was attached
+  [PASS] a send to a bogus workspace handle DEGRADES and reports failure
+           cmux does not resolve workspace:99999; refusing to type into the focused workspace instead
+  [PASS] the bogus line did not land on the tab from step 1
+           read-screen exit 0; cmux-door-bogus-41711 absent
+  [PASS] closeWorkerTab removed the tab it opened
+           closed 28476ABB-C120-4C50-BD40-C1317B713AC3
+  [PASS] the tab is gone from the whole-machine tree
+           28476ABB-C120-4C50-BD40-C1317B713AC3 absent
+
+  FAILED: 0 / 11
+
+MAPPING TO THE TICKET'S FOUR ASSERTIONS
+  1. "the discovered ref names the workspace that was created, and no other" —
+     check 4. Strengthened: because `openWorkerTab` returns a UUID, "no other"
+     is checked across the WHOLE machine (`surfaceOwners` over `tree --all`),
+     not just inside the workspace it was asked about. The surface resolved in
+     exactly 1 workspace, and it was the target.
+  2. "the line appears in read-screen, and the registry row was written BEFORE
+     the send" — checks 5-7. The ordering assertion is made INSIDE the send
+     seam: `orderingSend` reads `sends.jsonl` off disk at the moment cmux is
+     called, so the two orders are distinguishable. A driver that checked
+     afterwards could not tell them apart. cmux itself stays real.
+     Read-back goes through `pollHermesSignals` (`src/events/consumer.ts`) with
+     the real `runCmux` — the production §6 slow-poll path, not a shortcut to
+     `read-screen`.
+  3. "step 4 degrades and reports failure ... assert by reading the screen of
+     the workspace from step 1" — checks 8-9. This is the assertion the ticket
+     says can actually fail. `notifyMissionControl` against a registry whose
+     mission row holds `workspace:99999` returned
+     `{status: "degraded"}` with "cmux does not resolve workspace:99999;
+     refusing to type into the focused workspace instead", the event stayed
+     durable, and the driver's own tab was then read back and did NOT contain
+     the bogus session id. Note the shape of the defence: the guard means
+     production never issued the raw `send`, so cmux never got the chance to
+     redirect it. That is exactly what §1 shows it would have done.
+  4. "cmux --version is recorded" — top of this file, and carried in
+     `CmuxDoorReport.version`.
+
+WHAT WAS REAL / WHAT WAS NOT
+  REAL   cmux 0.62.2, the installed binary, on Johan's live socket
+  REAL   `openWorkerTab` / `closeWorkerTab` (src/deploy/tab.ts)
+  REAL   `notifyMissionControl` -> `sendWithCmux` -> `createCmuxResolve`
+  REAL   `pollHermesSignals` -> `readWorkerScreen` -> real `read-screen`
+  REAL   the registry writes, via `appendSessionRow` / `appendSendRow`
+  SCRATCH  the repos, under mkdtemp; removed in a `finally`
+  SUBSTITUTED  one thing, in §4's counterfactual only: cmux stubbed so that the
+               selector was the only variable. The drive itself stubs nothing.
+
+------------------------------------------------------------------------------
+6. SMALLER THINGS THE REAL BINARY CONTRADICTED
+------------------------------------------------------------------------------
+`src/deploy/tab.ts`'s docblock says "cmux 0.62.2 prints no ref for
+new-surface". It does:
+
+    $ cmux new-surface --type terminal --workspace <uuid>
+    OK surface:63 pane:1 workspace:1
+
+The code does not actually depend on this — it never parses stdout, it diffs
+the inventory before and after — and the diff is the better method anyway,
+because what `new-surface` prints is a SHORT REF while the diff yields the UUID.
+So the reasoning is wrong and the behaviour is right. Left as-is and recorded
+here rather than "fixed" into something that reads the ref off stdout.
+
+The three mission-control verbs SPEC.md:156-158 promises all EXIST on the real
+binary — `cmux set-status`, `cmux set-progress`, `cmux markdown open` each
+answered with a usage error rather than "unknown command". See §7.
+
+------------------------------------------------------------------------------
+7. THE TWO FINDINGS THE TICKET SAID TO RECORD, corrected against the binary
+------------------------------------------------------------------------------
+FINDING A — "Mission control does not exist." CONFIRMED, with one correction.
+  SPEC.md:156-158 promises worker state via `cmux set-status`, batch progress
+  via `cmux set-progress`, and digests beside mission control via
+  `cmux markdown open`. Production calls none of the three:
+      grep set-status   in src, excluding tests -> 0 hits
+      grep set-progress in src, excluding tests -> 0 hits
+      grep markdown open                        -> 0 hits
+  The CORRECTION: this is an unimplemented promise, not a missing capability.
+  All three verbs exist on cmux 0.62.2 (§6). `cmux notify` is the one member of
+  that family Argus does drive, at `src/grill/grill.ts:255`. Belongs to #81.
+
+FINDING B — "Nothing ever closes a workspace ... every dispatched ticket leaks
+  a workspace." STALE. #95 landed between the map and this drive:
+      `closeWorkerTab` / `retireWorkerTab`  src/deploy/tab.ts
+      wired into the green path             src/complete/complete.ts:504
+      wired into dead-slot recovery         src/dispatch/recover.ts:129
+  And `new-workspace` no longer appears in any executable line in `src/` — the
+  six hits are all comments explaining why it is gone. R6 is now held
+  structurally: there is no verb in the tree that can create a workspace.
+  The collision the finding names is therefore also resolved, and in Johan's
+  favour: workers are TABS in the existing workspace, closed when done. The
+  live drive above confirms both halves — census 8/24 before, 8/24 after.
+
+------------------------------------------------------------------------------
+8. EVERY CLOSE PERFORMED, WITH ITS BEFORE/AFTER TREE DIFF
+------------------------------------------------------------------------------
+Seven surfaces were closed in this ticket. All seven were opened by this ticket.
+Snapshot command, before and after each: `cmux --id-format both tree --all`.
+
+  close 43B0B570-... "argus90-T2"   exit 0   diff: exactly one line removed,
+                                             `surface surface:64 43B0B570-...`
+  close 0D0F6C3D-... "argus90-T1"   exit 0   diff: one surface line removed,
+                                             `surface surface:63 0D0F6C3D-...`
+  close 1C9A175E-... "argus90-T3"   exit 0   diff: one surface line removed,
+                                             `surface surface:65 1C9A175E-...`
+  close 5EE35E1D-... "Terminal"     exit 0   diff: one surface line removed,
+                                             `surface surface:66 5EE35E1D-...`
+  close 5BCF48ED-... (drive run 1)  exit 0   surface absent from tree after
+  close 28476ABB-... (drive run 2)  exit 0   surface absent from tree after
+  (T2 above was the R2 mutation; the drive runs closed their own tab in a
+  `finally`, and `closeWorkerTab` re-reads the inventory afterwards to confirm
+  the tab did not survive a close that exited 0.)
+
+NOTHING ELSE MOVED. The diffs do carry other lines and they are cosmetic, which
+is worth stating plainly because a naive diff of this tree is never empty on a
+live machine: a spinner glyph in another workspace's TITLE flips (`"◑ Model
+identity"` <-> `"◐ Model identity"`) and the `[selected]` marker moves as focus
+follows the closing tab. No surface or workspace line other than my own was
+added, removed, or changed identity in any diff. Identity was asserted on the
+UUID column, not on the raw diff.
+
+Census, independently, at the end of every phase:
+  baseline                       workspaces 8   surfaces 24
+  after the four experiment tabs workspaces 8   surfaces 24
+  after drive run 1              workspaces 8   surfaces 24
+  after drive run 2              workspaces 8   surfaces 24
+
+------------------------------------------------------------------------------
+9. WHAT THIS RUN REFUSED TO DO
+------------------------------------------------------------------------------
+1. I did NOT point a destructive verb at a bogus or freed SHORT REF.
+   This is the one experiment that would have settled, by direct observation,
+   whether `close-surface --surface <dead ref>` closes the focused tab. I
+   refused it. The fallback target is the FOCUSED surface, focus is not mine to
+   hold — measured moving on its own three times during this run (§2) — and at
+   the moment I would have run it the focused surface was `surface:2 "Argus
+   loop monitoring"`, Johan's. Making my own tab focused first does not fix it:
+   that IS the resolve-then-act race, and losing it costs Johan a session.
+   What I did instead: proved the redirect on four READ-ONLY verbs where the
+   cost of the redirect is a stray screen dump, and proved the UUID form fails
+   closed on `close-surface` ITSELF, where the cost of being wrong is zero.
+   The inference from those two — that the destructive verb shares the
+   resolution layer — is stated as an inference, not as a measurement.
+2. I did NOT restart cmux to confirm that refs renumber across processes (§2).
+   That would end every session in every window on this machine.
+3. I did NOT create a cmux workspace (R6), and did not close, kill or remove
+   any workspace.
+4. I did NOT close, rename, reorder, focus or send to any surface I did not
+   create — with one exception recorded honestly: `cmux notify` with no
+   arguments, run once while checking whether the verb exists, exited 0 and may
+   have raised one empty desktop notification. It touched no surface.
+5. I did NOT read back the screen contents of any surface belonging to Johan or
+   to another session. Where the redirect had to be proven by comparing output
+   (§1), the two outputs were compared with `cmp`/md5 and only the verdict was
+   recorded.
+6. I did NOT read or copy `~/.claude/.credentials.json`, run any auth command,
+   or write to `~/.hermes`, `~/.claude`, `~/argus`, or `~/.codex/config.toml`.
+   All scratch state was under `/private/tmp/`.
+7. I did NOT push, merge or close anything. Commits are on build/cmux-door.
+8. ZERO model calls, as the ticket specifies.
+
+------------------------------------------------------------------------------
+10. GATES
+------------------------------------------------------------------------------
+  bun x tsc --noEmit      exit 0, no diagnostics
+  bun test                959 pass, 19 skip, 0 fail
+                          3360 expect() calls, 978 tests across 132 files, 84.66s
+  new tests               6 in src/harness/cmux-door.test.ts
+                          1 in src/events/events.test.ts (§4 regression)
+  the live drive          gate-shut by default; `bun test` never touches cmux
+                          destructively. The gated drive was run by hand, twice.
+
+------------------------------------------------------------------------------
+11. DIRECTIVE 14 CLEANUP — the four checks, plus scratch
+------------------------------------------------------------------------------
+(printed verbatim at the end of the run; see the ticket comment for the live
+paste)
+
+  pgrep -f 'bin/bun.*cli\.ts watch' | wc -l                 -> 0
+  launchctl list | grep -ci argus                            -> 0
+  cmux --id-format both tree --all | grep -c "workspace "    -> 8   UNCHANGED
+  cmux --id-format both tree --all | grep -c "surface "      -> 24  UNCHANGED
+  ls -d /private/tmp/argus-* 2>/dev/null                     -> removed
+==============================================================================
