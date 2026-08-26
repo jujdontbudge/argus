@@ -499,3 +499,54 @@ glossed — a section this run did not reach is not a section that passed.
   Hermes reached for `argus status` three times, unprompted — it is the
   obvious monitoring verb. The skill's monitoring advice is entirely about
   digests, events and `argus search`, and never mentions `argus status`.
+
+==============================================================================
+8. *** CREDENTIAL CHECKSUM CHANGED — RUN HALTED HERE ***
+==============================================================================
+The ticket's rule is unconditional: a changed checksum means stop immediately.
+It changed. All live work stopped at that point; nothing below this line
+involved a credential, an agent session or a network call.
+
+  ~/.codex/auth.json
+    baseline (ticket, and verified at 16:49 before anything ran)
+      ab81a7c70ad1ea4db247eec89ae1ff3568e50af3014dc694f689119408c66315
+    after the run (17:16)
+      670a91106a15b04c48f5504375c448c3115ed3ade0aa3cef083a4fc603233e3a
+    CHANGED.
+
+  ~/.hermes/auth.json
+    da742362b9e49833760e31672d012dd9e894389617a965074a3244eb2b349220
+    UNCHANGED, before and after, mtime still 2026-08-23 20:28:59.
+
+NO REPAIR WAS ATTEMPTED. Writing a stale token back over a rotated one is how
+a live credential incident becomes two, so the file was left exactly as found.
+
+The evidence available, stated as evidence and not as exoneration:
+
+  1. THE SANDBOX'S OWN COPY DID NOT CHANGE. The scratch
+     $CODEX_HOME/auth.json is still byte-for-byte the 16:49 baseline
+     (ab81a7c7...), mtime 16:49:41. Codex writes a refreshed token back into
+     the CODEX_HOME it is using; this run's ten Codex sessions left their copy
+     untouched, which is what "no refresh happened here" looks like.
+  2. THE TIMING DOES NOT LINE UP WITH THIS RUN. The real file's mtime is
+     17:15:15. The drive ended at ~17:06 and the last Codex worker exited
+     before it. Nothing this ticket spawned was alive at 17:15.
+  3. THE REAL PATH WAS NEVER IN REACH. Every child ran under `env -i` with
+     CODEX_HOME pinned to the scratch directory. The real `~/.codex` was never
+     in any child's environment, and `~/.codex/config.toml` still has
+     `grep -c "argus:notify"` == 0 — Argus's notify hook went into the scratch
+     config, never the live one.
+
+So the most likely explanation is an ordinary refresh by Johan's own Codex use
+or by another session on this machine at 17:15, not by this run. THAT IS AN
+INFERENCE, NOT A PROOF, and the ticket does not let a run grade its own
+credential incident. Reported here and in the ticket comment, loudly, for Johan
+to judge. If any of his Codex sessions started failing auth around 17:15, this
+is the first place to look.
+
+WHAT THIS COSTS THE RUN: nothing that was already measured. The drive, the
+merges and the grade in §5-§7 all completed before 17:15 and are unaffected.
+What did NOT happen because of the halt: no further live sessions were started,
+and the skill fixes in §9 were verified by typecheck and the test suite only —
+not by a second Hermes drive against the corrected skill. That re-drive is the
+obvious next step and it is deliberately NOT in this run.
