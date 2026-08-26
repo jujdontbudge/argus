@@ -552,4 +552,73 @@ describe("Codex rollout source", () => {
       await rm(root, { force: true, recursive: true });
     }
   });
+
+  test("repeated empty polls of a long rollout keep RSS bounded", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-codex-memory-"));
+    try {
+      const codexHome = join(root, "codex");
+      const rolloutDir = join(codexHome, "sessions/2026/08/26");
+      await mkdir(rolloutDir, { recursive: true });
+      const rollout = join(
+        rolloutDir,
+        "rollout-2026-08-26T12-00-00-86868686-8686-8686-8686-868686868686.jsonl",
+      );
+      const padding = "x".repeat(8 * 1024 * 1024);
+      await writeFile(
+        rollout,
+        [
+          JSON.stringify({
+            timestamp: "2026-08-26T12:00:00.000Z",
+            type: "session_meta",
+            payload: {
+              id: "86868686-8686-8686-8686-868686868686",
+              cwd: root,
+              cli_version: "0.149.0",
+            },
+          }),
+          JSON.stringify({
+            timestamp: "2026-08-26T12:00:01.000Z",
+            type: "response_item",
+            payload: {
+              type: "message",
+              role: "assistant",
+              content: [{ type: "output_text", text: padding }],
+            },
+          }),
+        ].join("\n") + "\n",
+      );
+
+      const moduleUrl = new URL("./codex.ts", import.meta.url).href;
+      const tailerUrl = new URL("./tailer.ts", import.meta.url).href;
+      const program = `
+        import { createCodexSource } from ${JSON.stringify(moduleUrl)};
+        import { Tailer } from ${JSON.stringify(tailerUrl)};
+        const tailer = new Tailer(createCodexSource({ codexHome: ${JSON.stringify(codexHome)} }));
+        await tailer.catchUp();
+        Bun.gc(true);
+        const before = process.memoryUsage().rss;
+        for (let poll = 0; poll < 200; poll += 1) await tailer.catchUp();
+        const after = process.memoryUsage().rss;
+        console.log(JSON.stringify({ before, after, growth: after - before }));
+      `;
+      const child = Bun.spawn([process.execPath, "-e", program], {
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [exitCode, stdout, stderr] = await Promise.all([
+        child.exited,
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+      ]);
+      expect(exitCode, stderr).toBe(0);
+      const sample = JSON.parse(stdout) as {
+        before: number;
+        after: number;
+        growth: number;
+      };
+      expect(sample.growth, JSON.stringify(sample)).toBeLessThan(16 * 1024 * 1024);
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  }, 30_000);
 });

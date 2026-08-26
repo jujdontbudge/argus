@@ -8,6 +8,7 @@ import {
 export function createWatcherSpawner(
   commandPrefix: readonly string[],
   env?: Readonly<Record<string, string>>,
+  options: { stderr?: "ignore" | "inherit" } = {},
 ): SpawnWatcher {
   return ({ eye, repo }) => {
     const child = Bun.spawn(
@@ -15,7 +16,7 @@ export function createWatcherSpawner(
       {
         cwd: repo,
         ...(env !== undefined && { env }),
-        stderr: "ignore",
+        stderr: options.stderr ?? "inherit",
         stdout: "ignore",
       },
     );
@@ -48,6 +49,15 @@ export async function runSupervisorDaemon(
     restartDelayMilliseconds: positiveInteger(
       env.ARGUS_SUPERVISOR_RESTART_MS,
       1_000,
+    ),
+    restartLimit: positiveInteger(env.ARGUS_SUPERVISOR_RESTART_LIMIT, 5),
+    restartMaxDelayMilliseconds: positiveInteger(
+      env.ARGUS_SUPERVISOR_RESTART_MAX_MS,
+      60_000,
+    ),
+    restartWindowMilliseconds: positiveInteger(
+      env.ARGUS_SUPERVISOR_RESTART_WINDOW_MS,
+      5 * 60_000,
     ),
     spawn: createWatcherSpawner([
       configuration.job.bunPath,

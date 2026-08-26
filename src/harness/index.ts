@@ -66,6 +66,11 @@ export interface SandboxOptions {
   checkout: string;
 }
 
+export const LIVE_WATCHER_FLEET_LOCK_PATH = join(
+  tmpdir(),
+  "argus-live-watcher-fleet.lock",
+);
+
 /**
  * The watcher spawner for throwaway harness state.
  *
@@ -78,7 +83,10 @@ export function createSandboxWatcherSpawner(
   commandPrefix: readonly string[],
   sandbox: Pick<Sandbox, "env">,
 ): SpawnWatcher {
-  return createWatcherSpawner(commandPrefix, sandbox.env);
+  return createWatcherSpawner(commandPrefix, {
+    ...sandbox.env,
+    ARGUS_WATCH_OWNER_PID: String(process.pid),
+  }, { stderr: "ignore" });
 }
 
 export type TestAgent = "claude" | "codex";
@@ -204,6 +212,7 @@ export async function createSandbox(
   const repo = join(root, `scratch-${id}`);
   const state = {
     ARGUS_REPOS_FILE: join(root, "state/argus-repos"),
+    ARGUS_SUPERVISOR_CONTROL: "disabled",
     CLAUDE_CONFIG_DIR: join(root, "state/claude"),
     CMUX_SOCKET_PATH: join(root, "state/cmux/cmux.sock"),
     CMUX_SOCKET_DIR: join(root, "state/cmux"),
@@ -231,7 +240,10 @@ export async function createSandbox(
       name !== "CODEX_THREAD_ID" &&
       name !== "HONCHO_API_KEY" &&
       name !== "HONCHO_CONFIG_FILE" &&
-      name !== "HONCHO_URL"
+      name !== "HONCHO_URL" &&
+      name !== "ARGUS_LAUNCHCTL" &&
+      name !== "ARGUS_LAUNCHD_DOMAIN" &&
+      !name.startsWith("ARGUS_SUPERVISOR_")
     ) {
       env[name] = value;
     }
@@ -247,6 +259,7 @@ export async function createSandbox(
           ([name]) =>
             name !== "CMUX_SOCKET_PATH" &&
             name !== "ARGUS_REPOS_FILE" &&
+            name !== "ARGUS_SUPERVISOR_CONTROL" &&
             !name.startsWith("GIT_"),
         )
         .map(([, path]) => path)
@@ -485,6 +498,7 @@ export const watcherDeathScenario: ScenarioHandler = async ({ assert, sandbox })
   const repo = await realpath(sandbox.repo);
   const statusPath = join(sandbox.root, "state", "watcher-death-status.json");
   const supervisor = new WatcherSupervisor({
+    fleetLockPath: LIVE_WATCHER_FLEET_LOCK_PATH,
     registryPath: envPath(sandbox, "ARGUS_REPOS_FILE"),
     restartDelayMilliseconds: 25,
     spawn: createSandboxWatcherSpawner(
@@ -923,6 +937,7 @@ export const blastRadiusZeroScenario: ScenarioHandler = async ({
     const peerArgus = join(peerRepo, ".argus");
     const statusPath = join(peer.root, "state", "blast-radius-status.json");
     const supervisor = new WatcherSupervisor({
+      fleetLockPath: LIVE_WATCHER_FLEET_LOCK_PATH,
       registryPath: envPath(peer, "ARGUS_REPOS_FILE"),
       restartDelayMilliseconds: 25,
       spawn: createSandboxWatcherSpawner(

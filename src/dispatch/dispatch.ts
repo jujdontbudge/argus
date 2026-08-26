@@ -47,6 +47,7 @@ import { runGh, trackerRepoName, type GhRunner } from "../eyes/retro/gh";
 import { claimingLogin, claimTicket, releaseClaim } from "./claim.ts";
 import { readFrontier, type ExcludedTicket, type FrontierTicket } from "./frontier.ts";
 import { recoverDeadSlots, type RecoveredSlot } from "./recover.ts";
+import { routeAgent } from "./routing.ts";
 import { createDispatchSlots, dispatchSlotsDirectory } from "./slots.ts";
 
 export interface DispatchedTicket {
@@ -82,7 +83,12 @@ export interface DispatchReport {
 export interface DispatchOptions {
   /** The repo whose registry, config and worktrees this pass uses. */
   repo: string;
-  /** Route every ticket to this agent (SPEC §7.3.2's "routed agent"). */
+  /**
+   * Route EVERY ticket in the pass to this agent, overriding SPEC §2's label
+   * table (#88). Left unset — as `argus dispatch` leaves it — each ticket is
+   * routed by its own labels; this is the deliberate-caller escape hatch
+   * (harness scenarios, a one-off re-run), never the normal path.
+   */
   agent?: DeployAgent;
   cmux?: CmuxRun;
   env?: Readonly<Record<string, string | undefined>>;
@@ -131,7 +137,7 @@ export async function dispatchFrontier(
   const repo = options.repo;
   const gh = options.gh ?? runGh;
   const git = options.git ?? runGit;
-  const agent = options.agent ?? "claude";
+  const forcedAgent = options.agent;
   const buildPrompt = options.dispatchPrompt ?? defaultDispatchPrompt;
   const config = await loadEyesConfig(repo);
   const maxConcurrency = options.maxConcurrency ?? config.dispatch.maxConcurrency;
@@ -217,6 +223,21 @@ export async function dispatchFrontier(
 
   for (const ticket of frontier.tickets) {
     if (inFlight >= maxConcurrency) break;
+
+    // SPEC §2's routing table, BEFORE the slot and before the claim: a ticket
+    // whose labels name no deployable agent must not spend capacity or leave
+    // an assignment behind, and a refusal here costs one deferred dispatch
+    // that a one-word label fix puts back on the next pass.
+    let agent = forcedAgent;
+    if (agent === undefined) {
+      const routing = routeAgent(ticket.labels);
+      if (routing.status === "refused") {
+        report.skipped.push({ reason: routing.reason, ticket: ticket.number });
+        report.degraded.push(`ticket #${ticket.number}: ${routing.reason}`);
+        continue;
+      }
+      agent = routing.agent;
+    }
 
     // The slot BEFORE the claim and before anything is created: capacity is
     // the first thing checked, so a full cap cannot even assign a ticket.

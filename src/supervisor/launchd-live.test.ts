@@ -128,6 +128,22 @@ liveTest(
     let survivors: number[] = [];
     let beforeLabels: string[] = [];
     let afterLabels: string[] = [];
+    const guardian = Bun.spawn([
+      process.execPath,
+      "-e",
+      `
+        const owner = ${process.pid};
+        while (true) {
+          try { process.kill(owner, 0); } catch { break; }
+          await Bun.sleep(100);
+        }
+        Bun.spawnSync(["/bin/launchctl", "bootout", ${JSON.stringify(service)}]);
+      `,
+    ], {
+      stderr: "ignore",
+      stdin: "ignore",
+      stdout: "ignore",
+    });
 
     try {
       const before = launchctlRun("print", domain);
@@ -261,6 +277,8 @@ liveTest(
       }
       const after = launchctlRun("print", domain);
       afterLabels = after.exitCode === 0 ? serviceLabels(after.stdout) : [];
+      guardian.kill("SIGTERM");
+      await guardian.exited;
       await rm(root, { force: true, recursive: true });
     }
 

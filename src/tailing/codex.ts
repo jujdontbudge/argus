@@ -12,7 +12,7 @@ import {
   isCodexSubagentThread,
 } from "../matching/candidates";
 import type { SourceParser, TailEvent, TranscriptSource } from "./events";
-import type { ReadResult } from "./line-reader";
+import { readNewLines, type ReadResult } from "./line-reader";
 
 export interface CodexSourceOptions {
   /** Isolated Codex state root. Production passes `~/.codex`. */
@@ -275,33 +275,42 @@ class CodexLineReader {
 
   async read(file: string, originalOffset: number): Promise<ReadResult> {
     let stat;
-    let stored: Buffer;
     try {
       stat = statSync(file);
-      stored = readFileSync(file);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         return { lines: [], offset: originalOffset, truncated: false };
       }
       throw error;
     }
-    const content = file.endsWith(".jsonl.zst")
-      ? Buffer.from(await Bun.zstdDecompress(stored))
-      : stored;
     const key = logicalRolloutName(file);
     const previous = this.identities.get(key);
     const replacedAtSamePath =
       previous !== undefined &&
       previous.path === file &&
       (previous.device !== stat.dev || previous.inode !== stat.ino);
-    let offset = originalOffset;
-    const truncated = replacedAtSamePath || content.length < offset;
-    if (truncated) offset = 0;
     this.identities.set(key, {
       device: stat.dev,
       inode: stat.ino,
       path: file,
     });
+
+    if (!file.endsWith(".jsonl.zst")) {
+      const result = await readNewLines(
+        file,
+        replacedAtSamePath ? 0 : originalOffset,
+      );
+      return {
+        ...result,
+        truncated: replacedAtSamePath || result.truncated,
+      };
+    }
+
+    const stored = readFileSync(file);
+    const content = Buffer.from(await Bun.zstdDecompress(stored));
+    let offset = originalOffset;
+    const truncated = replacedAtSamePath || content.length < offset;
+    if (truncated) offset = 0;
 
     if (content.length <= offset) return { lines: [], offset, truncated };
     const unread = content.subarray(offset);
