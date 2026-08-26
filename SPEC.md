@@ -453,6 +453,11 @@ starts them on login, restarts them on crash. It makes no decisions and holds no
 knowledge beyond the list of enabled repos. This is the single exception to
 "nothing global."
 
+Each watcher has a hard RSS ceiling of **512 MiB** by default, configurable with
+`ARGUS_WATCH_MAX_RSS_MB`. It checks its own resident memory on every poll and exits
+cleanly after logging the measured RSS and configured ceiling when the cap is
+crossed; the supervisor then performs the logged restart.
+
 ---
 
 ## 10. CLI

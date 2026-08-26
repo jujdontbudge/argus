@@ -18,6 +18,8 @@ interface OpenWatcher {
   tick?(): Promise<unknown>;
 }
 
+export const DEFAULT_WATCH_MAX_RSS_MIB = 512;
+
 async function loadCursors(path: string): Promise<Record<string, number>> {
   try {
     const value = (await Bun.file(path).json()) as Record<string, unknown>;
@@ -245,6 +247,11 @@ async function runLoop(
   let watcher: OpenWatcher | undefined;
   let source: TranscriptSource | undefined;
   const pollMilliseconds = positiveInteger(process.env.ARGUS_WATCH_POLL_MS, 250);
+  const maxRssMiB = positiveInteger(
+    process.env.ARGUS_WATCH_MAX_RSS_MB,
+    DEFAULT_WATCH_MAX_RSS_MIB,
+  );
+  const maxRssBytes = maxRssMiB * 1024 * 1024;
   let checkingEnrollment = false;
   const enrollmentMonitor = setInterval(async () => {
     if (checkingEnrollment || controller.signal.aborted) return;
@@ -271,6 +278,13 @@ async function runLoop(
     if (lease === null) return 0;
     await health.start();
     while (!controller.signal.aborted) {
+      const rssBytes = process.memoryUsage().rss;
+      if (rssBytes > maxRssBytes) {
+        console.error(
+          `argus watch ${eye}: RSS ceiling exceeded (${Math.ceil(rssBytes / 1024 / 1024)} MiB > ${maxRssMiB} MiB); exiting for supervised restart`,
+        );
+        return 0;
+      }
       if (!(await isEnrolled(registryPath, repo))) return 0;
       try {
         source ??= await (
