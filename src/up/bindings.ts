@@ -447,6 +447,87 @@ function convergeYamlValues(
   return `${lines.join("\n")}\n`;
 }
 
+function convergeYamlStringList(
+  source: string,
+  section: string,
+  key: string,
+  requiredValue: string,
+): string {
+  const parsed = source.trim() === "" ? {} : Bun.YAML.parse(source);
+  const sectionValue =
+    typeof parsed === "object" && parsed !== null
+      ? (parsed as Record<string, unknown>)[section]
+      : undefined;
+  const configured =
+    typeof sectionValue === "object" && sectionValue !== null
+      ? (sectionValue as Record<string, unknown>)[key]
+      : undefined;
+  const values =
+    configured === undefined || configured === null
+      ? []
+      : typeof configured === "string"
+        ? [configured]
+        : Array.isArray(configured) &&
+            configured.every((value) => typeof value === "string")
+          ? configured
+          : null;
+  if (values === null) {
+    throw new Error(
+      `argus up: Hermes ${section}.${key} must be a string or list of strings`,
+    );
+  }
+  if (values.includes(requiredValue)) return source;
+  const replacement = [...values, requiredValue].map(
+    (value) => `    - ${JSON.stringify(value)}`,
+  );
+
+  const hadTrailingNewline = source.endsWith("\n");
+  const lines = source.length === 0 ? [] : source.split("\n");
+  if (hadTrailingNewline) lines.pop();
+  const sectionIndex = lines.findIndex(
+    (line) => line.trimEnd() === `${section}:`,
+  );
+  if (sectionIndex === -1) {
+    lines.push(`${section}:`, `  ${key}:`, ...replacement);
+    return `${lines.join("\n")}\n`;
+  }
+
+  let sectionEnd = sectionIndex + 1;
+  while (
+    sectionEnd < lines.length &&
+    (lines[sectionEnd]?.trim() === "" ||
+      lines[sectionEnd]?.trimStart().startsWith("#") ||
+      /^\s/.test(lines[sectionEnd] ?? ""))
+  ) {
+    sectionEnd += 1;
+  }
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const keyPattern = new RegExp(`^(\\s+)${escapedKey}\\s*:`);
+  const keyIndex = lines.findIndex(
+    (line, index) =>
+      index > sectionIndex && index < sectionEnd && keyPattern.test(line),
+  );
+  if (keyIndex === -1) {
+    lines.splice(sectionEnd, 0, `  ${key}:`, ...replacement);
+    return `${lines.join("\n")}\n`;
+  }
+
+  const keyIndent = lines[keyIndex]!.match(keyPattern)![1]!.length;
+  let keyEnd = keyIndex + 1;
+  while (keyEnd < sectionEnd) {
+    const line = lines[keyEnd]!;
+    if (line.trim() === "" || line.trimStart().startsWith("#")) {
+      keyEnd += 1;
+      continue;
+    }
+    const indent = line.match(/^\s*/)?.[0].length ?? 0;
+    if (indent <= keyIndent) break;
+    keyEnd += 1;
+  }
+  lines.splice(keyIndex, keyEnd - keyIndex, `  ${key}:`, ...replacement);
+  return `${lines.join("\n")}\n`;
+}
+
 async function exists(path: string): Promise<boolean> {
   try {
     await lstat(path);
@@ -503,6 +584,7 @@ async function ensureHermesProfile(
   hermesRoot: string,
   profileName: string,
   memoryDirectory: string,
+  skillsDirectory: string,
 ): Promise<void> {
   const profile = join(hermesRoot, "profiles", profileName);
   await Promise.all([
@@ -541,8 +623,14 @@ async function ensureHermesProfile(
     { enabled: "false" },
     (_key, currentValue) => currentValue !== "false",
   );
-  if (withCuratorDisabled !== config) {
-    await Bun.write(configPath, withCuratorDisabled);
+  const withSkills = convergeYamlStringList(
+    withCuratorDisabled,
+    "skills",
+    "external_dirs",
+    skillsDirectory,
+  );
+  if (withSkills !== config) {
+    await Bun.write(configPath, withSkills);
   }
 
   const memories = join(profile, "memories");
@@ -692,13 +780,18 @@ export async function convergeAgentBindings(
   const canonicalRepo =
     (await resolveArgusRepo(options.repo)) ?? (await realpath(options.repo));
   const argusDirectory = join(canonicalRepo, ".argus");
-  await mkdir(join(argusDirectory, "memory"), { recursive: true });
+  await Promise.all(
+    ["memory", "skills"].map((name) =>
+      mkdir(join(argusDirectory, name), { recursive: true }),
+    ),
+  );
   const binding = await resolveRepoIdentity(canonicalRepo, options.hermesRoot);
   const { profile, workspace } = binding;
   await ensureHermesProfile(
     options.hermesRoot,
     profile,
     join(argusDirectory, "memory"),
+    join(argusDirectory, "skills"),
   );
   await Bun.write(
     join(argusDirectory, "honcho.yaml"),

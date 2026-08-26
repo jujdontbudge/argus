@@ -264,6 +264,46 @@ describe("argus up", () => {
     expect(result.stdout).toContain("cmux not installed");
   });
 
+  test("binds the canonical skills store into the Hermes profile the real CLI reads", async () => {
+    const hermes = Bun.which("hermes");
+    expect(hermes).not.toBeNull();
+    const { env, repo } = await createScratchRepo("Hermes Skills Reader");
+    const skill = join(repo, ".argus/skills/proof-package");
+    await mkdir(skill, { recursive: true });
+    await Bun.write(
+      join(skill, "SKILL.md"),
+      `---
+name: argus-reader-proof
+description: proves Hermes reads the Argus canonical skills store
+---
+
+# Argus reader proof
+`,
+    );
+
+    const result = await runUp(repo, env);
+    expect(result.exitCode).toBe(0);
+    const profile = result.stdout.match(/^Hermes profile: (\S+)$/m)?.[1];
+    expect(profile).toMatch(/^argus-hermes-skills-reader-[a-f0-9]{64}$/);
+    expect(result.stdout).toContain(
+      "wiring: Hermes skills binding OK (profile skills.external_dirs includes .argus/skills)",
+    );
+
+    const listed = await run(
+      [hermes!, "skills", "list", "--source", "local", "--enabled-only"],
+      repo,
+      {
+        ...env,
+        HERMES_HOME: join(env.HERMES_HOME!, "profiles", profile!),
+      },
+    );
+
+    expect(listed.exitCode).toBe(0);
+    expect(listed.stdout).toContain("argus-reader-proof");
+    expect(listed.stdout).toContain("1 local");
+    expect(listed.stdout).toContain("enabled");
+  });
+
   test("moves Claude project memory into Argus and symlinks it back", async () => {
     const { env, repo } = await createScratchRepo();
     const claudeMemory = join(

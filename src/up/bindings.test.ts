@@ -406,6 +406,9 @@ peers:
   user_char_limit: 6000
 curator:
   enabled: false
+skills:
+  external_dirs:
+    - ${JSON.stringify(join(canonicalRepo, ".argus", "skills"))}
 `,
     );
   });
@@ -455,6 +458,9 @@ curator:
 
     const profile = join(hermesRoot, "profiles", report.profile);
     expect(report.profile).toMatch(/^argus-widget-kit-[a-f0-9]{64}$/);
+    expect(
+      (await lstat(join(await realpath(repo), ".argus", "skills"))).isDirectory(),
+    ).toBe(true);
     expect((await lstat(profile)).isDirectory()).toBe(true);
     expect((await lstat(join(profile, "memories"))).isSymbolicLink()).toBe(true);
     expect(await readlink(join(profile, "memories"))).toBe(
@@ -474,6 +480,9 @@ memory:
   user_char_limit: 6000
 curator:
   enabled: false
+skills:
+  external_dirs:
+    - ${JSON.stringify(join(await realpath(repo), ".argus", "skills"))}
 `,
     );
   });
@@ -546,7 +555,9 @@ curator:
   test("fills only missing settings in an existing profile and repairs its memories directory", async () => {
     const { repo, root } = await scratchRepo("Existing Profile");
     const hermesRoot = join(root, "hermes");
+    const sharedSkills = join(root, "shared-skills");
     await mkdir(hermesRoot, { recursive: true });
+    await mkdir(sharedSkills, { recursive: true });
     await Bun.write(join(hermesRoot, ".env"), "GLOBAL_ONLY=true\n");
     const options = {
       hermesRoot,
@@ -565,6 +576,9 @@ memory:
   memory_char_limit: 20000
 curator:
   enabled: false
+skills:
+  external_dirs:
+    - ${JSON.stringify(sharedSkills)}
 custom_setting: keep-me
 `,
     );
@@ -581,6 +595,10 @@ custom_setting: keep-me
     expect(afterFirst).toContain("memory_char_limit: 20000");
     expect(afterFirst).toContain("user_char_limit: 6000");
     expect(afterFirst).toContain("custom_setting: keep-me");
+    expect(afterFirst).toContain(JSON.stringify(sharedSkills));
+    expect(afterFirst).toContain(
+      JSON.stringify(join(await realpath(repo), ".argus", "skills")),
+    );
     expect(afterFirst.match(/user_char_limit:/g)).toHaveLength(1);
     expect(afterFirst.match(/enabled: false/g)).toHaveLength(1);
     expect(await Bun.file(join(profile, "config.yaml")).text()).toBe(afterFirst);
@@ -657,6 +675,9 @@ curator:
 curator:
   enabled: false
   interval_hours: 24
+skills:
+  external_dirs:
+    - ${JSON.stringify(join(await realpath(repo), ".argus", "skills"))}
 `,
     );
   });
