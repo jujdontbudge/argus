@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, readdir, realpath, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { NATIVE_CLAUDE } from "../harness/subscription-gate.ts";
 import {
@@ -100,6 +100,17 @@ describe.skipIf(!claudeGate)(
           // read back out of the transcript.
           const slug = claudeProjectDir(await realpath(worktree), join(homedir(), ".claude/projects"));
           const events = await new Tailer(createClaudeCodeSource({ dir: slug })).catchUp();
+          // Printed, because a live drive's value is its evidence, not its
+          // verdict — `bun test` shows this above the result.
+          console.log(
+            `argus #55 claude deploy: ${JSON.stringify({
+              preassignedSessionId: result.deployment.sessionId,
+              branch: result.deployment.branch,
+              worktree,
+              transcriptSessions: [...new Set(events.map((event) => event.sessionId))],
+              registryRow: (await Bun.file(registryPaths(repo).sessionsFile).text()).trim(),
+            })}`,
+          );
           const sessions = new Set(events.map((event) => event.sessionId));
           expect([...sessions]).toContain(result.deployment.sessionId);
 
@@ -122,7 +133,8 @@ describe.skipIf(!claudeGate)(
               .some((event) => event.role === "assistant" && event.text.includes("ACKNOWLEDGED")),
           ).toBe(true);
         } finally {
-          if (worktree) await rm(worktree, { force: true, recursive: true });
+          // The worktree AND the `<repo>-worktrees` parent the primitive created.
+      if (worktree) await rm(dirname(worktree), { force: true, recursive: true });
           await rm(repo, { force: true, recursive: true });
         }
       },
@@ -160,6 +172,12 @@ describe.skipIf(!codexGate)(
           expect(registry.sessions.map(({ sessionId }) => sessionId)).toEqual([
             result.deployment.sessionId,
           ]);
+          console.log(
+            `argus #55 codex deploy: ${JSON.stringify({
+              announcedSessionId: result.deployment.sessionId,
+              registryRow: (await Bun.file(registryPaths(repo).sessionsFile).text()).trim(),
+            })}`,
+          );
           const early = await findRollout(codexHome, result.deployment.sessionId);
           const earlyText = early === null ? "" : await Bun.file(early).text();
           expect({ hasPrompt: earlyText.includes(DISPATCH) }).toEqual({ hasPrompt: false });
@@ -169,11 +187,13 @@ describe.skipIf(!codexGate)(
           await result.deployment.process.exited;
           const rollout = await findRollout(codexHome, result.deployment.sessionId);
           expect(rollout).not.toBeNull();
+          console.log(`argus #55 codex rollout: ${rollout}`);
           const finished = await Bun.file(rollout!).text();
           expect(finished).toContain(DISPATCH);
           expect(finished).toContain(result.deployment.sessionId);
         } finally {
-          if (worktree) await rm(worktree, { force: true, recursive: true });
+          // The worktree AND the `<repo>-worktrees` parent the primitive created.
+      if (worktree) await rm(dirname(worktree), { force: true, recursive: true });
           await rm(codexHome, { force: true, recursive: true });
           await rm(repo, { force: true, recursive: true });
         }

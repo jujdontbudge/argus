@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import type { MessageEvent } from "../tailing";
 import {
@@ -266,7 +266,8 @@ describe("deployWorker (#55): the worktree is real (SPEC §7.3.2)", () => {
       // One ticket, one session: the worker's cwd is the worktree, never the repo.
       expect(await Bun.file(join(worktree, ".git")).text()).toContain("gitdir:");
     } finally {
-      if (worktree) await rm(worktree, { force: true, recursive: true });
+      // The worktree AND the `<repo>-worktrees` parent the primitive created.
+      if (worktree) await rm(dirname(worktree), { force: true, recursive: true });
       await rm(repo, { force: true, recursive: true });
     }
   }, GIT_BUDGET_MS);

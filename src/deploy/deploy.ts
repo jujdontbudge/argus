@@ -24,8 +24,6 @@
  * CLI rather than by Argus: codex names its own session, so its row follows
  * the CLI's announcement instead of preceding the process.
  */
-import { basename } from "node:path";
-
 import {
   appendSessionRow,
   registryPaths,
@@ -135,7 +133,6 @@ export async function deployWorker(
   const row = (sessionId: string): SessionRow => ({
     agent: route.agent,
     dispatchPrompt: request.dispatchPrompt,
-    repo: basename(request.repo),
     sessionId,
     ticket: request.ticket,
     ts,

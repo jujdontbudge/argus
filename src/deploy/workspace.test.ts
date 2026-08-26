@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import type { CmuxRun, CmuxRunResult } from "../events";
 import { loadRegistry, registryPaths } from "../provenance";
@@ -120,7 +120,8 @@ describe("deployWorker (#55): a workspace failure never blocks the deployment", 
       expect(registry.sessions.map(({ sessionId, workspace }) => ({ sessionId, workspace })))
         .toEqual([{ sessionId: "99999999-8888-4777-8666-555555555555", workspace: undefined }]);
     } finally {
-      if (worktree) await rm(worktree, { force: true, recursive: true });
+      // The worktree AND the `<repo>-worktrees` parent the primitive created.
+      if (worktree) await rm(dirname(worktree), { force: true, recursive: true });
       await rm(repo, { force: true, recursive: true });
     }
   }, 60_000);
