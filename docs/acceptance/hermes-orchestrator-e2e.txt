@@ -23,3 +23,77 @@ $ env -i PATH=... HOME=$R/home HERMES_HOME=$R/home/.hermes \
 
   hermes 0.16.0, provider openai-codex (subscription; no API key in env).
   Real credential re-checksummed immediately after this call: UNCHANGED.
+
+------------------------------------------------------------------------------
+1. argus init on the sandbox repo
+------------------------------------------------------------------------------
+$ argus init
+  exit 0
+  out| Argus repo scaffold: /private/tmp/argus-t82-LFSpxD/repo
+  out|   .argus/            layout, config.yaml, canonical memory and skills
+  out|   .claude/skills     -> ../.argus/skills
+  out| wiring: claude skills adapter OK (resolves; 0 canonical skills to read yet)
+  out| wiring: AGENTS.md pointers OK (6/6 resolve)
+
+------------------------------------------------------------------------------
+2. argus up — registers the skill directory
+------------------------------------------------------------------------------
+$ argus up
+  exit 0
+  out| TRACKER-LESS MODE: no GitHub remote; skipped GitHub labels and tracker checks
+  out| HONCHO DEGRADED: http://localhost:8000 unavailable (...); local bindings converged
+  out| Hermes slow poll: created (every 5m)
+  out| Hermes profile: argus-repo-e607c4d658090ea3348506ed635cd20029cd2634db2bfc4a7d57a66e7673fef4
+  out| Push hooks: Claude Stop + Codex notify
+  out| cmux hooks: optional (resume convenience; not required for signal delivery)
+  out|   cmux 0.62.2 has no `hooks` command — nothing in Argus requires one
+  out| wiring: claude skills adapter OK (resolves; 0 canonical skills to read yet)
+  out| wiring: AGENTS.md pointers OK (6/6 resolve)
+  out| wiring: Hermes memory binding OK (profile memories -> .argus/memory)
+  out| wiring: Hermes skills binding OK (profile skills.external_dirs includes .argus/skills)
+  out| Argus converged /private/tmp/argus-t82-LFSpxD/repo
+
+  No supervisor LaunchAgent was installed: #86's scratch-HOME refusal
+  (src/supervisor/control.ts:156) held with ARGUS_ALLOW_SCRATCH_LAUNCHD unset.
+    pgrep -f 'bin/bun.*cli\.ts watch' | wc -l  -> 0
+    launchctl list | grep -ci argus            -> 0
+
+******************************************************************************
+FINDING 1 (BLOCKER, argus bug not skill bug)
+  `argus up` registers an EMPTY skills directory and calls it OK.
+******************************************************************************
+
+  The profile config after `up`:
+
+    $ grep -A3 '^skills:' $HERMES_HOME/profiles/argus-repo-e607.../config.yaml
+      skills:
+        external_dirs:
+          - "/private/tmp/argus-t82-LFSpxD/repo/.argus/skills"
+
+  The directory it points at:
+
+    $ ls -la /private/tmp/argus-t82-LFSpxD/repo/.argus/skills/
+      total 0
+      drwxr-xr-x   2 johansardar  wheel   64 Aug 26 14:38 .
+      drwxr-xr-x  10 johansardar  wheel  320 Aug 26 14:38 ..
+
+  There is NO code path that places skills/argus-orchestrator/SKILL.md into a
+  repo's .argus/skills/. src/up/scaffold.ts:14-20 creates "skills" as one of
+  five empty ARGUS_DIRECTORIES; src/up/bindings.ts:620-632 writes that empty
+  path into skills.external_dirs. grep for "argus-orchestrator" across src/
+  hits exactly two lines, both the dispatch-prompt string at bindings.ts:672 --
+  never a copy, symlink or install of the skill itself.
+
+  Consequence: on any repo other than one where a human hand-placed the file,
+  `argus up` hands Hermes a dispatch prompt that says "Use the repo's
+  argus-orchestrator skill" (bindings.ts:672) pointing into a directory that
+  contains no skills at all. The verifier prints "Hermes skills binding OK"
+  because it checks that external_dirs CONTAINS the path, not that the path
+  contains a skill -- while the adjacent line already says "0 canonical skills
+  to read yet" and is treated as informational.
+
+  Corroboration that this has never worked anywhere real:
+    ls ~/argus/.argus/skills/   -> No such file or directory
+    ls -d ~/.hermes/profiles/*/ -> no matches
+  argus has never been init'ed on its own checkout, and no argus Hermes
+  profile has ever existed on this machine.
