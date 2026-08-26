@@ -4,8 +4,14 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import type { CmuxRun, CmuxRunResult } from "../events";
-import { registryPaths } from "../provenance";
-import { closeWorkerTab, openWorkerTab, retireWorkerTab } from "./index.ts";
+import { loadRegistry, registryPaths } from "../provenance";
+import {
+  closeWorkerTab,
+  deployWorker,
+  openWorkerTab,
+  retireWorkerTab,
+  type WorkerProcess,
+} from "./index.ts";
 
 /**
  * Ticket #95 — a worker is a TAB in the workspace Argus is already running in,
@@ -87,6 +93,12 @@ function fakeCmux(options: {
   };
   return { calls, run };
 }
+
+const stubSpawn = async (): Promise<WorkerProcess> => ({
+  announcedSessionId: async () => null,
+  exited: Promise.resolve({ exitCode: 0, stderr: "", stdout: "" }),
+  kill: () => {},
+});
 
 /** Did anything in this run ask cmux for a workspace? R6 says: never. */
 const createdAWorkspace = (calls: string[][]): boolean =>
@@ -342,4 +354,74 @@ describe("retireWorkerTab (#95): teardown is registry-first, like everything els
       await rm(repo, { force: true, recursive: true });
     }
   });
+});
+
+describe("deployWorker (#95): a tab failure never blocks the deployment", () => {
+  // Restored in #95's landing pass. #55 asserted this against
+  // `createCmuxWorkspace` in `workspace.test.ts`, and the rename to `tab.ts`
+  // deleted it without a replacement — leaving `deployWorker`'s degraded
+  // branch (`workspaceDegraded`, `deploy.ts`) as the only cmux path in the
+  // module with no coverage. The claim is #7's and it did not change with the
+  // verb: a tab is context, never a requirement.
+  test("workspace: auto with no cmux still deploys, and says why there is none", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "argus-tab-"));
+    let worktree: string | undefined;
+    try {
+      await Bun.$`git -C ${repo} init --quiet`.quiet();
+      await Bun.$`git -C ${repo} commit --quiet --allow-empty -m base`
+        .env({
+          ...process.env,
+          GIT_AUTHOR_EMAIL: "deploy@invalid.example",
+          GIT_AUTHOR_NAME: "Argus Deploy Test",
+          GIT_COMMITTER_EMAIL: "deploy@invalid.example",
+          GIT_COMMITTER_NAME: "Argus Deploy Test",
+        })
+        .quiet();
+      const calls: string[][] = [];
+      const result = await deployWorker(
+        {
+          agent: "claude",
+          dispatchPrompt: "ticket #95",
+          repo,
+          ticket: "95",
+          workspace: "auto",
+        },
+        {
+          cmux: async (args) => {
+            calls.push([...args]);
+            throw new Error("spawn cmux ENOENT");
+          },
+          // Set, so the run gets PAST the no-CMUX_WORKSPACE_ID guard and the
+          // degradation under test is the cmux one, not the env one.
+          env: { ...process.env, CMUX_WORKSPACE_ID: ARGUS },
+          newSessionId: () => OTHER,
+          spawn: stubSpawn,
+        },
+      );
+      expect(result.status).toBe("deployed");
+      if (result.status !== "deployed") return;
+      worktree = result.deployment.worktree;
+      expect(result.deployment.workspace).toBeUndefined();
+      expect(result.deployment.workspaceDegraded).toContain("cmux is unavailable");
+
+      // A cmux that cannot even be spawned must not be retried into existence:
+      // the deployment gets no tab and, above all, no workspace.
+      expect(createdAWorkspace(calls)).toBe(false);
+
+      // And the row carries neither handle, so nothing downstream can aim a
+      // send — or a `close-surface` — at a handle that was never resolved.
+      const registry = await loadRegistry(registryPaths(repo));
+      expect(
+        registry.sessions.map(({ sessionId, surface, workspace }) => ({
+          sessionId,
+          surface,
+          workspace,
+        })),
+      ).toEqual([{ sessionId: OTHER, surface: undefined, workspace: undefined }]);
+    } finally {
+      // The worktree AND the `<repo>-worktrees` parent the primitive created.
+      if (worktree) await rm(dirname(worktree), { force: true, recursive: true });
+      await rm(repo, { force: true, recursive: true });
+    }
+  }, 60_000);
 });
