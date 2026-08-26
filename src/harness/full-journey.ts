@@ -26,7 +26,7 @@
  *
  *   - the brains are `claude`/`codex` CLI calls, one subscription call per eye
  *     per session, and a journey that spends five per run is a journey nobody
- *     runs. `FULL_JOURNEY_MANIFEST` marks every requirement that needs them
+ *     runs. `FULL_JOURNEY_MANIFESTS` mark every requirement that needs them
  *     UNCOVERED rather than quietly grading them on the archiver's evidence.
  *   - closing a ticket needs a tracker, and SPEC §13 forbids a test run
  *     writing to one. #57's slot-1 half covers closure against a `gh` double
@@ -39,6 +39,28 @@
  * missing `CLAUDE_CODE_OAUTH_TOKEN` is never a reason for the gate to report
  * NOT RUN. The Codex leg is the `codex` CLI with the one copy of `auth.json`
  * SPEC §13 permits, into a scratch `CODEX_HOME` inside the sandbox.
+ *
+ * WHAT #74 ADDED, AND WHAT IT COST. Nothing extra: the same one drive, the
+ * same two subscription calls. #63 left this journey grading slot 1 alone,
+ * while two other slots' STRUCTURAL shortfalls were of exactly the kind a
+ * live session closes for free —
+ *
+ *   - SPEC §13.4 asserts "USER.md untouched" by INFERENCE (nothing classified
+ *     Johan, so nothing could have written it) and never opens the file. The
+ *     journey now reads the bytes before the drive and after production's own
+ *     watchers have consumed it.
+ *   - SPEC §13.6 asserts the archiver backfills "with no message lost" — over
+ *     a transcript the scenario wrote itself. The journey now kills the real
+ *     archiver while a LIVE agent's transcript is in front of it, and holds
+ *     the replacement to an exact count derived from PRODUCTION'S OWN
+ *     repo-scoped transcript source: none lost, none duplicated, whichever
+ *     side of the kill the archiver's first commit fell.
+ *
+ * STILL NO SPAWNER SEAM, for #63's reason, restated because this is exactly
+ * the ticket where it would be tempting: a fake spawner would let a fixture
+ * run record live evidence and grade LIVE, which is the overclaim #63 was cut
+ * to delete. Every requirement below that a live drive cannot honestly reach
+ * stays UNCOVERED or PARTIAL and says why.
  *
  * THE GATE IS ITS OWN. `ARGUS_LIVE_AGENTS=1` does NOT open this one. That gate
  * buys two one-sentence round trips; this buys those plus five watcher
@@ -67,6 +89,7 @@ import {
   type SupervisorStatus,
 } from "../supervisor/runtime.ts";
 import { claudeProjectDir } from "../tailing/claude-code.ts";
+import { createRepoTranscriptSource } from "../eyes/source.ts";
 import {
   createClaudeCodeSource,
   createCodexSource,
@@ -91,7 +114,11 @@ import {
 } from "./live-gate.ts";
 import { NATIVE_CLAUDE } from "./subscription-gate.ts";
 import { createSubscriptionAgentSpawner } from "./subscription-mode.ts";
-import type { ScenarioManifest } from "./verdicts.ts";
+import {
+  gradeScenario,
+  type LabeledScenarioManifest,
+  type ScenarioGrade,
+} from "./verdicts.ts";
 
 /** Its own name, deliberately. #43's gate does not open this one — see above. */
 export const FULL_JOURNEY_GATE = "ARGUS_LIVE_FULL_JOURNEY";
@@ -245,6 +272,18 @@ export function fullJourneyScenario(options: FullJourneyOptions): ScenarioHandle
     const { gate } = options;
     assert(sandbox.up.exitCode === 0, "sandbox was converged by argus up");
 
+    // Read BEFORE anything runs (#74). Slot 4 asserts USER.md "untouched" by
+    // INFERENCE — nothing classified Johan, therefore nothing could have
+    // written it — and grades PARTIAL because it never opens the file. Here
+    // the bytes themselves are the evidence, across a live session that
+    // production's own reviewer watcher was running over.
+    const userMdPath = join(sandbox.repo, ".argus", "memory", "USER.md");
+    const userMdBefore = await Bun.file(userMdPath).text();
+    assert(
+      userMdBefore.length > 0,
+      "argus up seeded USER.md before the live drive",
+    );
+
     const agents: TestAgent[] = [];
     if (gate.claude.status === "run") agents.push("claude");
     if (gate.codex.status === "run") {
@@ -335,14 +374,82 @@ export function fullJourneyScenario(options: FullJourneyOptions): ScenarioHandle
       );
     }
 
-    // PRODUCTION'S OWN WATCHERS, over the live output. This is the whole
-    // difference between this journey and a transcript smoke.
-    const archived = await runRealWatchers(sandbox);
+    // What the live agents said, and — separately — what PRODUCTION'S OWN
+    // repo-scoped source presents to a watcher for this repo. The second is
+    // the number the archive is held to below, because "no message lost" is
+    // only meaningful against what the archiver could actually see. Both are
+    // derived from the transcripts rather than pinned to a literal, so a leg
+    // that goes missing fails an assertion instead of lowering the bar.
+    const spoken = sentinelMessages(events);
     assert(
-      archived > 0,
+      spoken.length > 0,
+      "the live agents' own replies carried the journey sentinel",
+    );
+    recordLiveEvidence(
+      `agents: ${spoken.length} sentinel reply/replies across ${agents.length} live leg(s)`,
+    );
+    // OBSERVED, and reported rather than fixed: this is normally FEWER than
+    // `spoken`. `createRepoTranscriptSource` reads the repo's OWN Claude slug,
+    // and a session driven into a worktree writes under the worktree's slug,
+    // so the Claude leg is invisible to a repo-scoped watcher while the Codex
+    // leg — matched by `codexForRepo` on session-meta — is not. Relocating the
+    // transcript under the repo slug would make both legs "visible" by writing
+    // it somewhere its session never ran, which is the class of convenience
+    // this journey exists to refuse.
+    const visible = sentinelMessages(
+      await new Tailer(
+        await createRepoTranscriptSource(
+          await realpath(sandbox.repo),
+          sandbox.env,
+        ),
+      ).catchUp(),
+    );
+    assert(
+      visible.length > 0,
+      "production's own repo-scoped source presents the live reply to the watchers",
+    );
+    recordLiveEvidence(
+      `repo-scoped source: ${visible.length} of ${spoken.length} live sentinel reply/replies visible to the watchers`,
+    );
+
+    // PRODUCTION'S OWN WATCHERS, over the live output. This is the whole
+    // difference between this journey and a transcript smoke. Since #74 the
+    // real archiver is also KILLED here while the live transcript is in front
+    // of it, so SPEC §13.6 is graded on a live session rather than a replay.
+    const watchers = await runRealWatchers(sandbox, visible.length);
+    assert(
+      watchers.archived > 0,
       "the real archiver watcher archived the live agent's own words",
     );
-    recordLiveEvidence(`archiver: ${archived} live message(s) in archive.db`);
+    recordLiveEvidence(
+      `archiver: ${watchers.archived} live message(s) in archive.db`,
+    );
+    assert(
+      watchers.restarted,
+      "the supervisor restarted the real archiver killed during the live session",
+    );
+    // Both halves of "no message lost" in one equality. If the archiver had
+    // committed before the kill, the replacement must not re-archive; if it
+    // had not, the replacement must backfill. Either way the live agents'
+    // words appear exactly as often as they were actually said.
+    assert(
+      watchers.archived === visible.length,
+      "across the kill the archive holds every live sentinel message exactly once — none lost, none duplicated",
+    );
+    recordLiveEvidence(
+      `archiver death: pid ${watchers.killedPid} killed, pid ${watchers.replacementPid} backfilled ` +
+        `${watchers.archived}/${visible.length} live message(s)`,
+    );
+
+    // Read back, not inferred (#74). The real reviewer watcher ran over the
+    // live session; USER.md is what it did not write to.
+    assert(
+      (await Bun.file(userMdPath).text()) === userMdBefore,
+      "USER.md is byte-identical after production's watchers consumed the live session",
+    );
+    recordLiveEvidence(
+      `USER.md: ${userMdBefore.length} bytes unchanged across the live journey`,
+    );
 
     const { classifier } = classifierFromRegistry(await loadRegistry(paths));
     const records: ProvenanceRecord[] = [];
@@ -366,6 +473,16 @@ export function fullJourneyScenario(options: FullJourneyOptions): ScenarioHandle
     );
 
   };
+}
+
+/** The live agents' own sentinel replies, from any normalized stream. */
+function sentinelMessages(events: readonly TailEvent[]): MessageEvent[] {
+  return events.filter(
+    (event): event is MessageEvent =>
+      event.type === "message" &&
+      event.role === "assistant" &&
+      event.text.includes(JOURNEY_SENTINEL),
+  );
 }
 
 /** Copy the live Claude transcripts into the sandbox's own projects root. */
@@ -398,17 +515,33 @@ async function relocateClaudeTranscripts(
   return copied;
 }
 
+/** What the real watchers did to the live output, and what happened to them. */
+interface LiveWatcherOutcome {
+  /** Live sentinel messages the archive holds when the journey lets go. */
+  archived: number;
+  killedPid: number | null;
+  replacementPid: number | null;
+  /** The supervisor produced a NEW, live archiver pid after the kill. */
+  restarted: boolean;
+}
+
 /**
- * Start the five real eye watchers and wait for the archiver to store the
- * sentinel. Every pid is adopted through `SandboxScope` before anything can
- * signal it — the production dispatcher supervises the real `~/argus` on this
- * same machine, and #49's rule is that no pid this harness did not spawn is
- * ever killable.
+ * Start the five real eye watchers over the live output, kill the archiver
+ * while the live transcript is in front of it, and wait for the supervisor's
+ * replacement to account for every live message.
+ *
+ * Every pid is adopted through `SandboxScope` before anything can signal it —
+ * the production dispatcher supervises the real `~/argus` on this same
+ * machine, and #49's rule is that no pid this harness did not spawn is ever
+ * killable. The kill below goes through `scope.kill` for that reason, and the
+ * adoption happens in the same read that discovers the pid.
  */
 async function runRealWatchers(
   sandbox: Pick<Sandbox, "env" | "repo" | "root" | "scope">,
-): Promise<number> {
+  expected: number,
+): Promise<LiveWatcherOutcome> {
   const repo = await realpath(sandbox.repo);
+  const databasePath = join(repo, ".argus", "archive.db");
   const statusPath = join(sandbox.root, "state", "full-journey-status.json");
   const supervisor = new WatcherSupervisor({
     registryPath: sandbox.env.ARGUS_REPOS_FILE!,
@@ -420,27 +553,60 @@ async function runRealWatchers(
     statusPath,
   });
 
+  /** Read and adopt in one step, so no pid is known before it is scoped. */
+  const snapshot = async (): Promise<SupervisorStatus | null> => {
+    try {
+      const status = (await Bun.file(statusPath).json()) as SupervisorStatus;
+      for (const watcher of status.watchers) {
+        if (watcher.repo === repo) sandbox.scope.adopt(watcher.pid);
+      }
+      return status;
+    } catch {
+      // The supervisor is still writing its snapshot.
+      return null;
+    }
+  };
+  const archiverPid = (status: SupervisorStatus | null): number | null =>
+    status?.watchers.find(
+      (watcher) => watcher.eye === "archiver" && watcher.repo === repo,
+    )?.pid ?? null;
+
+  let killedPid: number | null = null;
+  let replacementPid: number | null = null;
   try {
     await supervisor.reconcile();
     for (let attempt = 0; attempt < 400; attempt += 1) {
       await Bun.sleep(25);
-      try {
-        const status = (await Bun.file(statusPath).json()) as SupervisorStatus;
-        for (const watcher of status.watchers) {
-          if (watcher.repo === repo) sandbox.scope.adopt(watcher.pid);
+      const status = await snapshot();
+      killedPid = archiverPid(status);
+      if (killedPid !== null && (status?.watchers.length ?? 0) >= EYE_NAMES.length) {
+        break;
+      }
+    }
+
+    if (killedPid !== null) {
+      sandbox.scope.kill(killedPid, "SIGKILL");
+      for (let attempt = 0; attempt < 800; attempt += 1) {
+        await Bun.sleep(10);
+        const found = archiverPid(await snapshot());
+        if (found !== null && found !== killedPid) {
+          replacementPid = found;
+          break;
         }
-        if (status.watchers.length >= EYE_NAMES.length) break;
-      } catch {
-        // The supervisor is still writing its first snapshot.
       }
     }
 
     for (let attempt = 0; attempt < 600; attempt += 1) {
       await Bun.sleep(50);
-      const found = countArchived(join(repo, ".argus", "archive.db"));
-      if (found > 0) return found;
+      const found = countArchived(databasePath);
+      if (found >= expected) break;
     }
-    return countArchived(join(repo, ".argus", "archive.db"));
+    return {
+      archived: countArchived(databasePath),
+      killedPid,
+      replacementPid,
+      restarted: replacementPid !== null,
+    };
   } finally {
     await supervisor.stop();
   }
@@ -492,67 +658,157 @@ async function liveEvents(
 }
 
 /**
- * The journey's own manifest, and the honest part of this ticket.
+ * The journey's own manifests, and the honest part of this ticket.
  *
- * It shares slot 1's SPEC quotes, because the journey is a live rendering of
- * scenario 1 — but it declares NO doubles, so when it runs it reaches LIVE,
- * and it marks every requirement it does not reach UNCOVERED rather than
- * inheriting slot 1's structural coverage. A journey that graded itself on the
- * fixture suite's assertions would be the same overclaim in a new file.
+ * ONE DRIVE, THREE SLOTS (#74). The journey is a live rendering of scenario 1,
+ * and the same drive — the same two subscription calls — also renders the two
+ * SPEC §13 slots whose structural shortfalls a live session is exactly what
+ * closes: slot 4's USER.md, which slot 4 never opens, and slot 6's backfill,
+ * which slot 6 performs over a transcript it wrote itself. Grading them as
+ * three labelled scenarios rather than one is what lets the verdict table say
+ * WHICH slots reached LIVE instead of burying them in slot 1's line.
+ *
+ * They declare NO doubles, so when the drive runs they reach LIVE — and they
+ * mark every requirement the drive does not reach UNCOVERED or PARTIAL rather
+ * than inheriting the fixture slots' structural coverage. A journey that
+ * graded itself on the fixture suite's assertions would be the same overclaim
+ * in a new file.
  */
-export const FULL_JOURNEY_MANIFEST: ScenarioManifest = {
-  doubles: [],
-  number: 1,
-  title: "FULL real-driver journey (opt-in)",
-  requirements: [
-    {
-      assertions: [
-        "the simulation driver ran a real claude session to completion",
-        "the live Claude session wrote a real transcript under its own sandbox slug",
-        "the live claude session ran in a sandbox worktree",
-      ],
-      id: "13.1.batch-end-to-end",
-      shortfall:
-        "a live session ran end to end and production's own watchers consumed it, but the batch's merge/close leg is not driven here — see 13.1.tickets-closed",
-      spec: "run a ticket batch end to end",
-    },
-    {
-      assertions: [
-        "the real archiver watcher archived the live agent's own words",
-      ],
-      id: "13.1.archive-grew",
-      shortfall: "",
-      spec: "archive grew",
-    },
-    {
-      assertions: [
-        "no live agent output classified Johan-authored",
-        "every live dispatch prompt classifies Hermes-authored",
-      ],
-      id: "13.4.hermes-authored",
-      shortfall: "",
-      spec: "classified Hermes-authored",
-    },
-    {
-      assertions: [],
-      id: "13.1.memory-md",
-      shortfall:
-        "UNCOVERED here by choice: the reviewer eye's brain is a `claude`/`codex` CLI call per session, and the journey does not spend one. Slot 1 covers this structurally on a fixture brain",
-      spec: "`MEMORY.md` gained project facts",
-    },
-    {
-      assertions: [],
-      id: "13.1.digests-index",
-      shortfall:
-        "UNCOVERED here by choice: same reason as 13.1.memory-md — the digest eye needs a brain",
-      spec: "digests + INDEX updated",
-    },
-    {
-      assertions: [],
-      id: "13.1.tickets-closed",
-      shortfall:
-        "UNCOVERED here by design: closing needs a tracker, and SPEC §13 forbids a test run writing to one. This journey uses no `gh` double at all, so it reports the gap rather than #57's PARTIAL",
-      spec: "tickets closed",
-    },
-  ],
-};
+export const FULL_JOURNEY_MANIFESTS: readonly LabeledScenarioManifest[] = [
+  {
+    doubles: [],
+    number: "1-live",
+    title: "Autonomous batch — FULL real-driver journey (opt-in)",
+    requirements: [
+      {
+        assertions: [
+          "the simulation driver ran a real claude session to completion",
+          "the live Claude session wrote a real transcript under its own sandbox slug",
+          "the live claude session ran in a sandbox worktree",
+        ],
+        id: "13.1.batch-end-to-end",
+        shortfall:
+          "a live session ran end to end and production's own watchers consumed it, but the batch's merge/close leg is not driven here — see 13.1.tickets-closed. And only ONE leg's words reach the watchers: a session run in a worktree writes its Claude transcript under the WORKTREE's slug, which `createRepoTranscriptSource` (repo slug only) never reads, so the archived live evidence is the Codex leg's. The journey reports that ratio as evidence rather than papering over it by relocating a transcript to a directory its session never wrote to",
+        spec: "run a ticket batch end to end",
+      },
+      {
+        assertions: [
+          "the real archiver watcher archived the live agent's own words",
+        ],
+        id: "13.1.archive-grew",
+        shortfall: "",
+        spec: "archive grew",
+      },
+      {
+        assertions: [
+          "argus up seeded USER.md before the live drive",
+          "USER.md is byte-identical after production's watchers consumed the live session",
+        ],
+        id: "13.1.user-md",
+        shortfall:
+          "the reviewer eye's brain is not spent here, so what this proves is that production's own watchers left USER.md alone across a LIVE session — not that a live reviewer BRAIN declined to write to it",
+        spec: "`USER.md` byte-identical",
+      },
+      {
+        assertions: [],
+        id: "13.1.memory-md",
+        shortfall:
+          "UNCOVERED here by choice: the reviewer eye's brain is a `claude`/`codex` CLI call per session, and the journey does not spend one. Slot 1 covers this structurally on a fixture brain",
+        spec: "`MEMORY.md` gained project facts",
+      },
+      {
+        assertions: [],
+        id: "13.1.digests-index",
+        shortfall:
+          "UNCOVERED here by choice: same reason as 13.1.memory-md — the digest eye needs a brain",
+        spec: "digests + INDEX updated",
+      },
+      {
+        assertions: [],
+        id: "13.1.tickets-closed",
+        shortfall:
+          "UNCOVERED here by design: closing needs a tracker, and SPEC §13 forbids a test run writing to one. This journey uses no `gh` double at all, so it reports the gap rather than #57's PARTIAL",
+        spec: "tickets closed",
+      },
+    ],
+  },
+  {
+    doubles: [],
+    number: "4-live",
+    title: "The poisoning test — FULL real-driver journey (opt-in)",
+    requirements: [
+      {
+        assertions: [
+          "no live agent output classified Johan-authored",
+          "every live dispatch prompt classifies Hermes-authored",
+        ],
+        id: "13.4.hermes-authored",
+        shortfall: "",
+        spec: "classified Hermes-authored",
+      },
+      {
+        assertions: [
+          "argus up seeded USER.md before the live drive",
+          "USER.md is byte-identical after production's watchers consumed the live session",
+        ],
+        id: "13.4.user-md-untouched",
+        shortfall:
+          "the file is now READ BACK across a live session rather than inferred untouched, which is slot 4's own shortfall closed — but the traffic is one Hermes-logged dispatch per leg, not slot 4's four-message poisoning sequence",
+        spec: "USER.md untouched",
+      },
+      {
+        assertions: [
+          "every live dispatch prompt reached the normalized stream",
+        ],
+        id: "13.4.hermes-sends",
+        shortfall:
+          "the SESSION is live and the transcript is real, but the harness still plays Hermes as #43's and #49's drives do: the registry row is appended here, not written by a Hermes process, and no `cmux send` carried the nudge",
+        spec: "Hermes sends registry-logged nudges into a session",
+      },
+    ],
+  },
+  {
+    doubles: [],
+    number: "6-live",
+    title: "Watcher death — FULL real-driver journey (opt-in)",
+    requirements: [
+      {
+        assertions: [
+          "the real archiver watcher archived the live agent's own words",
+          "production's own repo-scoped source presents the live reply to the watchers",
+          "across the kill the archive holds every live sentinel message exactly once — none lost, none duplicated",
+        ],
+        id: "13.6.backfill",
+        shortfall: "",
+        spec: "the archiver backfills from the transcript with no message lost",
+      },
+      {
+        assertions: [
+          "the supervisor restarted the real archiver killed during the live session",
+        ],
+        id: "13.6.kill-each-watcher",
+        shortfall:
+          "only the archiver is killed here — one live kill, not five. Slot 6 kills all five eyes and restarts them, over a fixture transcript",
+        spec: "kill each watcher ... the supervisor restarts it",
+      },
+      {
+        assertions: [
+          "the supervisor restarted the real archiver killed during the live session",
+        ],
+        id: "13.6.mid-run",
+        shortfall:
+          "the run it dies in the middle of is a LIVE agent's transcript, which is slot 6's shortfall closed — but the kill lands as soon as the archiver registers with the supervisor, which may be before or after it committed its first batch. The exactly-once assertion covers both orders; 'mid-run' is not timed to a known in-flight batch",
+        spec: "kill each watcher mid-run",
+      },
+    ],
+  },
+];
+
+/** Grade one journey report against all three slots it renders. */
+export function gradeFullJourney(
+  report: Parameters<typeof gradeScenario>[1],
+): ScenarioGrade[] {
+  return FULL_JOURNEY_MANIFESTS.map((manifest) =>
+    gradeScenario(manifest, report),
+  );
+}

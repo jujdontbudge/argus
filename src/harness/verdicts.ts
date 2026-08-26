@@ -24,6 +24,15 @@
  *     it comes from — and a requirement with no covering assertion grades
  *     `uncovered` and is printed. The gap is surfaced rather than hidden.
  *
+ * AMENDED BY #74. The core ten below still grade STRUCTURAL, and that is not
+ * a gap this ticket left open — it is what they ARE: each drives fixture
+ * brains over substituted components. What #74 moved to LIVE is a set of the
+ * same SPEC requirements, rendered by the opt-in FULL real-driver journey
+ * (`full-journey.ts`, `FULL_JOURNEY_MANIFESTS`) as three separately graded
+ * slots — 1, 4 and 6 — off ONE drive. The shortfalls those live renderings
+ * close say so by name below, and none of them was deleted from here: a slot
+ * that still runs on doubles still reports what its doubles cost.
+ *
  *  3. **"Covered" hid its own shortfalls.** #57's closure half and #58's hook
  *     half both graded themselves PARTIAL in prose, in a docblock nothing
  *     reads. `shortfall` makes that machine-readable: a covered requirement
@@ -247,7 +256,7 @@ export const SPEC_MANIFESTS: Readonly<
         assertions: ["USER.md stayed byte-identical"],
         id: "13.1.user-md",
         shortfall:
-          "a fixture-brain reviewer is what declined to write; no live brain has been shown to leave USER.md alone",
+          "a fixture-brain reviewer is what declined to write; no live brain has been shown to leave USER.md alone. #74: the opt-in FULL real-driver journey renders this LIVE behind `ARGUS_LIVE_FULL_JOURNEY=1` — see `FULL_JOURNEY_MANIFESTS`. This slot's own verdict is unchanged, because this slot still runs on doubles",
         spec: "`USER.md` byte-identical",
       },
       {
@@ -410,7 +419,8 @@ export const SPEC_MANIFESTS: Readonly<
         ],
         id: "13.4.user-md-untouched",
         shortfall:
-          "USER.md is not read back here; untouched-ness is INFERRED from nothing classifying Johan rather than observed on the file",
+          "USER.md is not read back here; untouched-ness is INFERRED from nothing classifying Johan rather than observed on the file. " +
+          "#74: the opt-in FULL real-driver journey renders this LIVE behind `ARGUS_LIVE_FULL_JOURNEY=1` — see `FULL_JOURNEY_MANIFESTS`. This slot's own verdict is unchanged, because this slot still runs on doubles",
         spec: "USER.md untouched",
       },
     ],
@@ -473,7 +483,7 @@ export const SPEC_MANIFESTS: Readonly<
         ],
         id: "13.6.mid-run",
         shortfall:
-          "the run they die in the middle of is a fixture transcript replay, not a live agent session still writing",
+          "the run they die in the middle of is a fixture transcript replay, not a live agent session still writing. #74: the opt-in FULL real-driver journey renders this LIVE behind `ARGUS_LIVE_FULL_JOURNEY=1` — see `FULL_JOURNEY_MANIFESTS`. This slot's own verdict is unchanged, because this slot still runs on doubles",
         spec: "kill each watcher mid-run",
       },
       {
@@ -483,7 +493,7 @@ export const SPEC_MANIFESTS: Readonly<
         ],
         id: "13.6.backfill",
         shortfall:
-          "the archiver, the kill and the restart are real processes; the transcript backfilled from is synthesized",
+          "the archiver, the kill and the restart are real processes; the transcript backfilled from is synthesized. #74: the opt-in FULL real-driver journey renders this LIVE behind `ARGUS_LIVE_FULL_JOURNEY=1` — see `FULL_JOURNEY_MANIFESTS`. This slot's own verdict is unchanged, because this slot still runs on doubles",
         spec: "the archiver backfills from the transcript with no message lost",
       },
     ],

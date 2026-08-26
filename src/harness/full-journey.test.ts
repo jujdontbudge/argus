@@ -10,14 +10,15 @@ import { liveHalfTitle } from "./live-gate.ts";
 import {
   describeFullJourneyGate,
   fullJourneyScenario,
+  gradeFullJourney,
   FULL_JOURNEY_GATE,
-  FULL_JOURNEY_MANIFEST,
+  FULL_JOURNEY_MANIFESTS,
   probeFullJourney,
   resolveFullJourneyGate,
   type FullJourneyProbe,
 } from "./full-journey.ts";
 import { NATIVE_CLAUDE } from "./subscription-gate.ts";
-import { gradeScenario, renderVerdictTable } from "./verdicts.ts";
+import { renderVerdictTable } from "./verdicts.ts";
 
 /**
  * Ticket #63 — the FULL real-driver journey, and the gate that keeps it off
@@ -123,13 +124,30 @@ describe("the FULL journey gate", () => {
   });
 });
 
-describe("the FULL journey manifest", () => {
-  test("declares no doubles, and reports its own gaps rather than slot 1's", () => {
-    expect(FULL_JOURNEY_MANIFEST.doubles).toEqual([]);
+/** Every assertion the three manifests name, as a passing report would carry. */
+const allAssertions = FULL_JOURNEY_MANIFESTS.flatMap(({ requirements }) =>
+  requirements.flatMap(({ assertions }) => assertions),
+).map((description) => ({ description, passed: true }));
 
-    const uncovered = FULL_JOURNEY_MANIFEST.requirements
-      .filter(({ assertions }) => assertions.length === 0)
-      .map(({ id }) => id);
+describe("the FULL journey manifests", () => {
+  test("#74: one drive renders three §13 slots, none of them by inheritance", () => {
+    // Slot 1 was #63's. Slots 4 and 6 are #74's, and they are here because a
+    // live session closes a shortfall their fixture slots state about
+    // themselves — not because the drive happens to touch the same code.
+    expect(FULL_JOURNEY_MANIFESTS.map(({ number }) => number)).toEqual([
+      "1-live",
+      "4-live",
+      "6-live",
+    ]);
+    for (const manifest of FULL_JOURNEY_MANIFESTS) {
+      expect(manifest.doubles).toEqual([]);
+    }
+  });
+
+  test("declares its own gaps rather than the fixture slots' coverage", () => {
+    const uncovered = FULL_JOURNEY_MANIFESTS.flatMap(({ requirements }) =>
+      requirements.filter(({ assertions }) => assertions.length === 0),
+    ).map(({ id }) => id);
     // The journey does not run the eyes' brains and does not close a ticket.
     // Inheriting slot 1's structural coverage for those would be the same
     // overclaim in a new file, so they are UNCOVERED here on purpose.
@@ -138,27 +156,42 @@ describe("the FULL journey manifest", () => {
       "13.1.digests-index",
       "13.1.tickets-closed",
     ]);
+    // And every requirement the drive DOES reach but does not fully prove
+    // still carries the sentence saying what it falls short of.
+    for (const grade of gradeFullJourney({
+      assertions: allAssertions,
+      liveEvidence: ["claude: exit 0"],
+      status: "passed",
+    })) {
+      for (const requirement of grade.requirements) {
+        if (requirement.coverage === "partial") {
+          expect(requirement.shortfall).not.toBe("");
+        }
+      }
+    }
   });
 
-  test("reaches LIVE only on a report carrying live evidence", () => {
-    const assertions = FULL_JOURNEY_MANIFEST.requirements
-      .flatMap(({ assertions: names }) => names)
-      .map((description) => ({ description, passed: true }));
+  test("every slot reaches LIVE only on a report carrying live evidence", () => {
+    const structural = gradeFullJourney({
+      assertions: allAssertions,
+      liveEvidence: [],
+      status: "passed",
+    });
+    expect(structural.map(({ verdict }) => verdict)).toEqual([
+      "STRUCTURAL",
+      "STRUCTURAL",
+      "STRUCTURAL",
+    ]);
 
-    expect(
-      gradeScenario(FULL_JOURNEY_MANIFEST, {
-        assertions,
-        liveEvidence: [],
-        status: "passed",
-      }).verdict,
-    ).toBe("STRUCTURAL");
-    expect(
-      gradeScenario(FULL_JOURNEY_MANIFEST, {
-        assertions,
-        liveEvidence: ["claude: exit 0"],
-        status: "passed",
-      }).verdict,
-    ).toBe("LIVE");
+    const live = gradeFullJourney({
+      assertions: allAssertions,
+      liveEvidence: ["claude: exit 0"],
+      status: "passed",
+    });
+    expect(live.map(({ verdict }) => verdict)).toEqual(["LIVE", "LIVE", "LIVE"]);
+    // Each slot must earn at least one requirement graded `live`, or its LIVE
+    // verdict would be a header over nothing a live agent actually proved.
+    for (const grade of live) expect(grade.counts.live).toBeGreaterThan(0);
   });
 });
 
@@ -209,8 +242,15 @@ test.skipIf(gate.claude.status !== "run" && gate.codex.status !== "run")(
         scenario: fullJourneyScenario({ gate }),
       });
 
-      const grade = gradeScenario(FULL_JOURNEY_MANIFEST, result);
-      console.log(renderVerdictTable([grade]));
+      const grades = gradeFullJourney(result);
+      // The evidence, printed rather than merely counted. A LIVE verdict that
+      // nobody can read the basis for is a claim again, not a report.
+      console.log(
+        ["", "live evidence:", ...result.liveEvidence.map((line) => `  ${line}`)].join(
+          "\n",
+        ),
+      );
+      console.log(renderVerdictTable(grades));
 
       expect({
         error: result.error,
@@ -222,11 +262,18 @@ test.skipIf(gate.claude.status !== "run" && gate.codex.status !== "run")(
 
       // The verdict this journey exists to earn, and the only place in the
       // tree that earns it: evidence recorded from agents it actually spawned.
+      // Three slots now, one drive — #74.
       expect(result.verdict).toBe("LIVE");
-      expect(grade.verdict).toBe("LIVE");
       expect(result.liveEvidence.length).toBeGreaterThan(0);
-      expect(grade.counts.missing).toBe(0);
-      expect(grade.counts.live).toBeGreaterThan(0);
+      expect(grades.map(({ verdict }) => verdict)).toEqual([
+        "LIVE",
+        "LIVE",
+        "LIVE",
+      ]);
+      for (const grade of grades) {
+        expect(grade.counts.missing).toBe(0);
+        expect(grade.counts.live).toBeGreaterThan(0);
+      }
     } finally {
       await rm(reportDirectory, { force: true, recursive: true });
     }
