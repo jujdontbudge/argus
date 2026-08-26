@@ -18,6 +18,7 @@ import { ArchiverEye } from "../../src/eyes/archiver/archiver.ts";
 import {
   createSandbox,
   createSandboxWatcherSpawner,
+  LIVE_WATCHER_FLEET_LOCK_PATH,
   type Sandbox,
 } from "../../src/harness/index.ts";
 import { ProvenanceClassifier } from "../../src/provenance/index.ts";
@@ -221,6 +222,7 @@ async function smokeSweep(
 
   const statusPath = join(sandbox.root, "state", "acceptance-smoke.json");
   const supervisor = new WatcherSupervisor({
+    fleetLockPath: LIVE_WATCHER_FLEET_LOCK_PATH,
     registryPath: env.ARGUS_REPOS_FILE!,
     restartDelayMilliseconds: 25,
     spawn: createSandboxWatcherSpawner([process.execPath, cli], sandbox),
@@ -430,6 +432,7 @@ try {
   console.log("   createWatcherSpawner([bunPath, cliPath]) -> `argus watch <eye> --repo <repo>`)");
   const statusPath = join(sandbox.root, "state", "live-sweep-supervisor.json");
   const supervisor = new WatcherSupervisor({
+    fleetLockPath: LIVE_WATCHER_FLEET_LOCK_PATH,
     registryPath: env.ARGUS_REPOS_FILE!,
     restartDelayMilliseconds: 50,
     // The sandbox env is REQUIRED now that watch is real. In production the

@@ -100,6 +100,7 @@ import {
 import {
   createIsolatedAgentSpawner,
   createSandboxWatcherSpawner,
+  LIVE_WATCHER_FLEET_LOCK_PATH,
   SimulationDriverRunner,
   type AgentSpawner,
   type Sandbox,
@@ -541,6 +542,7 @@ async function runRealWatchers(
   const databasePath = join(repo, ".argus", "archive.db");
   const statusPath = join(sandbox.root, "state", "full-journey-status.json");
   const supervisor = new WatcherSupervisor({
+    fleetLockPath: LIVE_WATCHER_FLEET_LOCK_PATH,
     registryPath: sandbox.env.ARGUS_REPOS_FILE!,
     restartDelayMilliseconds: 25,
     spawn: createSandboxWatcherSpawner(

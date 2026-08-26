@@ -16,6 +16,22 @@ liveTest("live scratch launchd job bootstraps and unloads", async () => {
   const plistPath = join(root, `${label}.plist`);
   const service = `${domain}/${label}`;
   let loaded = false;
+  const guardian = Bun.spawn([
+    process.execPath,
+    "-e",
+    `
+      const owner = ${process.pid};
+      while (true) {
+        try { process.kill(owner, 0); } catch { break; }
+        await Bun.sleep(100);
+      }
+      Bun.spawnSync(["/bin/launchctl", "bootout", ${JSON.stringify(service)}]);
+    `,
+  ], {
+    stderr: "ignore",
+    stdin: "ignore",
+    stdout: "ignore",
+  });
 
   try {
     await Bun.write(
@@ -50,6 +66,8 @@ await new Promise(() => {});
     expect(Number((await Bun.file(launches).text()).trim())).toBeGreaterThan(0);
   } finally {
     if (loaded) Bun.spawnSync(["/bin/launchctl", "bootout", service]);
+    guardian.kill("SIGTERM");
+    await guardian.exited;
     await rm(root, { force: true, recursive: true });
   }
 }, 10_000);

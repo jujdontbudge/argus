@@ -28,6 +28,7 @@ export interface WatcherSpawnRequest {
 export type SpawnWatcher = (request: WatcherSpawnRequest) => WatcherProcess;
 
 export interface WatcherSupervisorOptions {
+  fleetLockPath?: string;
   now?: () => number;
   registryPath: string;
   restartDelayMilliseconds?: number;
@@ -61,11 +62,76 @@ interface RestartState {
   restarts: number[];
 }
 
+interface FleetLease {
+  release(): Promise<void>;
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function acquireFleetLease(
+  path: string,
+  cancelled: () => boolean,
+): Promise<FleetLease | null> {
+  const token = randomUUID();
+  const ownerPath = `${path}/owner.json`;
+  while (!cancelled()) {
+    try {
+      await mkdir(path);
+      try {
+        await Bun.write(
+          ownerPath,
+          `${JSON.stringify({ pid: process.pid, token })}\n`,
+        );
+      } catch (error) {
+        await rm(path, { force: true, recursive: true });
+        throw error;
+      }
+      return {
+        async release() {
+          try {
+            const owner = (await Bun.file(ownerPath).json()) as {
+              token?: unknown;
+            };
+            if (owner.token !== token) return;
+          } catch {
+            return;
+          }
+          await rm(path, { force: true, recursive: true });
+        },
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+
+    let ownerPid: number | null = null;
+    try {
+      const owner = (await Bun.file(ownerPath).json()) as { pid?: unknown };
+      if (typeof owner.pid === "number") ownerPid = owner.pid;
+    } catch {
+      // The lock owner may be between mkdir and its atomic-sized owner write.
+    }
+    if (ownerPid !== null && !processIsAlive(ownerPid)) {
+      await rm(path, { force: true, recursive: true }).catch(() => {});
+      continue;
+    }
+    await Bun.sleep(50);
+  }
+  return null;
+}
+
 export class WatcherSupervisor {
   readonly #children = new Map<
     string,
     { eye: EyeName; process: WatcherProcess; repo: string }
   >();
+  #fleetLease: FleetLease | null = null;
   readonly #options: WatcherSupervisorOptions;
   #reconcileQueue: Promise<void> = Promise.resolve();
   readonly #restarts = new Map<string, RestartState>();
@@ -83,6 +149,16 @@ export class WatcherSupervisor {
 
   async #reconcileOnce(): Promise<void> {
     if (this.#stopping) return;
+    if (
+      this.#fleetLease === null &&
+      this.#options.fleetLockPath !== undefined
+    ) {
+      this.#fleetLease = await acquireFleetLease(
+        this.#options.fleetLockPath,
+        () => this.#stopping,
+      );
+      if (this.#fleetLease === null) return;
+    }
     const repos = await readEnabledRepos(this.#options.registryPath);
     const desired = new Set(
       repos.flatMap((repo) => EYE_NAMES.map((eye) => watcherKey(repo, eye))),
@@ -151,6 +227,8 @@ export class WatcherSupervisor {
     this.#children.clear();
     this.#restarts.clear();
     await this.#writeStatus();
+    await this.#fleetLease?.release();
+    this.#fleetLease = null;
   }
 
   #now(): number {

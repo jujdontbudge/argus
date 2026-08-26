@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import {
   createSandbox,
   createSandboxWatcherSpawner,
+  LIVE_WATCHER_FLEET_LOCK_PATH,
 } from "../../src/harness/index.ts";
 import {
   EYE_NAMES,
@@ -15,6 +16,7 @@ const checkout = fileURLToPath(new URL("../..", import.meta.url));
 const sandbox = await createSandbox({ checkout });
 const statusPath = join(sandbox.root, "state", "stability-status.json");
 const supervisor = new WatcherSupervisor({
+  fleetLockPath: LIVE_WATCHER_FLEET_LOCK_PATH,
   registryPath: sandbox.env.ARGUS_REPOS_FILE!,
   restartDelayMilliseconds: 25,
   spawn: createSandboxWatcherSpawner(

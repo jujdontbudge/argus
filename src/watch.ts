@@ -231,6 +231,20 @@ function positiveInteger(value: string | undefined, fallback: number): number {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function optionalPositiveInteger(value: string | undefined): number | null {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function isEnrolled(registryPath: string, repo: string): Promise<boolean> {
   return (await readEnabledRepos(registryPath)).includes(repo);
 }
@@ -252,6 +266,7 @@ async function runLoop(
     DEFAULT_WATCH_MAX_RSS_MIB,
   );
   const maxRssBytes = maxRssMiB * 1024 * 1024;
+  const ownerPid = optionalPositiveInteger(process.env.ARGUS_WATCH_OWNER_PID);
   let checkingEnrollment = false;
   const enrollmentMonitor = setInterval(async () => {
     if (checkingEnrollment || controller.signal.aborted) return;
@@ -278,6 +293,12 @@ async function runLoop(
     if (lease === null) return 0;
     await health.start();
     while (!controller.signal.aborted) {
+      if (ownerPid !== null && !processIsAlive(ownerPid)) {
+        console.error(
+          `argus watch ${eye}: harness owner pid ${ownerPid} is gone; exiting`,
+        );
+        return 0;
+      }
       const rssBytes = process.memoryUsage().rss;
       if (rssBytes > maxRssBytes) {
         console.error(

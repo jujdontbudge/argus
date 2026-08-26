@@ -1,5 +1,6 @@
 import { accessSync, constants } from "node:fs";
-import { delimiter, dirname, isAbsolute, join } from "node:path";
+import { tmpdir } from "node:os";
+import { delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -118,6 +119,14 @@ function launchdPath(
   return [...new Set(directories)].join(delimiter);
 }
 
+function isWithin(parent: string, child: string): boolean {
+  const pathFromParent = relative(resolve(parent), resolve(child));
+  return (
+    pathFromParent === "" ||
+    (!pathFromParent.startsWith("..") && !isAbsolute(pathFromParent))
+  );
+}
+
 export function supervisorConfiguration(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): SupervisorConfiguration {
@@ -138,9 +147,13 @@ export function supervisorConfiguration(
     join(home, "Library", "Logs", "Argus", "supervisor.log");
   const launchctlExecutable = env.ARGUS_LAUNCHCTL ?? "/bin/launchctl";
   const customRegistry = env.ARGUS_REPOS_FILE !== undefined;
+  const scratchHome = ["/tmp", "/private/tmp", tmpdir()].some((root) =>
+    isWithin(root, home),
+  );
   const manageLaunchd =
     env.ARGUS_SUPERVISOR_CONTROL !== "disabled" &&
-    (!customRegistry || env.ARGUS_LAUNCHCTL !== undefined);
+    (!customRegistry || env.ARGUS_LAUNCHCTL !== undefined) &&
+    (!scratchHome || env.ARGUS_ALLOW_SCRATCH_LAUNCHD === "1");
   const bunPath = process.execPath;
   const codexPath = executablePath(
     "codex",

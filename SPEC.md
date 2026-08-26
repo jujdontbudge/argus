@@ -466,6 +466,11 @@ limit, and window are configurable with `ARGUS_SUPERVISOR_RESTART_MS`,
 `ARGUS_SUPERVISOR_RESTART_WINDOW_MS`. Watcher exits, retry delays, and brakes are
 written to `~/Library/Logs/Argus/supervisor.log` by the LaunchAgent.
 
+Test harnesses set `ARGUS_SUPERVISOR_CONTROL=disabled`, and a `HOME` under a
+temporary directory cannot register a LaunchAgent unless the dedicated launchd
+test explicitly sets `ARGUS_ALLOW_SCRATCH_LAUNCHD=1`. Thus a sandbox `argus up`
+cannot leave a keepalive job in the user's GUI domain after its worker dies.
+
 ---
 
 ## 10. CLI
