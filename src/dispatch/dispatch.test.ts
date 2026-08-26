@@ -530,6 +530,13 @@ describe("dispatchFrontier (#88): SPEC §2's routing table, per ticket", () => {
       // The evidence artifact: the argv actually handed to the spawn seam, per
       // ticket, in dispatch order.
       const commands = witness.calls.map((call) => call.command.join(" "));
+      // Printed, not just asserted: the argv is the evidence this ticket asks
+      // for, and a reader of the test output should not have to re-derive it.
+      for (const [index, line] of commands.entries()) {
+        console.log(
+          `#88 routed #${report.dispatched[index]?.ticket}: ${line.slice(0, 120)}`,
+        );
+      }
       expect(witness.calls.map((call) => call.agent)).toEqual([
         "claude",
         "claude",
