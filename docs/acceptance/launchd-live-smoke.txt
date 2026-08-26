@@ -1,0 +1,110 @@
+==============================================================================
+ARGUS REAL LAUNCHD SMOKE ACCEPTANCE — ticket #85
+==============================================================================
+Run date        2026-08-26
+checkout        /Users/johansardar/argus-worktrees/launchd-smoke
+branch          build/launchd-smoke
+gate            ARGUS_LIVE_LAUNCHD_SMOKE=1
+gate verdict    run
+label           com.argus.test.launchd-smoke.<pid>.<timestamp>
+isolation       scratch HOME, CODEX_HOME, HERMES_HOME, CLAUDE_CONFIG_DIR,
+                repo, registry, status file and LaunchAgents directory
+credentials     no API key, no token; neither codex nor gh was invoked
+
+Finding
+-------
+The stale AUDIT.md §4 item 5 PATH claim is refuted by current source and this
+live run. The installed plist carried an explicit PATH plus exact
+ARGUS_CODEX_EXECUTABLE and ARGUS_GH_EXECUTABLE values. A tiny scratch entry
+wrapper recorded the launchd process environment, ran `command -v` for both
+tools, and then `exec`-ed the real Bun CLI. It resolved codex to
+/Users/johansardar/.local/bin/codex and gh to /opt/homebrew/bin/gh without
+invoking either command.
+
+The run exposed two real coverage/behavior defects:
+
+1. The old live gate launched a synthetic never-ending TypeScript script. It
+   did not run the production supervisor daemon, watchers, `argus status`, or
+   a launchd-list diff. Its pre-change baseline passed in 221 ms with only 3
+   expect() calls. The replacement drives launchd -> real CLI -> production
+   supervisor -> five real watchers -> real CLI status.
+2. `argus status` labeled an alive watcher with no matching health report
+   `running` and exited 0. A red-first public-CLI regression reproduced that
+   exact output. Final code labels this state `degraded`, prints `watcher has
+   not reported health`, and exits 1.
+
+The final live drive deliberately configured an unsupported subscription model
+inside the scratch repo. That made the real Reviewer, Digest and Retro fail
+initialization without spending a subscription call. All three appeared as
+`degraded`, their precise failure was visible, and `argus status` exited 1.
+
+Teardown was clean: bootout returned 0; all five ticket-owned watcher PIDs were
+gone; the scratch root (including its plist) was removed; 467 launchd service
+labels existed before and after with an empty diff. A pre-existing real
+`dev.argus.supervisor` and its five watcher processes existed before this
+ticket's first launchd operation and remained after it. They were not signaled,
+booted out, or otherwise changed. Consequently the ticket's global
+`pgrep -f 'bin/bun.*cli\.ts watch' | wc -l` cannot honestly be 0 on this
+machine; it is 5, all foreign to this ticket.
+
+Command
+-------
+env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
+  -u CLAUDE_CODE_OAUTH_TOKEN \
+  HOME=<scratch-runner>/home \
+  CODEX_HOME=<scratch-runner>/codex \
+  HERMES_HOME=<scratch-runner>/hermes \
+  CLAUDE_CONFIG_DIR=<scratch-runner>/claude \
+  ARGUS_LIVE_LAUNCHD_SMOKE=1 \
+  bun test src/supervisor/launchd-live.test.ts
+
+Final-code terminal output (verbatim)
+-------------------------------------
+bun test v1.3.12 (700fc117)
+
+src/supervisor/launchd-live.test.ts:
+argus: live launchd smoke RUN — gate set; launchctl, codex, and gh are present
+launchd live evidence:
+  label: com.argus.test.launchd-smoke.13016.1787768244976
+  scratch HOME: /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-launchd-live-ZQ2MmQ/home
+  launchctl labels before: 467
+  launchctl labels after:  467
+  launchctl label diff: (empty)
+  argus labels before: ["dev.argus.supervisor"]
+  argus labels after:  ["dev.argus.supervisor"]
+  launchctl service print exit: 0
+  environment probe:
+    PATH=/Users/johansardar/.local/bin:/opt/homebrew/bin:/Users/johansardar/.bun/bin:/usr/bin:/bin:/usr/sbin:/sbin
+    ARGUS_CODEX_EXECUTABLE=/Users/johansardar/.local/bin/codex
+    ARGUS_GH_EXECUTABLE=/opt/homebrew/bin/gh
+    HOME=/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-launchd-live-ZQ2MmQ/home
+    CODEX_HOME=/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-launchd-live-ZQ2MmQ/codex-home
+    HERMES_HOME=/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-launchd-live-ZQ2MmQ/hermes-home
+    CLAUDE_CONFIG_DIR=/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-launchd-live-ZQ2MmQ/claude-config
+    command -v codex=/Users/johansardar/.local/bin/codex
+    command -v gh=/opt/homebrew/bin/gh
+  argus status exit: 1
+    REPO                                                                                     EYE       STATE     PID    LAST SUCCESS              BACKLOG  LAST ERROR
+    /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-launchd-live-ZQ2MmQ/repo  reviewer  degraded  13037  -                         0        2026-08-26T18:17:26.123Z: brain.model 'argus-live-smoke-invalid' is not reachable via codex exec on the ChatGPT subscription; refusing a model that could require metered API access
+    /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-launchd-live-ZQ2MmQ/repo  archiver  running   13038  2026-08-26T18:17:26.073Z  0        -
+    /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-launchd-live-ZQ2MmQ/repo  honcho    running   13039  2026-08-26T18:17:26.048Z  0        -
+    /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-launchd-live-ZQ2MmQ/repo  digest    degraded  13040  -                         0        2026-08-26T18:17:26.116Z: brain.model 'argus-live-smoke-invalid' is not reachable via codex exec on the ChatGPT subscription; refusing a model that could require metered API access
+    /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-launchd-live-ZQ2MmQ/repo  retro     degraded  13041  -                         0        2026-08-26T18:17:26.119Z: brain.model 'argus-live-smoke-invalid' is not reachable via codex exec on the ChatGPT subscription; refusing a model that could require metered API access
+  launchctl bootout exit: 0
+  owned watcher pids: [13038,13040,13039,13041,13037]
+  owned survivors after bootout: []
+  scratch root exists after cleanup: false
+
+ 1 pass
+ 0 fail
+ 15 expect() calls
+Ran 1 test across 1 file. [2.24s]
+
+Immediate post-run mandated print
+---------------------------------
+$ launchctl print gui/$(id -u) | grep -i argus
+                   96191    -15  dev.argus.supervisor
+
+There is no `com.argus.test.*` row. The only row is the pre-existing real job
+recorded before this ticket's baseline run.
+==============================================================================
