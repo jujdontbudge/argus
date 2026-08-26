@@ -61,6 +61,7 @@ export type Double =
   | "honcho"
   | "hooks"
   | "peer-instance"
+  | "supervisor"
   | "tracker";
 
 export const DOUBLE_MEANING: Readonly<Record<Double, string>> = {
@@ -71,10 +72,12 @@ export const DOUBLE_MEANING: Readonly<Record<Double, string>> = {
   honcho: "Honcho is `FixtureHoncho`, an in-memory array",
   hooks: "hook handlers are called in-process with hand-authored payloads",
   "peer-instance": "the peer repo's eyes never start; its instance is dormant",
+  supervisor:
+    "a scratch registry disables launchd control; no supervisor or eyes start",
   tracker: "`gh` is `createFakeGh`; no tracker was written",
 };
 
-/** One requirement, quoted out of the SPEC §13 text rather than the code. */
+/** One requirement, quoted from the governing SPEC text rather than the code. */
 export interface SpecRequirement {
   /**
    * The suite assertions that cover it, by exact description.
@@ -85,7 +88,7 @@ export interface SpecRequirement {
    * being defined out of existence by the assertion list.
    */
   assertions: readonly string[];
-  /** Stable id, `13.<slot>.<slug>`. */
+  /** Stable SPEC-addressed id. Core slots use `13.<slot>.<slug>`. */
   id: string;
   /**
    * What the covering assertions still fail to prove. `""` when nothing does
@@ -102,6 +105,15 @@ export interface ScenarioManifest {
   requirements: readonly SpecRequirement[];
   title: string;
 }
+
+/** Additive §13 surfaces reuse the grader without renumbering the core ten. */
+export interface LabeledScenarioManifest
+  extends Omit<ScenarioManifest, "number"> {
+  number: string;
+}
+
+export type AnyScenarioManifest = ScenarioManifest | LabeledScenarioManifest;
+export type ScenarioIdentifier = AnyScenarioManifest["number"];
 
 export type RequirementCoverage =
   /** Asserted, and nothing is known to be missing from what it proves. */
@@ -125,7 +137,7 @@ export interface ScenarioGrade {
   counts: Readonly<Record<RequirementCoverage, number>>;
   doubles: readonly Double[];
   liveEvidence: readonly string[];
-  number: CoreScenarioNumber;
+  number: ScenarioIdentifier;
   requirements: readonly RequirementGrade[];
   status: ScenarioReport["status"];
   title: string;
@@ -149,7 +161,7 @@ export function verdictFor(
 }
 
 export function gradeScenario(
-  manifest: ScenarioManifest,
+  manifest: AnyScenarioManifest,
   report: Pick<ScenarioReport, "assertions" | "liveEvidence" | "status">,
 ): ScenarioGrade {
   const passed = new Set(

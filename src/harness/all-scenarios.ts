@@ -34,6 +34,11 @@
  * honest summary; `verdicts.ts` holds the SPEC §13-derived assertion
  * manifests and the STRUCTURAL/LIVE verdict each slot actually earns, and the
  * suite prints them rather than a bare pass.
+ *
+ * ADDITIVE #72: the fixed ten-slot core is still exactly that. The init/up
+ * surface now lives beside it as five labelled setup scenarios, exported
+ * below. Keeping the registries separate prevents setup coverage from buying
+ * room by weakening or renumbering any existing core verdict.
  */
 import { registerCompletionScenarios } from "../complete/scenarios.ts";
 import { registerEventScenarios } from "../events/scenarios.ts";
@@ -52,6 +57,13 @@ import {
   fakeJohanBindingScenario,
   type ScenarioRegistry,
 } from "./index.ts";
+
+export {
+  gradeInitUpScenarios,
+  INIT_UP_MANIFESTS,
+  INIT_UP_SCENARIOS,
+  type InitUpScenarioId,
+} from "./init-up-scenarios.ts";
 
 /** Compose every ticket's §13 halves onto an existing registry. */
 export function registerAllScenarios(registry: ScenarioRegistry): void {
