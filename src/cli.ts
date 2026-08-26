@@ -13,6 +13,7 @@ Commands:
   down     stop this repo's eyes
   status   inspect this repo's eyes
   watch    run one eye
+  dispatch run one AFK ticket-dispatch pass (SPEC §7.3)
   search   search the transcript archive
   install  install argus from this checkout
 `;
@@ -75,6 +76,50 @@ async function install(): Promise<number> {
   await symlink(cli, launcher);
   console.log(`Installed argus at ${launcher}`);
   return 0;
+}
+
+/**
+ * `argus dispatch` — one pass of SPEC §7.3's AFK ticket dispatch (#56).
+ *
+ * ONE PASS, not a loop. Everything a pass needs to know it reads back from the
+ * world it left behind — the tracker's assignments and the slot directory's
+ * live pids — so running it again is safe, and running it on a cron is the
+ * whole batch behaviour. A resident loop would add a process that must itself
+ * be supervised, and would make the cap depend on that process staying alive.
+ */
+async function dispatch(): Promise<number> {
+  const { gitRoot } = await import("./up/git.ts");
+  const repo = await gitRoot(process.cwd());
+  if (repo === null) {
+    console.error("argus dispatch: current directory is not inside a git repository");
+    return 1;
+  }
+
+  const { dispatchFrontier } = await import("./dispatch/index.ts");
+  const report = await dispatchFrontier({ repo });
+
+  for (const recovered of report.recovered) {
+    console.log(
+      `recovered #${recovered.ticket}: ${recovered.outcome} (${recovered.detail})`,
+    );
+  }
+  for (const deployed of report.dispatched) {
+    console.log(
+      `dispatched #${deployed.ticket} -> ${deployed.agent} session ${deployed.sessionId}` +
+        ` on ${deployed.branch}` +
+        (deployed.workspace === undefined ? "" : ` (cmux ${deployed.workspace})`),
+    );
+  }
+  for (const skipped of report.skipped) {
+    console.log(`skipped #${skipped.ticket}: ${skipped.reason}`);
+  }
+  console.log(
+    `${report.dispatched.length} dispatched; ${report.inFlight}/${report.maxConcurrency} ` +
+      `sessions in flight; ${report.excluded.length} tickets held back`,
+  );
+  for (const reason of report.degraded) console.error(`DEGRADED: ${reason}`);
+  // A degraded pass is a visible failure, never a quiet success (ADR-0001).
+  return report.degraded.length > 0 ? 1 : 0;
 }
 
 async function search(args: string[]): Promise<number> {
@@ -153,6 +198,10 @@ export async function main(args: string[]): Promise<number> {
   if (args[0] === "supervisor") {
     const { runSupervisorDaemon } = await import("./supervisor/daemon.ts");
     return runSupervisorDaemon();
+  }
+
+  if (args[0] === "dispatch") {
+    return dispatch();
   }
 
   if (args[0] === "search") {

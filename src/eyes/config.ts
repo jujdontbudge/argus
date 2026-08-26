@@ -30,12 +30,29 @@ export interface CuratorConfig {
   archiveAfterDays: number;
 }
 
+/**
+ * SPEC §7.3.3's dispatch cap — "Concurrency cap: **3**, a config knob
+ * (`.argus/config.yaml`), raised only after the merge/verify loop proves
+ * itself" (ticket #56).
+ *
+ * It lives beside `brain.max_concurrency` and is deliberately NOT the same
+ * number: the brain cap budgets `codex exec` calls machine-wide, while this
+ * one budgets concurrent WORKER SESSIONS in one repo. Conflating them was the
+ * gap AUDIT.md §4 item 2 recorded — the file carried only the brain's budget,
+ * so §7.3's cap existed in prose alone.
+ */
+export interface DispatchConfig {
+  /** Concurrent dispatched ticket sessions per repo (SPEC §7.3.3: 3). */
+  maxConcurrency: number;
+}
+
 export interface EyesConfig {
   brain: BrainConfig;
   reviewer: CadenceConfig;
   digest: CadenceConfig;
   retro: CadenceConfig;
   curator: CuratorConfig;
+  dispatch: DispatchConfig;
 }
 
 export const DEFAULT_EYES_CONFIG: EyesConfig = {
@@ -56,6 +73,7 @@ export const DEFAULT_EYES_CONFIG: EyesConfig = {
     staleAfterDays: 30,
     archiveAfterDays: 90,
   },
+  dispatch: { maxConcurrency: 3 },
 };
 
 /** Parse the config subset: `section:` lines with `  key: value` children. */
@@ -159,5 +177,11 @@ export async function loadEyesConfig(repo: string): Promise<EyesConfig> {
     digest: cadence(sections.get("digest"), defaults.digest),
     retro: cadence(sections.get("retro"), defaults.retro),
     curator: curator(sections.get("curator"), defaults.curator),
+    dispatch: {
+      maxConcurrency: positiveInteger(
+        sections.get("dispatch")?.get("max_concurrency"),
+        defaults.dispatch.maxConcurrency,
+      ),
+    },
   };
 }

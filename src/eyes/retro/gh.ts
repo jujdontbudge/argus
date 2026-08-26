@@ -32,7 +32,13 @@ export type GhRunner = (
   cwd: string,
 ) => Promise<CommandResult>;
 
-const defaultRunner: GhRunner = async (args, cwd) => {
+/**
+ * The production `gh`. Exported because the #56 dispatcher runs the same CLI
+ * for the frontier read and the claim, and a second copy of this function
+ * would be a second place the launchd PATH pin (#59, `ARGUS_GH_EXECUTABLE`)
+ * has to be remembered.
+ */
+export const runGh: GhRunner = async (args, cwd) => {
   try {
     const child = Bun.spawn([process.env.ARGUS_GH_EXECUTABLE ?? "gh", ...args], {
       cwd,
@@ -282,14 +288,27 @@ function createTracker(repo: string, cwd: string, run: GhRunner): Tracker {
  */
 export async function detectTracker(
   repo: string,
-  run: GhRunner = defaultRunner,
+  run: GhRunner = runGh,
 ): Promise<Tracker | null> {
+  const name = await trackerRepoName(repo, run);
+  if (name === null) return null;
+  return createTracker(name, repo, run);
+}
+
+/**
+ * `owner/name` for the repo, or null for TRACKER-LESS MODE — no remote, no
+ * auth, no network. The #56 dispatcher needs the name without the retro
+ * filing methods, and both must agree on what "has a tracker" means.
+ */
+export async function trackerRepoName(
+  repo: string,
+  run: GhRunner = runGh,
+): Promise<string | null> {
   const viewed = await run(
     ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
     repo,
   );
   if (viewed.exitCode !== 0) return null;
   const name = viewed.stdout.trim();
-  if (!/^[^/\s]+\/[^/\s]+$/.test(name)) return null;
-  return createTracker(name, repo, run);
+  return /^[^/\s]+\/[^/\s]+$/.test(name) ? name : null;
 }

@@ -21,6 +21,10 @@ export interface FakeGhIssue {
   closeReason: string | null;
   /** Parent issue number when linked as a sub-issue. */
   parent: number | null;
+  /** GitHub assignee logins — the claim in SPEC §7.3.2 is an assignment. */
+  assignees: string[];
+  /** Issue numbers this one is blocked by (GitHub issue dependencies). */
+  blockedBy: number[];
 }
 
 export interface FakeGhSeed {
@@ -29,6 +33,10 @@ export interface FakeGhSeed {
   body?: string;
   labels?: string[];
   state?: "open" | "closed";
+  assignees?: string[];
+  blockedBy?: number[];
+  /** Seed a sub-issue link without going through the sub_issues API. */
+  parent?: number;
 }
 
 export interface FakeGhOptions {
@@ -38,6 +46,18 @@ export interface FakeGhOptions {
   failCreate?: string;
   failLink?: string;
   failClose?: string;
+  /** The login `gh api user` reports — the claimer's identity (#56). */
+  login?: string;
+  /** `gh api user` fails: the dispatcher cannot know who it would claim as. */
+  failUser?: string;
+  /** `gh issue list` fails: no frontier can be read. */
+  failList?: string;
+  /** `gh issue edit` (assign/unassign) fails: the claim cannot be made. */
+  failEdit?: string;
+  /** The dependency/sub-issue reads fail: blocked-ness is UNKNOWN. */
+  failDependencies?: string;
+  /** Runs before each call — lets a test simulate a lost claim race. */
+  before?: (args: readonly string[]) => void;
 }
 
 export interface FakeGh {
@@ -73,7 +93,9 @@ export function createFakeGh(options: FakeGhOptions = {}): FakeGh {
       labels: seed.labels ?? [],
       state: seed.state ?? "open",
       closeReason: null,
-      parent: null,
+      parent: seed.parent ?? null,
+      assignees: [...(seed.assignees ?? [])],
+      blockedBy: [...(seed.blockedBy ?? [])],
     };
     issues.push(issue);
     nextNumber = Math.max(nextNumber, seed.number + 1);
@@ -86,6 +108,7 @@ export function createFakeGh(options: FakeGhOptions = {}): FakeGh {
   };
 
   const run: GhRunner = async (args, cwd) => {
+    options.before?.(args);
     calls.push([...args]);
     cwds.push(cwd);
     const [command, subcommand] = args;
@@ -95,6 +118,7 @@ export function createFakeGh(options: FakeGhOptions = {}): FakeGh {
     }
 
     if (command === "issue" && subcommand === "list") {
+      if (options.failList) return err(options.failList);
       const state = flag(args, "--state") ?? "open";
       return ok(
         JSON.stringify(
@@ -105,6 +129,8 @@ export function createFakeGh(options: FakeGhOptions = {}): FakeGh {
               title: issue.title,
               body: issue.body,
               labels: issue.labels.map((name) => ({ name })),
+              assignees: issue.assignees.map((login) => ({ login })),
+              state: issue.state.toUpperCase(),
             })),
         ),
       );
@@ -119,6 +145,7 @@ export function createFakeGh(options: FakeGhOptions = {}): FakeGh {
           title: issue.title,
           body: issue.body,
           state: issue.state.toUpperCase(),
+          assignees: issue.assignees.map((login) => ({ login })),
         }),
       );
     }
@@ -140,6 +167,23 @@ export function createFakeGh(options: FakeGhOptions = {}): FakeGh {
       return ok(`https://github.com/${repo}/issues/${issue.number}\n`);
     }
 
+    if (command === "issue" && subcommand === "edit") {
+      if (options.failEdit) return err(options.failEdit);
+      const issue = issues.find((entry) => entry.number === args[2]);
+      if (!issue) return err(`no issue ${args[2]}`);
+      for (let index = 0; index < args.length; index += 1) {
+        const login = args[index + 1];
+        if (login === undefined) continue;
+        if (args[index] === "--add-assignee" && !issue.assignees.includes(login)) {
+          issue.assignees.push(login);
+        }
+        if (args[index] === "--remove-assignee") {
+          issue.assignees = issue.assignees.filter((entry) => entry !== login);
+        }
+      }
+      return ok("");
+    }
+
     if (command === "issue" && subcommand === "close") {
       if (options.failClose) return err(options.failClose);
       const issue = issues.find((entry) => entry.number === args[2]);
@@ -151,6 +195,41 @@ export function createFakeGh(options: FakeGhOptions = {}): FakeGh {
 
     if (command === "api") {
       const path = args[1] ?? "";
+      if (path === "user") {
+        if (options.failUser) return err(options.failUser);
+        return ok(`${options.login ?? "argus-bot"}\n`);
+      }
+      const blocked = path.match(/^repos\/(.+)\/issues\/(\d+)\/dependencies\/blocked_by$/);
+      if (blocked) {
+        if (options.failDependencies) return err(options.failDependencies);
+        const issue = issues.find((entry) => entry.number === blocked[2]);
+        if (!issue) return err(`no issue ${blocked[2]}`);
+        return ok(
+          JSON.stringify(
+            issue.blockedBy.flatMap((number) => {
+              const dependency = issues.find(
+                (entry) => entry.number === String(number),
+              );
+              return dependency
+                ? [{ number, state: dependency.state }]
+                : [{ number, state: "open" }];
+            }),
+          ),
+        );
+      }
+      const children = path.match(/^repos\/(.+)\/issues\/(\d+)\/sub_issues$/);
+      if (children && !args.includes("-F")) {
+        if (options.failDependencies) return err(options.failDependencies);
+        const issue = issues.find((entry) => entry.number === children[2]);
+        if (!issue) return err(`no issue ${children[2]}`);
+        return ok(
+          JSON.stringify(
+            issues
+              .filter((entry) => entry.parent === Number(issue.number))
+              .map((entry) => ({ number: Number(entry.number), state: entry.state })),
+          ),
+        );
+      }
       const link = path.match(/^repos\/(.+)\/issues\/(\d+)\/sub_issues$/);
       if (link) {
         if (options.failLink) return err(options.failLink);
