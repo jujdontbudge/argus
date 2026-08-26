@@ -177,4 +177,23 @@ describe("argus supervisor CLI", () => {
       ["bootout", "gui/424242/dev.argus.scratch-cli"],
     ]);
   });
+
+  test("down does not claim an externally managed supervisor was unloaded", async () => {
+    const { env, repoA } = await setup();
+    await mkdir(join(env.ARGUS_REPOS_FILE, ".."), { recursive: true });
+    await Bun.write(env.ARGUS_REPOS_FILE, `${repoA}\n`);
+
+    const result = await run(["down"], repoA, {
+      ...env,
+      ARGUS_LAUNCHCTL: "",
+      ARGUS_SUPERVISOR_CONTROL: "disabled",
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "No enabled repos remain; supervisor lifecycle is externally managed",
+    );
+    expect(result.stdout).not.toContain("Supervisor unloaded");
+    expect(await Bun.file(env.ARGUS_REPOS_FILE).text()).toBe("");
+  });
 });

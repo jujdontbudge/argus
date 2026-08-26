@@ -1,0 +1,181 @@
+==============================================================================
+ARGUS INIT / UP REAL-SANDBOX ACCEPTANCE — ticket #73
+==============================================================================
+Run date        2026-08-26
+checkout        /Users/johansardar/argus-worktrees/e2e
+sandboxes       /var/.../T/argus-ticket-73-3IzfMD/sandbox-repo (removed)
+                /var/.../T/argus-ticket-73-rerun-KdVByO/repo (removed)
+isolation       scratch HOME, CLAUDE_CONFIG_DIR, CODEX_HOME, HERMES_HOME,
+                XDG dirs, cmux socket, supervisor registry and status file
+credentials     Anthropic/OpenAI/Honcho API credentials removed from environment
+launchd         not installed or invoked; a real `argus supervisor` stayed a
+                child of the foreground acceptance runner
+
+The command order was the ticket's exact product path:
+  argus init -> argus up -> argus up -> argus status -> argus down
+
+All five command exits were 0. The two expected degraded notices were loud:
+  TRACKER-LESS MODE: no GitHub remote; skipped GitHub labels and tracker checks
+  HONCHO DEGRADED: http://localhost:8000 unavailable
+    (HONCHO_API_KEY and ~/.honcho/config.json apiKey are both missing);
+    local bindings converged
+
+------------------------------------------------------------------------------
+1. Actual init output
+------------------------------------------------------------------------------
+$ argus init
+  exit 0
+  out| Argus repo scaffold: /private/var/.../argus-ticket-73-3IzfMD/sandbox-repo
+  out|   .argus/            layout, config.yaml, canonical memory and skills
+  out|   .argus/memory/     seeded MEMORY.md, USER.md
+  out|   .claude/skills     -> ../.argus/skills
+  out|   AGENTS.md          argus + matt-pocock pointer blocks
+  out|   docs/agents/       issue-tracker.md, triage-labels.md, domain.md
+  out| wiring: claude skills adapter OK (resolves; 0 canonical skills to read yet)
+  out| wiring: AGENTS.md pointers OK (6/6 resolve)
+  out| Committed nothing. Argus never commits for you by default.
+  out|   Integration files not yet in git: .gitignore, AGENTS.md, docs/agents
+  out| Run `argus up` to converge machine wiring and start this repo's eyes.
+
+------------------------------------------------------------------------------
+2. Actual first and second up output
+------------------------------------------------------------------------------
+$ argus up
+  exit 0
+  out| Hermes slow poll: created (every 5m)
+  out| Hermes profile: argus-sandbox-repo-7e01de...cb6a9
+  out| Push hooks: Claude Stop + Codex notify
+  out| cmux hooks: optional (resume convenience; not required for signal delivery)
+  out|   cmux 0.62.2 has no `hooks` command — nothing in Argus requires one
+  out| wiring: claude skills adapter OK (resolves; 0 canonical skills to read yet)
+  out| wiring: AGENTS.md pointers OK (6/6 resolve)
+  out| wiring: Hermes memory binding OK (profile memories -> .argus/memory)
+  out| wiring: Hermes skills binding OK (profile skills.external_dirs includes .argus/skills)
+  out| Committed nothing. Argus never commits for you by default.
+  out| Argus converged /private/var/.../argus-ticket-73-3IzfMD/sandbox-repo
+
+$ argus up
+  exit 0
+  out| Hermes slow poll: existing (every 5m)
+  out| [all other convergence, wiring and no-commit lines identical]
+  out| Argus converged /private/var/.../argus-ticket-73-3IzfMD/sandbox-repo
+
+The managed files were SHA-256 snapshotted after each up. Every digest was
+identical: .gitignore, AGENTS.md, config.yaml, Claude settings, Codex config,
+the three docs/agents files, supervisor registry, and all Hermes profile files.
+Explicit duplicate counts after up #2 were all exactly 1:
+  AGENTS argus begin/end; AGENTS matt-pocock begin/end; three .gitignore lines;
+  Claude Argus Stop hook; Codex notify assignment and begin/end markers;
+  supervisor registry repo row.
+
+------------------------------------------------------------------------------
+3. Processes and actual status
+------------------------------------------------------------------------------
+The foreground supervisor status recorded five live owned children:
+  reviewer  81846
+  archiver  81847
+  honcho    81848
+  digest    81850
+  retro     81851
+
+$ argus status
+  exit 0
+  out| EYE       STATE    PID    LAST SUCCESS                    BACKLOG
+  out| reviewer  running  81846  2026-08-26T08:47:54.423Z        0
+  out| archiver  running  81847  2026-08-26T08:47:54.431Z        0
+  out| honcho    running  81848  2026-08-26T08:47:54.418Z        0
+  out| digest    running  81850  2026-08-26T08:47:54.439Z        0
+  out| retro     running  81851  2026-08-26T08:47:54.666Z        1
+
+$ argus down
+  exit 0
+  out| Argus stopped /private/var/.../argus-ticket-73-3IzfMD/sandbox-repo
+  out| Supervisor unloaded (no enabled repos)
+
+Within one 100 ms supervisor poll, all five owned PIDs were dead, the status
+contained `watchers: []`, and the isolated registry was empty. The foreground
+supervisor itself was still alive until the acceptance runner sent it SIGTERM.
+That last fact exposed a reporting defect: in externally managed mode `down`
+had not unloaded the supervisor it claimed to unload. This ticket adds a
+regression and changes the line to:
+  No enabled repos remain; supervisor lifecycle is externally managed
+
+The ticket-mandated command was also run verbatim before up, after up and after
+down:
+  pgrep -fc "bin/bun.*cli\.ts watch"
+On this machine's BSD pgrep, every invocation exited 2 and printed usage because
+`-c` is unsupported. A PID-list fallback proved the owned five were gone. One
+foreign watcher (PID 97673, PPID 1, from worktree retro-sched against a deleted
+argus-harness-NV53oM sandbox) existed before this run and remained afterwards;
+it was not signaled because ticket #73 did not spawn it.
+
+------------------------------------------------------------------------------
+4. On-disk and git verification
+------------------------------------------------------------------------------
+The live tree contained the specified registry/, memory/, skills/, sessions/
+and events/ directories plus config.yaml, honcho.yaml, identity.json,
+archive.db and per-eye state/health/lock files.
+
+  USER.md                       216 bytes, non-empty
+  MEMORY.md                     227 bytes, non-empty
+  Bun.YAML.parse(config.yaml)   succeeded
+  Claude memory adapter         resolved to canonical .argus/memory
+  Claude skills adapter         ../.argus/skills
+  Claude settings JSON          parsed; exactly one Argus Stop hook
+  Codex config                  exactly one notify assignment and marker pair
+  HEAD                          b0a27d7... before and after
+  commit count                  1 before and after
+  git status                    only the expected untracked integration files
+
+No API key/token was used, no launchd job was installed, all ticket-owned
+processes stopped, and the complete scratch root was removed.
+
+Observed acceptance verdict before the reporting fix:
+  commandsAllZero=true
+  fiveWatchersStarted=true
+  fiveWatchersStopped=true
+  memoryPairNonEmpty=true
+  configParses=true
+  hooksUnique=true
+  noDuplicateBlocks=true
+  noImplicitCommit=true
+
+------------------------------------------------------------------------------
+5. Final-code live rerun after the reporting fix
+------------------------------------------------------------------------------
+The entire command sequence was repeated, not merely the focused unit test.
+Actual final-code outputs and observations:
+
+  argus init exit             0
+  argus up #1 exit            0; Hermes slow poll `created`
+  argus up #2 exit            0; Hermes slow poll `existing`
+  argus status exit           0; five `running` rows, PIDs 88412-88416
+  argus down exit             0
+  argus down final line       No enabled repos remain; supervisor lifecycle
+                              is externally managed
+  owned survivors after down  []
+  status after down           `watchers: []`
+  registry after down         empty
+  scratch after cleanup       absent
+
+The final rerun again measured USER.md/MEMORY.md as 216/227 bytes, parsed
+config.yaml, found one Claude Stop hook and one Codex notify assignment,
+found the managed snapshots byte-identical across up #1/#2, and found HEAD
+unchanged. The exact pgrep command still exited 2 with BSD pgrep usage; that is
+a machine/tool discrepancy, not a watcher survivor.
+
+------------------------------------------------------------------------------
+6. Repository gates
+------------------------------------------------------------------------------
+The first `bun x tsc --noEmit` attempt stopped at TS2688 because this fresh
+worktree had no node_modules/@types/bun. After `bun install --frozen-lockfile`
+installed the lockfile-pinned dev dependencies, the mandated command passed:
+
+  bun x tsc --noEmit   PASS (0 diagnostics)
+  bun test             PASS: 864 pass, 16 skip, 0 fail,
+                       3006 expect() calls, 880 tests / 122 files, 136.00s
+
+The 16 skips are the suite's explicit opt-in live agent/network gates. No
+missing API key was reported as a blocker. Ticket #73's subscription-safe real
+sandbox lifecycle ran directly above rather than through those metered/live
+suite switches.

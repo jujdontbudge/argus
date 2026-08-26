@@ -173,17 +173,20 @@ export async function startSupervisor(
 export async function stopRepo(
   repo: string,
   configuration = supervisorConfiguration(),
-): Promise<{ remaining: string[]; unloaded: boolean }> {
+): Promise<{ managed: boolean; remaining: string[]; unloaded: boolean }> {
   const remaining = await disableRepo(configuration.job.registryPath, repo);
-  if (!configuration.manageLaunchd) return { remaining, unloaded: false };
+  if (!configuration.manageLaunchd) {
+    return { managed: false, remaining, unloaded: false };
+  }
   if (remaining.length === 0) {
     return {
+      managed: true,
       remaining,
       unloaded: await unloadSupervisorJob(configuration.launchctl),
     };
   }
   await convergeSupervisorJob(configuration.job, configuration.launchctl);
-  return { remaining, unloaded: false };
+  return { managed: true, remaining, unloaded: false };
 }
 
 export interface ProcessStatusRow {
