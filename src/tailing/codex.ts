@@ -29,7 +29,7 @@ function str(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-function canonicalPath(path: string): string {
+export function canonicalPath(path: string): string {
   try {
     return realpathSync.native(path);
   } catch {
