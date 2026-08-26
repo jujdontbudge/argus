@@ -225,7 +225,13 @@ on the machine (sampled every 6s), falling back to a 152 MB floor that was
 present before the run and belongs to another session. No process this run did
 not spawn was signalled.
 
-  pgrep -f 'bin/bun.*cli.ts watch' | wc -l              0   (baseline 0)
+  pgrep -f 'bin/bun.*cli.ts watch' | wc -l              0 from this ticket
+      Baseline at 17:44 was 0. The final check reads 1, and the single hit is
+      pid 43406, `.../argus-worktrees/cmux-door/src/cli.ts watch reviewer`
+      against a /T/argus-watch-CWvf9F sandbox — another worktree's worker
+      (#90), started inside this window and NOT spawned here. RSS 48.6 MB, one
+      eye at the healthy ~50MB/eye figure #89 measured. Not signalled: never
+      kill a process you did not spawn.
   launchctl list | grep -ci argus                       0   (baseline 0)
   cmux --id-format both tree --all | grep -c "workspace " 8  (baseline 8, unchanged)
   ls -d /private/tmp/argus-* 2>/dev/null                 none (test sandboxes
