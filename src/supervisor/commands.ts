@@ -16,7 +16,13 @@ export async function down(cwd = process.cwd()): Promise<number> {
   const result = await stopRepo(repo);
   console.log(`Argus stopped ${repo}`);
   if (result.remaining.length === 0) {
-    console.log("Supervisor unloaded (no enabled repos)");
+    if (result.unloaded) {
+      console.log("Supervisor unloaded (no enabled repos)");
+    } else if (result.managed) {
+      console.log("No enabled repos remain; supervisor was already unloaded");
+    } else {
+      console.log("No enabled repos remain; supervisor lifecycle is externally managed");
+    }
   }
   return 0;
 }
