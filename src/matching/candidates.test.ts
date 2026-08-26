@@ -450,6 +450,12 @@ describe("syntheticEnvelopeTag", () => {
     ).toBe("a");
   });
 
+  test("a same-named nested envelope does not close its parent early", () => {
+    expect(
+      syntheticEnvelopeTag("<a>\nouter\n<a>\ninner\n</a>\n</a>"),
+    ).toBe("a");
+  });
+
   test("a chain with anything left over is NOT an injection", () => {
     // The widening must not become "starts with an envelope". Johan appending
     // a sentence to something he pasted is still Johan.
@@ -461,6 +467,16 @@ describe("syntheticEnvelopeTag", () => {
     expect(
       syntheticEnvelopeTag("<a>\nfirst\n</a>\n<b>\nunclosed second"),
     ).toBeNull();
+  });
+
+  test("a pathological non-envelope is rejected well under a second (#80)", () => {
+    const pathological = "<a>\n" + "</a>\n<a>\n".repeat(30) + "junk";
+    const startedAt = performance.now();
+    const tag = syntheticEnvelopeTag(pathological);
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(tag).toBeNull();
+    expect(elapsedMs).toBeLessThan(500);
   });
 
   test("an envelope must close with its OWN tag", () => {
