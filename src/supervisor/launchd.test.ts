@@ -41,7 +41,10 @@ async function scratch() {
   return {
     bunPath: "/scratch/bun",
     cliPath: "/scratch/argus/src/cli.ts",
+    codexPath: "/scratch/bin/codex",
+    ghPath: "/scratch/bin/gh",
     label: "dev.argus.scratch",
+    path: "/scratch/bin:/usr/bin:/bin",
     plistPath: join(root, "dev.argus.scratch.plist"),
     registryPath: join(root, "repos"),
     statusPath: join(root, "status.json"),

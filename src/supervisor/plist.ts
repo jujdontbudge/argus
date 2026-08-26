@@ -1,7 +1,10 @@
 export interface SupervisorPlistOptions {
   bunPath: string;
   cliPath: string;
+  codexPath: string;
+  ghPath: string;
   label: string;
+  path: string;
   registryPath: string;
   statusPath: string;
 }
@@ -32,6 +35,12 @@ export function renderSupervisorPlist(
   </array>
   <key>EnvironmentVariables</key>
   <dict>
+    <key>PATH</key>
+    <string>${xml(options.path)}</string>
+    <key>ARGUS_CODEX_EXECUTABLE</key>
+    <string>${xml(options.codexPath)}</string>
+    <key>ARGUS_GH_EXECUTABLE</key>
+    <string>${xml(options.ghPath)}</string>
     <key>ARGUS_REPOS_FILE</key>
     <string>${xml(options.registryPath)}</string>
     <key>ARGUS_SUPERVISOR_STATUS_FILE</key>

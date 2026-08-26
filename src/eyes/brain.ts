@@ -107,8 +107,12 @@ export function parseCodexOutput(stdout: string): BrainOutcome {
 }
 
 const defaultSpawn: SpawnFn = async (request) => {
+  const env = { ...process.env };
+  delete env.ANTHROPIC_API_KEY;
+  delete env.ANTHROPIC_AUTH_TOKEN;
   const child = Bun.spawn([...request.argv], {
     cwd: request.cwd,
+    env,
     stdin: new TextEncoder().encode(request.stdin),
     stderr: "pipe",
     stdout: "pipe",
