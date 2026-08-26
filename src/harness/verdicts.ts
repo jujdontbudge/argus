@@ -530,7 +530,7 @@ export const SPEC_MANIFESTS: Readonly<
         ],
         id: "13.5.failure-visible",
         shortfall:
-          "visible in an in-process audit sink the scenario supplies. AUDIT.md §4 item 8 records that under the production supervisor the same audit prints into /dev/null, so 'visible, not silent' is true of the harness and false of production",
+          "visible in an in-process audit sink the scenario supplies: `classifyAll` collects the audits into an array (`src/provenance/scenarios.ts:212-220`) and the slot asserts against that array. #79: the production half of AUDIT.md §4 item 8 is CLOSED — audits no longer print into /dev/null. `recordAudits` writes one durable deduped file per audit under `.argus/audits` with an atomic `wx` temp + `link` (`src/audits/store.ts:71-104`), `argus watch` routes every provenance audit through it before logging (`src/watch.ts:82-90`), and `argus status` surfaces the unacknowledged ones with `--ack <audit-id>` (`src/cli.ts:15`, `src/supervisor/control.ts:254-266`). The shortfall is that THIS slot never touches that path: nothing here writes `.argus/audits` and nothing reads it back, so 'visible, not silent' is proven of an in-memory array rather than of the durable store production actually uses",
         spec: "assert the failure mode is visible, not silent",
       },
     ],
@@ -685,7 +685,7 @@ export const SPEC_MANIFESTS: Readonly<
         ],
         id: "13.9.repo-isolation",
         shortfall:
-          "the two peers are given different `HERMES_HOME`s, which AUDIT.md §4 item 11 records as hiding the `argus-<basename>` collision that two same-named repos hit under one real HOME. #76's live rendering proves the two workspaces separate on a real instance, but it inherits this same shortfall",
+          "the two peers are given different `HERMES_HOME`s AND different repo basenames (`scratch-<mkdtemp id>`, `src/harness/index.ts:200-204`), so the one arrangement in which per-repo isolation could actually fail — two same-named repos under one real HOME — is never exercised. #79: the collision itself is CLOSED, so this is a harness shortfall and no longer a production one — `repoIdentity` returns `argus-<slug>-<sha256(canonical repo)>` (`src/up/bindings.ts:207-211`) and `argus up` migrates the old `argus-<basename>` binding forward (`src/up/bindings.ts:316`). What stays unproven here is that separate workspaces follow from that derivation: in this slot they follow from separate sandboxes. #76's live rendering proves the two workspaces separate on a real instance, but it inherits this same shortfall",
         spec: "query the repo's Honcho workspace [per-repo isolation]",
       },
     ],

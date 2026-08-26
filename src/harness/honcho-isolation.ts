@@ -396,7 +396,7 @@ export const HONCHO_ISOLATION_MANIFESTS: readonly LabeledScenarioManifest[] = [
         ],
         id: "13.9.repo-isolation",
         shortfall:
-          "two repos' words are now proven separate BY THE SERVICE rather than by an in-memory filter — but the two sandboxes still get different `HERMES_HOME`s and different basenames, so AUDIT.md §4 item 11's `argus-<basename>` collision between two same-named repos under one real HOME is still not exercised",
+          "two repos' words are now proven separate BY THE SERVICE rather than by an in-memory filter — but the two sandboxes still get different `HERMES_HOME`s and different basenames, so the two-same-named-repos-under-one-real-HOME case is still not exercised. #79: that collision is CLOSED in production (`repoIdentity` returns `argus-<slug>-<sha256(canonical repo)>`, `src/up/bindings.ts:207-211`); what goes unexercised here is the derivation that closes it, not a live bug",
         spec: "query the repo's Honcho workspace [per-repo isolation]",
       },
       {
