@@ -55,6 +55,12 @@ export interface DeployRequest {
   branch?: string;
   /** The full prompt that opens the session — the registry's copy of it. */
   dispatchPrompt: string;
+  /**
+   * Override the routed executable. Named because PATH is not trustworthy for
+   * `claude` on this machine: several wrappers sit ahead of the native install
+   * (#41), one of which #36 measured hanging without an assistant turn.
+   */
+  executable?: string;
   /** Extra argv for the routed CLI (permission modes, skills, sandboxes). */
   extraArgs?: readonly string[];
   model?: string;
@@ -218,7 +224,7 @@ function spawnRequest(
     }),
     cwd,
     env,
-    executable: route.executable,
+    executable: request.executable ?? route.executable,
     ...(route.announce !== undefined && { announce: route.announce }),
   };
 }
