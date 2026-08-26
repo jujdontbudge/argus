@@ -12,7 +12,7 @@
  * sandbox's `.argus/`. Only the brain is a fixture, so no test run spends a
  * token or reaches a network.
  */
-import { mkdir } from "node:fs/promises";
+import { mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Sandbox, ScenarioHandler, ScenarioRegistry } from "../../harness/index.ts";
 import {
@@ -74,16 +74,26 @@ const exists = (path: string): Promise<boolean> => Bun.file(path).exists();
  * The curator half alone. It reads the skill the Reviewer's half learned, so
  * it only ever runs AFTER a slot-8 half that produces one.
  */
-export function curatorHalfScenario(): ScenarioHandler {
+export function curatorHalfScenario(brain: Brain = quietBrain): ScenarioHandler {
   return async (context) => {
     const { assert, assertSandboxed, sandbox } = context;
     const skillsDir = join(sandbox.repo, ".argus/skills");
-    const learned = join(skillsDir, "rotate-staging-cert/SKILL.md");
+    let learnedName = "rotate-staging-cert";
+    if (brain !== quietBrain) {
+      const written: string[] = [];
+      for (const entry of await readdir(skillsDir, { withFileTypes: true })) {
+        if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+        const candidate = join(skillsDir, entry.name, "SKILL.md");
+        if (await Bun.file(candidate).exists()) written.push(entry.name);
+      }
+      if (written.length === 1) learnedName = written[0]!;
+    }
+    const learned = join(skillsDir, learnedName, "SKILL.md");
     const learnedBefore = await Bun.file(learned).text();
 
     // The skill the Reviewer just learned gets used again this week — the
     // same telemetry call the eye makes, on the curator half's clock.
-    await recordSkillWrites(skillsDir, ["rotate-staging-cert"], {
+    await recordSkillWrites(skillsDir, [learnedName], {
       at: ago(1),
       createdBy: "agent",
     });
@@ -108,7 +118,7 @@ export function curatorHalfScenario(): ScenarioHandler {
     // The first opportunity seeds the weekly gate and defers — nothing moves.
     const deferred = await maybeRunCurator({
       repo: sandbox.repo,
-      brain: quietBrain,
+      brain,
       cap: createBrainCap({
         directory: join(sandbox.root, "state/brain-slots"),
         maxConcurrency: 2,
@@ -126,7 +136,7 @@ export function curatorHalfScenario(): ScenarioHandler {
     // A week of turns later the Reviewer's next tick finds the gate open.
     const run = await maybeRunCurator({
       repo: sandbox.repo,
-      brain: quietBrain,
+      brain,
       cap: createBrainCap({
         directory: join(sandbox.root, "state/brain-slots"),
         maxConcurrency: 2,
@@ -171,9 +181,10 @@ export function curatorHalfScenario(): ScenarioHandler {
 /** §13 scenario 8 whole: the reviewer half (a skill is learned) then the curator half. */
 export function curatorSelfLearningScenario(
   driver: ProvenanceScenarioDriver = createFixtureProvenanceDriver(),
+  brains: { curator?: Brain; reviewer?: Brain } = {},
 ): ScenarioHandler {
-  const reviewerHalf = selfLearningScenario(driver);
-  const curatorHalf = curatorHalfScenario();
+  const reviewerHalf = selfLearningScenario(driver, brains.reviewer);
+  const curatorHalf = curatorHalfScenario(brains.curator);
   return async (context) => {
     await reviewerHalf(context);
     await curatorHalf(context);
@@ -189,13 +200,14 @@ export function curatorSelfLearningScenario(
 export function registerCuratorScenarios(
   registry: ScenarioRegistry,
   driver: ProvenanceScenarioDriver = createFixtureProvenanceDriver(),
+  brains: { curator?: Brain; reviewer?: Brain } = {},
 ): void {
   const existing = registry.get(8);
   if (existing === undefined) {
-    registry.register(8, curatorSelfLearningScenario(driver));
+    registry.register(8, curatorSelfLearningScenario(driver, brains));
     return;
   }
-  const curatorHalf = curatorHalfScenario();
+  const curatorHalf = curatorHalfScenario(brains.curator);
   registry.register(8, async (context) => {
     await existing(context);
     await curatorHalf(context);

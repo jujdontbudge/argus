@@ -208,11 +208,12 @@ function fixtureDigestBrain(): Brain {
 async function runDigest(
   sandbox: Sandbox,
   records: readonly ProvenanceRecord[],
+  brain: Brain = fixtureDigestBrain(),
 ): Promise<void> {
   let nowMs = 0;
   const eye = await DigestEye.open({
     repo: sandbox.repo,
-    brain: fixtureDigestBrain(),
+    brain,
     cap: createBrainCap({
       directory: join(sandbox.root, "state/brain-slots"),
       maxConcurrency: 2,
@@ -239,11 +240,15 @@ interface RetroScenarioEye {
 }
 
 /** Open the Retro eye and drive the same timed `tick()` seam as the watcher. */
-async function openRetroEye(sandbox: Sandbox, gh: FakeGh): Promise<RetroScenarioEye> {
+async function openRetroEye(
+  sandbox: Sandbox,
+  gh: FakeGh,
+  brain: Brain = fixtureRetroBrain(),
+): Promise<RetroScenarioEye> {
   let nowMs = 0;
   const eye = await RetroEye.open({
     repo: sandbox.repo,
-    brain: fixtureRetroBrain(),
+    brain,
     cap: createBrainCap({
       directory: join(sandbox.root, "state/brain-slots"),
       maxConcurrency: 2,
@@ -277,6 +282,7 @@ const JOHAN_PROMPT =
 export function rogueSessionScenario(
   driver: ProvenanceScenarioDriver = createFixtureProvenanceDriver(),
   rogueDriver: RogueSessionDriver = createFixtureRogueDriver(),
+  brains: { digest?: Brain; retro?: Brain } = {},
 ): ScenarioHandler {
   return async ({ assert, assertSandboxed, sandbox }) => {
     assert(sandbox.up.exitCode === 0, "sandbox was converged by argus up");
@@ -288,7 +294,7 @@ export function rogueSessionScenario(
       body: "Retries, timeouts and error paths for src/fetch-helper.ts.",
     });
 
-    const watcher = await openRetroEye(sandbox, gh);
+    const watcher = await openRetroEye(sandbox, gh, brains.retro);
     const { eye } = watcher;
 
     // A registered ticket session doing its job — the control: covered work
@@ -331,7 +337,7 @@ export function rogueSessionScenario(
       ...(await driver.events(sandbox)),
       ...(await rogueDriver.events(sandbox)),
     ]);
-    await runDigest(sandbox, records);
+    await runDigest(sandbox, records, brains.digest);
     for (const [sessionId, cwd] of sessionDirs) {
       await eye.observeSession({ sessionId, cwd });
     }
@@ -356,7 +362,11 @@ export function rogueSessionScenario(
     );
     const retro = retros[0]!;
     assert(
-      retro.title === "Retro: add retry to the fetch helper",
+      brains.retro === undefined
+        ? retro.title === "Retro: add retry to the fetch helper"
+        : /^Retro:/i.test(retro.title) &&
+            /fetch[- ]helper/i.test(retro.title) &&
+            /retr/i.test(retro.title),
       "the retro is titled `Retro: <what was done>`",
     );
     assert(retro.state === "closed", "the retro was filed CLOSED (no approval queue)");
@@ -468,6 +478,7 @@ async function commitInSandbox(
  */
 export function scopeDriftScenario(
   driver: ProvenanceScenarioDriver = createFixtureProvenanceDriver(),
+  brain?: Brain,
 ): ScenarioHandler {
   return async ({ assert, assertSandboxed, sandbox }) => {
     assert(sandbox.up.exitCode === 0, "sandbox was converged by argus up");
@@ -475,7 +486,7 @@ export function scopeDriftScenario(
     gh.seed(TICKET_SEVEN);
     gh.seed(TICKET_NINE);
 
-    const watcher = await openRetroEye(sandbox, gh);
+    const watcher = await openRetroEye(sandbox, gh, brain);
 
     // The hijacked session: Hermes deployed it against #7, fake-Johan
     // attaches and points it somewhere else entirely.
@@ -609,16 +620,17 @@ export function registerRetroScenarios(
   registry: ScenarioRegistry,
   driver: ProvenanceScenarioDriver = createFixtureProvenanceDriver(),
   rogueDriver: RogueSessionDriver = createFixtureRogueDriver(),
+  brains: { digest?: Brain; retro?: Brain } = {},
 ): void {
   const existingThree = registry.get(3);
-  const retroHalf = rogueSessionScenario(driver, rogueDriver);
+  const retroHalf = rogueSessionScenario(driver, rogueDriver, brains);
   registry.register(3, async (context) => {
     if (existingThree !== undefined) await existingThree(context);
     await retroHalf(context);
   });
 
   const existingTwo = registry.get(2);
-  const driftHalf = scopeDriftScenario(driver);
+  const driftHalf = scopeDriftScenario(driver, brains.retro);
   registry.register(2, async (context) => {
     if (existingTwo !== undefined) await existingTwo(context);
     await driftHalf(context);

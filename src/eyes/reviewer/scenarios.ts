@@ -10,6 +10,7 @@
  * fixture — it reads the eye's own prompt blocks, so the full pipeline
  * (classify → coalesce → evaluate → gate → write) runs for real with no LLM.
  */
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Sandbox, ScenarioHandler, ScenarioRegistry } from "../../harness/index.ts";
 import {
@@ -106,9 +107,27 @@ async function runReviewerOnce(
 const memoryPath = (sandbox: Sandbox, name: string): string =>
   join(sandbox.repo, ".argus/memory", name);
 
+async function markdownFiles(directory: string): Promise<string[]> {
+  return (await readdir(directory, { withFileTypes: true }))
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
+    .map(({ name }) => name);
+}
+
+async function writtenSkills(sandbox: Sandbox): Promise<string[]> {
+  const root = join(sandbox.repo, ".argus/skills");
+  const skills: string[] = [];
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+    const path = join(root, entry.name, "SKILL.md");
+    if (await Bun.file(path).exists()) skills.push(path);
+  }
+  return skills;
+}
+
 /** §13 scenario 1 — autonomous batch, zero human input (slot 1). */
 export function autonomousBatchScenario(
   driver: ProvenanceScenarioDriver = createFixtureProvenanceDriver(),
+  scenarioBrain?: Brain,
 ): ScenarioHandler {
   return async ({ assert, sandbox }) => {
     const seededUser = "# USER.md\n\n- Johan exists <!-- argus:johan-exists -->\n";
@@ -125,7 +144,7 @@ export function autonomousBatchScenario(
 
     // An adversarial brain: it claims a Johan preference while citing a
     // Hermes-authored message. The registry gate, not the model, must decide.
-    const brain = factPassOnly((prompt) => {
+    const brain = scenarioBrain ?? factPassOnly((prompt) => {
       const blocks = promptBlocks(prompt);
       return JSON.stringify({
         findings: [
@@ -153,27 +172,55 @@ export function autonomousBatchScenario(
       "USER.md stayed byte-identical",
     );
     const index = await Bun.file(memoryPath(sandbox, "MEMORY.md")).text();
-    assert(index.includes("metro-port.md"), "MEMORY.md gained a project fact");
-    assert(
-      (await Bun.file(memoryPath(sandbox, "metro-port.md")).text()).includes(
-        "Metro runs on 8082.",
-      ),
-      "the fact file exists beside the index",
-    );
+    if (scenarioBrain === undefined) {
+      // The deterministic fixture pins its own exact slug and wording.
+      assert(index.includes("metro-port.md"), "MEMORY.md gained a project fact");
+      assert(
+        (await Bun.file(memoryPath(sandbox, "metro-port.md")).text()).includes(
+          "Metro runs on 8082.",
+        ),
+        "the fact file exists beside the index",
+      );
+    } else {
+      // A model chooses its own stable slug and prose. The judgment is the
+      // durable Metro/8082 fact, not whether it copied the fixture's spelling.
+      const facts = (await markdownFiles(join(sandbox.repo, ".argus/memory")))
+        .filter((name) => !["MEMORY.md", "USER.md"].includes(name));
+      const matching = [];
+      for (const name of facts) {
+        const text = await Bun.file(memoryPath(sandbox, name)).text();
+        if (/metro/i.test(text) && /8082/.test(text)) matching.push(name);
+      }
+      assert(
+        matching.length === 1 && index.includes(matching[0]!),
+        "MEMORY.md gained a project fact",
+      );
+      assert(
+        matching.length === 1 && (await Bun.file(memoryPath(sandbox, matching[0]!)).exists()),
+        "the fact file exists beside the index",
+      );
+    }
   };
 }
 
 /** §13 scenario 2 — fake-Johan takeover, provenance + reviewer halves (slot 2). */
 export function reviewerTakeoverScenario(
   driver: ProvenanceScenarioDriver = createFixtureProvenanceDriver(),
+  scenarioBrain?: Brain,
 ): ScenarioHandler {
-  const provenanceHalf = takeoverScenario(driver);
+  const provenanceHalf = takeoverScenario(
+    driver,
+    scenarioBrain === undefined
+      ? undefined
+      : "stop — ship the auth fix first, then come back. " +
+          "This is a durable preference: always prioritize auth and security fixes before feature work.",
+  );
   return async (context) => {
     await provenanceHalf(context);
 
     // The reviewer half: the takeover directive (already in the sandbox's
     // events) must flow into USER.md — it is the one Johan-authored message.
-    const brain = factPassOnly((prompt) => {
+    const brain = scenarioBrain ?? factPassOnly((prompt) => {
       const johan = promptBlocks(prompt).filter(({ author }) => author === "johan");
       return JSON.stringify({
         findings: johan.map(({ uuid, text }, index) => ({
@@ -189,7 +236,11 @@ export function reviewerTakeoverScenario(
 
     const user = await Bun.file(memoryPath(context.sandbox, "USER.md")).text();
     context.assert(
-      user.includes("stop — ship the auth fix first, then come back"),
+      scenarioBrain === undefined
+        ? user.includes("stop — ship the auth fix first, then come back")
+        : /auth/i.test(user) &&
+          /(fix|security)/i.test(user) &&
+          /(before|priorit)/i.test(user),
       "USER.md learned from the takeover directive",
     );
   };
@@ -198,6 +249,7 @@ export function reviewerTakeoverScenario(
 /** §13 scenario 8 — self-learning loop (slot 8). */
 export function selfLearningScenario(
   driver: ProvenanceScenarioDriver = createFixtureProvenanceDriver(),
+  scenarioBrain?: Brain,
 ): ScenarioHandler {
   return async ({ assert, sandbox }) => {
     const procedure =
@@ -216,7 +268,7 @@ export function selfLearningScenario(
     // across sessions — the "repeat" in SPEC §13.8. Since #69 the eye asks
     // twice; a procedure is the SKILLS WRITER's answer, and the extraction
     // pass's schema cannot express one.
-    const brain: Brain = {
+    const brain: Brain = scenarioBrain ?? {
       async evaluate({ prompt }) {
         if (!asksForProcedures(prompt)) return { ok: true, text: NOTHING };
         const repeats = promptBlocks(prompt).filter(({ text }) =>
@@ -243,12 +295,19 @@ export function selfLearningScenario(
     };
     await runReviewerOnce(sandbox, driver, brain);
 
-    const skill = Bun.file(
-      join(sandbox.repo, ".argus/skills/rotate-staging-cert/SKILL.md"),
-    );
+    const modelSkills = scenarioBrain === undefined ? [] : await writtenSkills(sandbox);
+    const skillPath =
+      scenarioBrain === undefined
+        ? join(sandbox.repo, ".argus/skills/rotate-staging-cert/SKILL.md")
+        : modelSkills.length === 1
+          ? modelSkills[0]!
+          : null;
+    const skill = Bun.file(skillPath ?? "/missing-real-brain-skill");
     assert(
       (await skill.exists()) &&
-        (await skill.text()).includes("run refresh-cert.sh"),
+        (scenarioBrain === undefined
+          ? (await skill.text()).includes("run refresh-cert.sh")
+          : /certificate/i.test(await skill.text()) && /restart/i.test(await skill.text())),
       "the novel procedure was written as a SKILL.md under .argus/skills",
     );
   };
@@ -258,8 +317,9 @@ export function selfLearningScenario(
 export function registerReviewerScenarios(
   registry: ScenarioRegistry,
   driver: ProvenanceScenarioDriver = createFixtureProvenanceDriver(),
+  brain?: Brain,
 ): void {
-  registry.register(1, autonomousBatchScenario(driver));
-  registry.register(2, reviewerTakeoverScenario(driver));
-  registry.register(8, selfLearningScenario(driver));
+  registry.register(1, autonomousBatchScenario(driver, brain));
+  registry.register(2, reviewerTakeoverScenario(driver, brain));
+  registry.register(8, selfLearningScenario(driver, brain));
 }
