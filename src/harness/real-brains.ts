@@ -59,7 +59,7 @@ const SHORTFALL_AFTER_REAL_BRAIN: Readonly<Record<string, string>> = {
   "13.1.memory-md": "",
   "13.1.digests-index": "",
   "13.1.tickets-closed":
-    "#57 remains PARTIAL: `gh`, the worker process and the gate command are still doubles, so this proves the loop closes a ticket against a TRACKER DOUBLE — not that live agent work survives a live tracker",
+    "`gh` and the worker process remain doubles; the default gates and git lifecycle are real, so this proves the loop closes a ticket against a TRACKER DOUBLE — not that live agent work survives a live tracker",
   "13.2.user-md-learned": "",
   "13.3.body-prompts-diff": "",
   "13.8.reviewer-writes-skill": "",

@@ -293,7 +293,7 @@ export const SPEC_MANIFESTS: Readonly<
         ],
         id: "13.1.batch-end-to-end",
         shortfall:
-          "the worker process is a stub and the gate commands are fixtures, so no live agent produced the work the batch merged",
+          "the worker process is a stub, so no live agent produced the work the real default gates accepted and the batch merged",
         spec: "run a ticket batch end to end",
       },
       {
@@ -348,7 +348,7 @@ export const SPEC_MANIFESTS: Readonly<
         ],
         id: "13.1.tickets-closed",
         shortfall:
-          "#57 graded this PARTIAL in its own words: `gh`, the review brain, the worker process and the gate commands are all doubles, so it proves the loop closes a ticket against a TRACKER DOUBLE — not that live agent work survives a live review",
+          "`gh`, the review brain and the worker process are doubles; the default gates and git lifecycle are real, so this proves the loop closes a ticket against a TRACKER DOUBLE — not that live agent work survives a live review",
         spec: "tickets closed",
       },
     ],

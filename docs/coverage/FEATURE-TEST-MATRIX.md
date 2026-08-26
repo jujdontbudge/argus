@@ -161,10 +161,10 @@ being cloned somewhere else.
 | F74 | The skill **id** is part of the route | **ASSERTED** | see F4. Nothing checks the id resolves on this machine → folded into **#89** |
 | F75–F76 | Frontier read; claim → worktree → workspace → fresh session → register → dispatch | STRUCTURAL | `dispatch.test.ts` |
 | F77 | Cap 3, enforced at production's door | LIVE (mechanics) / **NONE** (under load) | #78 ran `ARGUS_LIVE_SLOTS`. Three *real* sessions have never been in flight at once → **#92** |
-| F78 | On green: merge, close, update the map | STRUCTURAL, **and broken** | `complete.test.ts`. Scenario 1's gate is `git rev-parse HEAD`, which no worktree can fail → **#87** |
+| F78 | On green: merge, close, update the map | STRUCTURAL | `complete.test.ts`; scenario 1 now provisions a locked TypeScript project and runs `DEFAULT_GATES` in the production-created worktree (#87) |
 | F79 | Johan can attach to any ticket workspace | **NONE** | same hole as F6 |
 | F80–F81 | Ad hoc coverage; planning exempt | STRUCTURAL | slot 3 |
-| F82 | **A gate is only a gate if it can refuse** | STRUCTURAL, **and broken** | `gates.ts`'s own docblock is the promise; `DEFAULT_GATES[0]` is `bun x tsc --noEmit`, which cannot pass in a freshly created ticket worktree → **#87** |
+| F82 | **A gate is only a gate if it can refuse** | STRUCTURAL | `gates-worktree.test.ts` creates a real worktree through the production primitive, passes both defaults, then makes typecheck refuse a deliberate error (#87) |
 
 ### M. Memory and skills
 
@@ -216,23 +216,20 @@ being cloned somewhere else.
 ## 3. What the ten scenarios do not cover
 
 The ten §13 scenarios are a provenance suite. Read as a set, they cover the
-classification of messages and the writes that follow from it, thoroughly. Six things
+classification of messages and the writes that follow from it, thoroughly. Five things
 they were never shaped to see:
 
-1. **The completion half of the loop.** Nine of ten scenarios end at a watcher write.
-   Only `13.1.tickets-closed` reaches merge/close, and it does so with a gate
-   (`git rev-parse HEAD`) that no worktree can fail. The real gate cannot pass. (#87)
-2. **Routing.** No scenario asserts which agent a ticket goes to. The dispatcher
+1. **Routing.** No scenario asserts which agent a ticket goes to. The dispatcher
    hardcodes Claude and drops the labels it read. (#88)
-3. **The grill half of the pipeline.** Every scenario is an AFK scenario. §14's first
+2. **The grill half of the pipeline.** Every scenario is an AFK scenario. §14's first
    acceptance bullet — the HITL one, the one with Johan in it — has no scenario. (#89)
-4. **The cmux door.** `cmux` is a `Double` in every slot that names it. The one
+3. **The cmux door.** `cmux` is a `Double` in every slot that names it. The one
    behaviour that made #7 a ticket is a property of a real cmux binary. (#90)
-5. **Judgment, as opposed to schema-conformance.** The live-brain gate proves the
+4. **Judgment, as opposed to schema-conformance.** The live-brain gate proves the
    brain returns parseable JSON. Where #54 measured it answering *wrongly*, the live
    tests either look away (curator's memory half) or accept both answers
    (reviewer's fact kind). The digest has no live brain test at all. (#91)
-6. **Concurrency and scale.** Every scenario runs one session. §14 bullet 2 asks for
+5. **Concurrency and scale.** Every scenario runs one session. §14 bullet 2 asks for
    three at once, and the cap that governs them has never had three real sessions to
    hold back. (#92)
 
