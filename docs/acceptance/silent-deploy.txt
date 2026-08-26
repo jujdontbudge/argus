@@ -1,0 +1,176 @@
+==============================================================================
+TICKET #96 — the trust dialog, and the silence that hid it
+==============================================================================
+Branch build/silent-deploy. Gate: `bun x tsc --noEmit` clean;
+`bun test` 984 pass / 21 skip / 0 fail, 1005 tests across 136 files (80.79s).
+No expect( was removed or weakened anywhere in this ticket.
+
+Found live by #89, drive 3: a grill into a fresh directory stopped on Claude
+Code's first-run trust dialog and stayed there. From inside Argus that state
+was a durable registry row, five running watchers, no transcript, and nothing
+noticing — indistinguishable from five broken eyes.
+
+------------------------------------------------------------------------------
+HALF 1 — WHAT PRODUCTION DOES ABOUT THE DIALOG
+------------------------------------------------------------------------------
+CHOSEN: pre-trust the directory the deployment will run in, in the config file
+that session will read, BEFORE the process is spawned. `src/deploy/trust.ts`,
+called from `deployWorker` between the checkout and the row/spawn, for the
+claude route only. The grill (§7.2, `checkout: "repo"`) inherits it, because
+it goes through the same primitive.
+
+REJECTED — answering the modal, the way #89's driver does (`read-screen` in a
+  loop, then `send-key enter`):
+    * it needs a cmux surface, and the headless routes in `src/deploy/routes.ts`
+      have none;
+    * it is a poll race against a TUI that renders what it likes;
+    * it can only fire AFTER the session is already blocked.
+  That is a harness answer, which is the thing the ticket says production must
+  stop borrowing.
+REJECTED — detect and surface only: half 2 already surfaces the whole class,
+  and surfacing alone would leave the first grill in every new worktree blocked
+  by design.
+OUT OF SCOPE (stated, not fixed): codex's own trust gate,
+  `[projects."<dir>"] trust_level = "trusted"` in config.toml, which #82's
+  FINDING 1 already owns. Nothing here touches codex; there is a test asserting
+  a codex deployment leaves `.claude.json` uncreated.
+
+THE §5 RULE 2 SEND SEAM: this bypasses it, deliberately. Rule 2 exists so that
+a message which lands in a transcript can be attributed to Hermes rather than
+to Johan. A config key is not a message — nothing is typed, nothing reaches a
+transcript, and there is nothing for the classifier to misattribute. It is a
+precondition of the process, the same kind of thing as cwd, PATH, or the
+subscription env. #89 measured that the alternative (the menu keystroke) is not
+a rule 2 send either; this one at least leaves a durable artifact behind.
+
+LIVE PROBE — against the real binary, claude 2.1.246, scratch HOME and scratch
+CLAUDE_CONFIG_DIR throughout. Johan's real ~/.claude.json was checksummed
+before and after every step and never changed (REAL_UNCHANGED, twice).
+
+  1. Where does the config live? With CLAUDE_CONFIG_DIR set, `claude config ls`
+     created `$CLAUDE_CONFIG_DIR/.claude.json` (and projects/, sessions/,
+     backups/) and nothing under $HOME. That is the file Argus writes.
+
+  2. Untrusted, before the fix — a scratch repo with a `.claude/settings.json`,
+     run headless in it:
+
+       $ claude -p "hi"
+       Ignoring 1 permissions.allow entry from .claude/settings.json: this
+       workspace has not been trusted. Run Claude Code interactively here once
+       and accept the trust dialog, or set
+       projects["/private/tmp/argus-96-live-KSeZ/repo"].hasTrustDialogAccepted:
+       true in /private/tmp/argus-96-live-KSeZ/cfg/.claude.json.
+       Not logged in · Please run /login
+
+     The binary names the exact file and the exact key this ticket writes.
+
+  3. After `trustDirectory(repo, { env: { CLAUDE_CONFIG_DIR: cfg } })`:
+
+       {"configPath":".../cfg/.claude.json","project":".../repo","status":"trusted"}
+       projects: { "/private/tmp/argus-96-live-KSeZ/repo": {
+                     "hasTrustDialogAccepted": true } }
+
+       $ claude -p "hi" < /dev/null
+       Not logged in · Please run /login
+
+     The untrusted-workspace signal is gone; only the scratch-HOME login gate
+     remains. Same binary, same directory, same command — the only change is
+     the key Argus wrote.
+
+  WHAT THIS DOES NOT PROVE, stated plainly: it does not drive the interactive
+  modal itself and watch it not appear. That needs the REAL home, because that
+  is where the subscription credential is (#49's tension, #89 finding D), and
+  writing Johan's real ~/.claude.json is forbidden by the house rules. What is
+  proven is that the workspace-trust STATE the binary reads flipped, in the
+  file and under the key the binary itself documents, and that state is the
+  same gate the dialog guards (2.1.246's trust check is
+  `projects?.[dir]?.hasTrustDialogAccepted === true`, with a walk up to the
+  git root).
+
+BEST EFFORT, NEVER FATAL: a pre-trust that fails records `trustDegraded` on the
+deployment and the session still starts — the directory may be trusted by an
+ancestor entry. If it does block anyway, half 2 is what makes that visible.
+That is the whole point of doing both halves.
+
+------------------------------------------------------------------------------
+HALF 2 — THE SILENCE (the valuable half)
+------------------------------------------------------------------------------
+`src/supervisor/silence.ts` + `silentDeploymentStatus` in control.ts.
+
+THE RULE: a deployment with a registry row, whose repo has a LIVE archiver eye,
+that has ZERO archived messages after the threshold, is degraded.
+
+The assertion is on the CLASS, never on the dialog. `silence.test.ts` includes
+a session that died at exec, and the reason string is asserted NOT to mention
+trust. A session whose transcript lands in a home the eyes do not read (#89
+finding D) degrades identically. A test that asserted "the trust dialog is
+handled" would have passed while this class stayed wide open.
+
+THRESHOLD: 5 minutes (`ARGUS_SILENT_DEPLOYMENT_MS` overrides).
+  FLOOR — a healthy deployment's first archived message is the DISPATCH PROMPT
+    itself, written to the transcript when the session accepts it, not the
+    first assistant token. The budget is process start + CLI boot + first
+    transcript line + one 250ms watcher poll: seconds on every drive in this
+    directory, tens of seconds on a cold, loaded machine or a cmux-typed grill
+    launch. Five minutes is about an order of magnitude of headroom, so a slow
+    first token is never an outage.
+  CEILING — the only thing that would EVER have marked #89's session is the
+    classifier's `dispatch-expired`, at WINDOW_AFTER_MS = one hour. Five
+    minutes is twelve times tighter. And the check is bounded ABOVE by that
+    same hour: past it, silence goes quiet and hands the session to the
+    dispatch-expired audit, which `argus status` already prints. The two never
+    double-report, and this fills the window in which nothing did.
+  NOT GATED ON THE ARCHIVER BEING DOWN — if no archiver is alive for the repo,
+    zero proves nothing and nothing is reported; that fault is already its own
+    status row (#85). One fault, one reason.
+
+WHAT THE OPERATOR SEES — real `argus status`, five healthy eyes, one silent
+deployment, exit code 1:
+
+  REPO       EYE       STATE    PID   LAST SUCCESS                 BACKLOG  LAST ERROR
+  …/repo     reviewer  running  8414  2026-08-26T23:21:58.427662Z  0        -
+  …/repo     archiver  running  8414  2026-08-26T23:21:58.427662Z  0        -
+  …/repo     honcho    running  8414  2026-08-26T23:21:58.427662Z  0        -
+  …/repo     digest    running  8414  2026-08-26T23:21:58.427662Z  0        -
+  …/repo     retro     running  8414  2026-08-26T23:21:58.427662Z  0        -
+
+  SILENT DEPLOYMENTS (registered, watched, and empty — SESSION REPO TICKET AGENT STATE DEPLOYED REASON)
+  47261a9e-100d-41eb-8fbc-ab4e06bd55fb  …/repo  #96  claude  degraded  2026-08-26T23:10:58.443191Z  deployed 11m ago and the archiver eye is live, but it has archived 0 messages for this session (threshold 5m). The session never started, is blocked on a prompt it cannot answer, or its transcript is not where the eyes are looking. Attach to it: the deployment row has the worktree and the tab.
+
+  EXIT=1
+
+That is #89's exact shape — five eyes reporting "running" — with the thing
+they are watching finally named. It is a separate section on purpose: the eyes
+are healthy, and collapsing the two would have to blame an eye for a
+deployment's silence.
+
+------------------------------------------------------------------------------
+RED FIRST — the failures, before the code existed
+------------------------------------------------------------------------------
+src/deploy/trust.test.ts (8 tests)
+  error: Cannot find module './trust.ts'   →   8 pass / 0 fail
+
+src/deploy/deploy.test.ts (3 new tests, the ordering proven from inside the
+spawn seam exactly as §5 rule 1's is)
+  expect(trustAtSpawn).toEqual([true])
+    Expected: [true]   Received: ["no config at all"]
+  expect(result.deployment.trustDegraded).toMatch(/HOME|config/i)
+    Received value must be a string: undefined
+  →   13 pass / 0 fail
+
+src/supervisor/silence.test.ts (9 tests)
+  error: Cannot find module './silence.ts'   →   9 pass / 0 fail
+
+src/supervisor/silence-status.test.ts (4 tests, real `argus status` process)
+  expect(stdout).toContain("SILENT DEPLOYMENTS")
+    Received: "REPO … archiver  running  99384 … " and nothing else
+  →   4 pass / 0 fail
+
+------------------------------------------------------------------------------
+RESOURCE SAFETY (Directive 14)
+------------------------------------------------------------------------------
+No cmux workspace or surface was created, closed, or touched. No watcher fleet
+was started — #92 holds that lease. No launchd job was loaded. Every live probe
+ran under a scratch HOME/CLAUDE_CONFIG_DIR in /private/tmp and was removed.
+Johan's real ~/.claude.json, ~/.claude, ~/.hermes, ~/.codex and ~/argus were
+never written; the credential files were never read or copied.
