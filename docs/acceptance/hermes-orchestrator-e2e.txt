@@ -152,3 +152,105 @@ the first TWO lines are the ticket author's setup (§2); everything from
   $ argus status
       -> exit 0
   $ argus dispatch
+      -> exit 0
+  $ argus status
+      -> exit 0
+  $ argus signals
+      -> exit 0
+  $ argus complete
+      -> exit 0
+  $ argus dispatch
+      -> exit 0
+
+$SANDBOX/log/cmux.log, verbs only, ALL of them issued by Argus under Hermes:
+
+     18  cmux --id-format both tree --all --json
+      6  cmux rename-tab
+      6  cmux new-surface
+      3  cmux read-screen
+      3  cmux close-surface
+      1  cmux tree
+      1  cmux --version
+      0  cmux new-workspace          <- ZERO. Directive 14 held.
+
+------------------------------------------------------------------------------
+5. What Hermes actually did, cycle by cycle
+------------------------------------------------------------------------------
+CYCLE 1. `argus dispatch` deployed all three tickets in one pass:
+
+  - three git worktrees, one per ticket, each on its own branch:
+      repo-worktrees/ticket-1  [argus/ticket-1]
+      repo-worktrees/ticket-2  [argus/ticket-2]
+      repo-worktrees/ticket-3  [argus/ticket-3]
+  - three registry rows in .argus/registry/sessions.jsonl, each written BEFORE
+    its session started, each carrying sessionId, agent, ticket, the full
+    dispatch prompt, the worktree, the workspace UUID and the surface UUID;
+  - three cmux TABS (§6);
+  - three real `codex exec --json -c model_reasoning_effort=high` workers,
+    routed to Codex by the "everything not grilling/spec/review/diagnosis goes
+    to Codex" default.
+
+All three workers then failed in the same way, within 40 seconds, having
+written nothing:
+
+  "Blocked by the read-only workspace. The patch was rejected with:
+   > writing is blocked by read-only sandbox; rejected by user approval settings
+   No files were changed or committed. Please rerun ticket #1 with write access
+   enabled."
+                    -- .argus/events/v1-blocked-on-human-d2f151f4....json
+
+Each raised a `blocked-on-human` event. `git log main..argus/ticket-N` is empty
+for all three.
+
+CYCLE 2. Hermes ran `argus status`, `argus signals`, then `argus complete` —
+which correctly REFUSED to merge or close anything, exactly as the skill's
+"a `blocked-on-human` signal never merges" clause says it must — then
+`argus dispatch` again. That second dispatch's recovery pass reaped the three
+dead sessions, CLOSED their three tabs, and redeployed all three tickets. The
+second cycle blocked identically: six `blocked-on-human` events in total.
+
+******************************************************************************
+FINDING 1 (BLOCKER, argus bug, NOT a skill bug and NOT a harness artifact)
+  Every Codex worker Argus deploys is READ-ONLY unless the machine's personal
+  codex config happens to grant write access.
+******************************************************************************
+
+  Argus's Codex route (src/deploy/routes.ts:112-124) spawns exactly:
+
+    codex exec --json -c model_reasoning_effort=high <dispatchPrompt>
+
+  It sets the reasoning effort and NOTHING about the sandbox or approval
+  policy. `codex exec` defaults to a read-only sandbox, so a worker cannot
+  write the file it was dispatched to write.
+
+  On Johan's machine this is invisible, because his own live config says:
+
+    $ grep -nE '^\s*(approval_policy|sandbox_mode)' ~/.codex/config.toml
+      10:approval_policy = "never"
+      11:sandbox_mode = "danger-full-access"
+
+  So production inherits write access from a PERSONAL preference file that
+  Argus does not own, does not set and does not check.
+
+  This is not the scratch home's fault. `argus up` DOES write to
+  $CODEX_HOME/config.toml — it wrote exactly this, and only this:
+
+    # argus:notify:begin
+    notify = ["/Users/.../bun","/Users/.../scripts/codex-notify.ts"]
+    # argus:notify:end
+
+  Argus reaches into the codex config to install its notify hook and, while it
+  is there, does not set the one policy without which its workers cannot work.
+  Any machine, CI runner, or fresh checkout whose codex config lacks
+  `sandbox_mode` gets six silent `blocked-on-human` events and zero lines of
+  code, which is what this run got.
+
+  #88 made Codex "the default implementer". On the evidence of this run, a
+  deployed Codex worker has never successfully written a file on any machine
+  but Johan's.
+
+  Not fixed here: the fix is a one-line change to a production route
+  (`--sandbox workspace-write`, or `-c sandbox_mode=workspace-write`), and the
+  choice between granting workspace-write and granting full access is a policy
+  call about what an unattended worker may touch. That belongs to Johan and to
+  its own ticket, not to an acceptance run. FILED, not fixed.
