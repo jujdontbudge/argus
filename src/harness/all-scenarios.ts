@@ -27,6 +27,7 @@
  * what `all-scenarios.test.ts` pins: not just that the slots are filled, but
  * that each contributing ticket's own assertion is still in the transcript.
  */
+import { registerCompletionScenarios } from "../complete/scenarios.ts";
 import { registerEventScenarios } from "../events/scenarios.ts";
 import { registerArchiverScenarios } from "../eyes/archiver/scenarios.ts";
 import { registerCuratorScenarios } from "../eyes/curator/scenarios.ts";
@@ -53,6 +54,7 @@ export function registerAllScenarios(registry: ScenarioRegistry): void {
   registerEventScenarios(registry);
 
   // Then the extenders, which chain onto whatever is registered.
+  registerCompletionScenarios(registry);
   registerCuratorScenarios(registry);
   registerRetroScenarios(registry);
   registerArchiverScenarios(registry);

@@ -82,6 +82,27 @@ cap is absent.
    ticket branch from its worktree, close the ticket, and update the wayfinder map.
    Own these GitHub state transitions; never assume the worker closed its ticket.
 
+## Close finished tickets
+
+Run `argus complete` for the repository. One pass consumes this sweep's terminal
+signals, then verifies every ticket awaiting verification: gates run in the ticket's
+own worktree, the review reads the diff measured from `git merge-base`, and only a
+green pass merges into the base branch, closes the ticket as completed, and adds one
+line to the `wayfinder:map` issue.
+
+The pass refuses on purpose, and a refusal is not a failure to work around:
+
+- a red gate, a blocking review, or a review that could not run leaves the ticket open
+  and claimed, with the reason commented on the ticket;
+- a `blocked-on-human` signal never merges—attach and answer it;
+- a session that died rather than finished belongs to `argus dispatch`'s recovery pass,
+  which decides whether it left work behind;
+- a wrong-branch or dirty checkout stops the merge until the checkout is clean.
+
+Refused tickets stay on the durable queue under `.argus/dispatch/verify/` and are
+retried by the next pass, because the completion signal that raised them is spent.
+Never merge or close a ticket by hand to get around a refusal; fix what the gate found.
+
 `argus up` installs a repo-scoped Hermes cron job that runs `argus signals` every five
 minutes. The command emits only unseen terminal prompts and stays silent on an empty
 sweep. Do not create a second poll job or manually replay a signal: push and poll share

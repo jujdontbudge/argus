@@ -45,6 +45,7 @@ describe("argus CLI", () => {
       "status",
       "watch",
       "dispatch",
+      "complete",
       "search",
       "install",
     ]) {
@@ -60,6 +61,22 @@ describe("argus CLI", () => {
     const outside = await mkdtemp(join(tmpdir(), "argus-not-a-repo-"));
     try {
       const result = await runCli(["dispatch"], [], {}, cli, outside);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("not inside a git repository");
+    } finally {
+      await rm(outside, { force: true, recursive: true });
+    }
+  });
+
+  test("complete outside a git repository refuses rather than guessing a repo", async () => {
+    // Same reasoning as `dispatch` above: every other path reaches real `gh`
+    // and merges real branches, which SPEC §13 forbids a test run from doing.
+    // The loop itself is covered through its production entry point in
+    // src/complete/complete.test.ts.
+    const outside = await mkdtemp(join(tmpdir(), "argus-not-a-repo-"));
+    try {
+      const result = await runCli(["complete"], [], {}, cli, outside);
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain("not inside a git repository");
