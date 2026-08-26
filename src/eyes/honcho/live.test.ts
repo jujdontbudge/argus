@@ -14,48 +14,11 @@ import {
   resolveHonchoGate,
 } from "../live-gate";
 import { HonchoEye } from "./honcho";
-
-const LIVE_URL = "http://localhost:8000";
-
-async function configuredApiKey(): Promise<string | null> {
-  const environmentKey = Bun.env.HONCHO_API_KEY?.trim();
-  if (environmentKey) return environmentKey;
-  const home = Bun.env.HOME;
-  if (!home) return null;
-  try {
-    const config = (await Bun.file(join(home, ".honcho/config.json")).json()) as {
-      apiKey?: unknown;
-    };
-    return typeof config.apiKey === "string" && config.apiKey.trim()
-      ? config.apiKey.trim()
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-async function probeLiveHoncho(): Promise<{
-  live: { apiKey: string } | null;
-  reason: string | null;
-}> {
-  const apiKey = await configuredApiKey();
-  if (!apiKey) {
-    return { live: null, reason: "Honcho credentials are not configured" };
-  }
-  try {
-    const response = await fetch(`${LIVE_URL}/health`, {
-      signal: AbortSignal.timeout(500),
-    });
-    return response.ok
-      ? { live: { apiKey }, reason: null }
-      : {
-          live: null,
-          reason: `the local Honcho health check returned ${response.status}`,
-        };
-  } catch {
-    return { live: null, reason: "the local Honcho service is unavailable" };
-  }
-}
+import {
+  LIVE_HONCHO_URL as LIVE_URL,
+  probeLiveHoncho,
+  removeScratchWorkspace,
+} from "./live-probe";
 
 const probe = liveGateEnabled(LIVE_HONCHO_GATE, Bun.env)
   ? await probeLiveHoncho()
@@ -69,31 +32,6 @@ console.log(
     liveGate,
   ),
 );
-
-async function cleanup(
-  apiKey: string,
-  workspace: string,
-  session: string,
-): Promise<void> {
-  const headers = { authorization: `Bearer ${apiKey}` };
-  const encodedWorkspace = encodeURIComponent(workspace);
-  await fetch(
-    `${LIVE_URL}/v3/workspaces/${encodedWorkspace}/sessions/${encodeURIComponent(session)}`,
-    { method: "DELETE", headers },
-  );
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    const response = await fetch(`${LIVE_URL}/v3/workspaces/${encodedWorkspace}`, {
-      method: "DELETE",
-      headers,
-    });
-    if (response.status === 202 || response.status === 404) return;
-    if (response.status !== 409) {
-      throw new Error(`scratch cleanup failed: Honcho ${response.status}`);
-    }
-    await Bun.sleep(100);
-  }
-  throw new Error(`scratch cleanup timed out for ${workspace}`);
-}
 
 function liveRecord(sessionId: string, text: string): ProvenanceRecord {
   const ts = new Date().toISOString();
@@ -154,7 +92,7 @@ liveTest(
       // Deriver intentionally waits for 512 tokens or 30 minutes.
       expect(await eye.pendingCount()).toBe(0);
     } finally {
-      await cleanup(live!.apiKey, workspace, session);
+      await removeScratchWorkspace(live!.apiKey, workspace, [session]);
       await rm(repo, { force: true, recursive: true });
     }
   },

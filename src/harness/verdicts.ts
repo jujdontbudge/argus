@@ -584,7 +584,7 @@ export const SPEC_MANIFESTS: Readonly<
         assertions: [],
         id: "13.9.query-workspace",
         shortfall:
-          "UNCOVERED: no Honcho workspace is queried. `FixtureHoncho` is an in-memory array in `src/eyes/honcho/scenarios.ts`; the only code in the tree that talks to a real instance is `src/eyes/honcho/live.test.ts`, behind its own gate and outside this slot",
+          "UNCOVERED: no Honcho workspace is queried. `FixtureHoncho` is an in-memory array in `src/eyes/honcho/scenarios.ts`. #76: the opt-in LIVE rendering covers this behind `ARGUS_LIVE_HONCHO=1` — see `HONCHO_ISOLATION_MANIFESTS` in `honcho-isolation.ts`, which drives both repos' production Honcho eyes into a real local instance and queries the workspaces back out of it. THIS slot's verdict is unchanged, because this slot still runs on an in-memory array, and when the gate is shut the live rendering does not run at all",
         spec: "query the repo's Honcho workspace",
       },
       {
@@ -594,7 +594,7 @@ export const SPEC_MANIFESTS: Readonly<
         ],
         id: "13.9.representation-johan-only",
         shortfall:
-          "`FixtureHoncho.representation` filters `this.messages` by `peer_id`. That is peer ROUTING, and it proves the eye addressed the right peer — it can never prove a DERIVED representation excludes non-Johan content, because no representation is derived",
+          "`FixtureHoncho.representation` filters `this.messages` by `peer_id`. That is peer ROUTING, and it proves the eye addressed the right peer — it can never prove a DERIVED representation excludes non-Johan content, because no representation is derived. #76's live rendering moves the routing claim onto the real service's own peer filter and queries the representation endpoint for real; it stays PARTIAL there too, because Honcho's Deriver waits for 512 tokens or 30 minutes and that drive deliberately stays under the threshold",
         spec: "the Johan representation derives only from Johan-authored messages",
       },
       {
@@ -605,7 +605,7 @@ export const SPEC_MANIFESTS: Readonly<
         ],
         id: "13.9.repo-isolation",
         shortfall:
-          "the two peers are given different `HERMES_HOME`s, which AUDIT.md §4 item 11 records as hiding the `argus-<basename>` collision that two same-named repos hit under one real HOME",
+          "the two peers are given different `HERMES_HOME`s, which AUDIT.md §4 item 11 records as hiding the `argus-<basename>` collision that two same-named repos hit under one real HOME. #76's live rendering proves the two workspaces separate on a real instance, but it inherits this same shortfall",
         spec: "query the repo's Honcho workspace [per-repo isolation]",
       },
     ],
