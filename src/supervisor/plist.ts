@@ -1,8 +1,12 @@
 export interface SupervisorPlistOptions {
   bunPath: string;
+  claudeConfigPath: string;
   cliPath: string;
+  codexHomePath: string;
   codexPath: string;
   ghPath: string;
+  hermesHomePath: string;
+  homePath: string;
   label: string;
   logPath?: string;
   path: string;
@@ -41,6 +45,14 @@ export function renderSupervisorPlist(
   </array>
   <key>EnvironmentVariables</key>
   <dict>
+    <key>HOME</key>
+    <string>${xml(options.homePath)}</string>
+    <key>CODEX_HOME</key>
+    <string>${xml(options.codexHomePath)}</string>
+    <key>HERMES_HOME</key>
+    <string>${xml(options.hermesHomePath)}</string>
+    <key>CLAUDE_CONFIG_DIR</key>
+    <string>${xml(options.claudeConfigPath)}</string>
     <key>PATH</key>
     <string>${xml(options.path)}</string>
     <key>ARGUS_CODEX_EXECUTABLE</key>

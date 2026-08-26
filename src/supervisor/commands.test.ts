@@ -81,6 +81,31 @@ afterEach(async () => {
 });
 
 describe("argus status audit alarms", () => {
+  test("reports a live watcher with no health report as degraded", async () => {
+    const options = await scratch();
+    await Bun.write(
+      options.statusPath,
+      `${JSON.stringify({
+        updatedAt: "2026-08-26T12:00:00.000Z",
+        watchers: [
+          {
+            eye: "reviewer",
+            pid: process.pid,
+            repo: options.repo,
+            state: "running",
+          },
+        ],
+      })}\n`,
+    );
+
+    const result = await runStatus(options);
+
+    expect({ exitCode: result.exitCode, stdout: result.stdout }).toEqual({
+      exitCode: 1,
+      stdout: expect.stringContaining("reviewer  degraded"),
+    });
+  });
+
   test("surfaces the first refusal of an unknown Claude origin kind", async () => {
     const options = await scratch();
     await mkdir(dirname(options.transcript), { recursive: true });
