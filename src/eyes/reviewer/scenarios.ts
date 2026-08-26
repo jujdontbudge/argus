@@ -42,6 +42,29 @@ function promptBlocks(prompt: string): PromptBlock[] {
   return blocks;
 }
 
+const NOTHING = JSON.stringify({ findings: [] });
+
+/** The skills writer's opening line — how a scripted brain tells the passes apart. */
+function asksForProcedures(prompt: string): boolean {
+  return prompt.startsWith("You are the Argus skills writer");
+}
+
+/**
+ * Since #69 the eye asks twice per evaluation, and each pass's schema can
+ * express only its own kinds — so a brain that answered both passes with the
+ * same findings would hand the skills writer a fact, which is a schema miss,
+ * which retries until the scenario times out. These scenarios are about the
+ * FACT pass, so this answers the skills writer with silence.
+ */
+function factPassOnly(answer: (prompt: string) => string): Brain {
+  return {
+    async evaluate({ prompt }) {
+      if (asksForProcedures(prompt)) return { ok: true, text: NOTHING };
+      return { ok: true, text: answer(prompt) };
+    },
+  };
+}
+
 /**
  * Classify everything the sandbox's transcripts produced and run one full
  * coalesced evaluation over it with the given brain, on a virtual clock.
@@ -102,32 +125,27 @@ export function autonomousBatchScenario(
 
     // An adversarial brain: it claims a Johan preference while citing a
     // Hermes-authored message. The registry gate, not the model, must decide.
-    const brain: Brain = {
-      async evaluate({ prompt }) {
-        const blocks = promptBlocks(prompt);
-        return {
-          ok: true,
-          text: JSON.stringify({
-            findings: [
-              {
-                kind: "user-preference",
-                slug: "sneaky-preference",
-                title: "Sneaky",
-                content: "Johan supposedly loves status checks.",
-                sources: [blocks[0]!.uuid],
-              },
-              {
-                kind: "project-fact",
-                slug: "metro-port",
-                title: "Metro port",
-                content: "Metro runs on 8082.",
-                sources: blocks.map(({ uuid }) => uuid),
-              },
-            ],
-          }),
-        };
-      },
-    };
+    const brain = factPassOnly((prompt) => {
+      const blocks = promptBlocks(prompt);
+      return JSON.stringify({
+        findings: [
+          {
+            kind: "user-preference",
+            slug: "sneaky-preference",
+            title: "Sneaky",
+            content: "Johan supposedly loves status checks.",
+            sources: [blocks[0]!.uuid],
+          },
+          {
+            kind: "project-fact",
+            slug: "metro-port",
+            title: "Metro port",
+            content: "Metro runs on 8082.",
+            sources: blocks.map(({ uuid }) => uuid),
+          },
+        ],
+      });
+    });
     await runReviewerOnce(sandbox, driver, brain);
 
     assert(
@@ -155,25 +173,18 @@ export function reviewerTakeoverScenario(
 
     // The reviewer half: the takeover directive (already in the sandbox's
     // events) must flow into USER.md — it is the one Johan-authored message.
-    const brain: Brain = {
-      async evaluate({ prompt }) {
-        const johan = promptBlocks(prompt).filter(
-          ({ author }) => author === "johan",
-        );
-        return {
-          ok: true,
-          text: JSON.stringify({
-            findings: johan.map(({ uuid, text }, index) => ({
-              kind: "user-preference",
-              slug: `takeover-directive-${index + 1}`,
-              title: "Takeover directive",
-              content: text,
-              sources: [uuid],
-            })),
-          }),
-        };
-      },
-    };
+    const brain = factPassOnly((prompt) => {
+      const johan = promptBlocks(prompt).filter(({ author }) => author === "johan");
+      return JSON.stringify({
+        findings: johan.map(({ uuid, text }, index) => ({
+          kind: "user-preference",
+          slug: `takeover-directive-${index + 1}`,
+          title: "Takeover directive",
+          content: text,
+          sources: [uuid],
+        })),
+      });
+    });
     await runReviewerOnce(context.sandbox, driver, brain);
 
     const user = await Bun.file(memoryPath(context.sandbox, "USER.md")).text();
@@ -202,9 +213,12 @@ export function selfLearningScenario(
     }
 
     // Fires only once the SAME novel procedure has been seen more than once
-    // across sessions — the "repeat" in SPEC §13.8.
+    // across sessions — the "repeat" in SPEC §13.8. Since #69 the eye asks
+    // twice; a procedure is the SKILLS WRITER's answer, and the extraction
+    // pass's schema cannot express one.
     const brain: Brain = {
       async evaluate({ prompt }) {
+        if (!asksForProcedures(prompt)) return { ok: true, text: NOTHING };
         const repeats = promptBlocks(prompt).filter(({ text }) =>
           text.startsWith("PROCEDURE: rotate the staging cert"),
         );

@@ -45,22 +45,51 @@ function verdictText(findings: object[]): string {
 
 interface ScriptedBrain {
   brain: Brain;
+  /** The EXTRACTION pass's requests — one per attempt at the batch. */
   requests: BrainRequest[];
+  /** The procedure pass's requests, answered with silence here (#69). */
+  procedureRequests: BrainRequest[];
 }
 
-/** Returns each scripted text in turn; repeats the last one when exhausted. */
+/**
+ * Returns each scripted text in turn; repeats the last one when exhausted.
+ *
+ * Since #69 the eye asks twice per attempt (extraction, then procedures), so
+ * this scripts the FACT pass — the one every test below is about — and
+ * answers the procedure pass with no findings. `requests` therefore still
+ * counts attempts at the batch, which is what these tests assert on. The
+ * two-pass behaviour itself has its own tests at the bottom of this file.
+ */
 function scriptedBrain(texts: string[]): ScriptedBrain {
   const requests: BrainRequest[] = [];
+  const procedureRequests: BrainRequest[] = [];
   return {
     requests,
+    procedureRequests,
     brain: {
       async evaluate(request) {
+        if (asksForProcedures(request)) {
+          procedureRequests.push(request);
+          return { ok: true, text: verdictText([]) };
+        }
         requests.push(request);
         const text = texts[Math.min(requests.length - 1, texts.length - 1)]!;
         return { ok: true, text };
       },
     },
   };
+}
+
+/** Which pass is asking: the schema each pass sends is its name. */
+function asksForProcedures(request: BrainRequest): boolean {
+  const { enum: kinds } = (
+    request.schema as {
+      properties: {
+        findings: { items: { properties: { kind: { enum: string[] } } } };
+      };
+    }
+  ).properties.findings.items.properties.kind;
+  return kinds.includes("procedure");
 }
 
 interface World {
@@ -349,6 +378,131 @@ describe("Reviewer eye — debounced/coalesced per-turn evaluation", () => {
       await eye.tick();
       expect(await world.exists(".argus/memory/USER.md")).toBe(false);
       expect(await world.read(".argus/memory/MEMORY.md")).toContain("metro-port.md");
+    });
+  });
+});
+
+describe("#69 — the eye makes two passes: extraction, then procedure-writing", () => {
+  /** Answers by which pass asked — the schema each pass sends is its name. */
+  function twoPassBrain(
+    extraction: object[],
+    procedures: object[],
+  ): { brain: Brain; requests: BrainRequest[] } {
+    const requests: BrainRequest[] = [];
+    return {
+      requests,
+      brain: {
+        async evaluate(request) {
+          requests.push(request);
+          return {
+            ok: true,
+            text: verdictText(
+              asksForProcedures(request) ? procedures : extraction,
+            ),
+          };
+        },
+      },
+    };
+  }
+
+  test("one tick asks twice, with different asks over the same batch", async () => {
+    await withWorld(async (world) => {
+      const scripted = twoPassBrain([], []);
+      const eye = await world.open(scripted.brain);
+      await eye.ingest([record("uuid-j1", "johan", "use tabs please")]);
+      world.clock.set(30 * SECOND);
+      expect(await eye.tick()).toBe(true);
+
+      expect(scripted.requests).toHaveLength(2);
+      const [extraction, procedure] = scripted.requests as [
+        BrainRequest,
+        BrainRequest,
+      ];
+      expect(extraction.prompt).toContain("use tabs please");
+      expect(procedure.prompt).toContain("use tabs please");
+      expect(extraction.prompt).not.toEqual(procedure.prompt);
+      expect(extraction.schema).not.toEqual(procedure.schema);
+    });
+  });
+
+  test("facts come from the extraction pass and skills from the procedure pass", async () => {
+    await withWorld(async (world) => {
+      const scripted = twoPassBrain(
+        [
+          {
+            kind: "project-fact",
+            slug: "cmux-version",
+            title: "cmux version floor",
+            content: "cmux must be >= 0.64.22; this machine is on 0.62.2.",
+            sources: ["uuid-a1"],
+          },
+        ],
+        [
+          {
+            kind: "procedure",
+            slug: "rotate-staging-cert",
+            title: "Rotate the staging cert",
+            content: "1) pull vault secret 2) run refresh-cert.sh 3) restart caddy",
+            sources: ["uuid-a1"],
+          },
+        ],
+      );
+      const eye = await world.open(scripted.brain);
+      await eye.ingest([record("uuid-a1", "agent", "cmux needs 0.64.22")]);
+      world.clock.set(30 * SECOND);
+      await eye.tick();
+
+      expect(await world.read(".argus/memory/MEMORY.md")).toContain("cmux-version.md");
+      expect(await world.read(".argus/skills/rotate-staging-cert/SKILL.md")).toContain(
+        "refresh-cert.sh",
+      );
+    });
+  });
+
+  test("a procedure returned by the extraction pass never reaches the skills surface", async () => {
+    await withWorld(async (world) => {
+      // The #71 misfile, forced: the extraction pass answers with a skill.
+      let calls = 0;
+      const brain: Brain = {
+        async evaluate(request) {
+          calls += 1;
+          if (asksForProcedures(request)) return { ok: true, text: verdictText([]) };
+          // Two misfiles, then it complies — the retry must not spin forever.
+          if (calls <= 4) {
+            return {
+              ok: true,
+              text: verdictText([
+                {
+                  kind: "procedure",
+                  slug: "upgrade-cmux",
+                  title: "Upgrade cmux",
+                  content: "cmux must be >= 0.64.22",
+                  sources: ["uuid-a1"],
+                },
+              ]),
+            };
+          }
+          return {
+            ok: true,
+            text: verdictText([
+              {
+                kind: "project-fact",
+                slug: "cmux-version",
+                title: "cmux version floor",
+                content: "cmux must be >= 0.64.22; this machine is on 0.62.2.",
+                sources: ["uuid-a1"],
+              },
+            ]),
+          };
+        },
+      };
+      const eye = await world.open(brain, { baseDelayMs: 1, maxDelayMs: 2 });
+      await eye.ingest([record("uuid-a1", "agent", "cmux needs 0.64.22")]);
+      world.clock.set(30 * SECOND);
+      await eye.tick();
+
+      expect(await world.exists(".argus/skills/upgrade-cmux/SKILL.md")).toBe(false);
+      expect(await world.read(".argus/memory/MEMORY.md")).toContain("cmux-version.md");
     });
   });
 });

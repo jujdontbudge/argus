@@ -25,7 +25,13 @@ import { loadEyesConfig, type CadenceConfig, type CuratorConfig } from "../confi
 import { maybeRunCurator } from "../curator/curator";
 import { recordSkillWrites } from "../curator/usage";
 import { applyFindings, foldHermesEntries, repairMemoryIndex } from "./outputs";
-import { parseVerdict, REVIEWER_OUTPUT_SCHEMA, type Verdict } from "./schema";
+import {
+  EXTRACTION_OUTPUT_SCHEMA,
+  PROCEDURE_OUTPUT_SCHEMA,
+  parseVerdict,
+  type FindingKind,
+  type Verdict,
+} from "./schema";
 
 import type { ProvenanceRecord } from "../../provenance";
 export type { ProvenanceRecord } from "../../provenance";
@@ -66,29 +72,91 @@ export interface ReviewerEyeOptions {
   signal?: AbortSignal;
 }
 
-function buildPrompt(records: ProvenanceRecord[]): string {
-  const blocks = records.map(
+function blocksOf(records: ProvenanceRecord[]): string[] {
+  return records.map(
     (record) =>
       `[uuid=${record.event.uuid ?? "unknown"} author=${record.author} ` +
       `session=${record.sessionId} role=${record.event.role} ts=${record.ts}]\n` +
       record.text,
   );
+}
+
+/**
+ * Pass 1 of 2 (#69) — EXTRACTION. This is the ask #54 measured the brain
+ * doing reliably (9/9 preference recall at the default tier), and it is the
+ * one that writes durable memory, so it asks for nothing else. It cannot
+ * emit a procedure: `EXTRACTION_OUTPUT_SCHEMA` has no such kind.
+ */
+export function buildExtractionPrompt(records: ProvenanceRecord[]): string {
   return [
     "You are the Argus Reviewer eye. The blocks below are transcript turns",
     "from agent sessions in this repo, each tagged with its registry-verified",
     "author. Decide whether anything DURABLE happened. Do not run any",
     "commands; judge only from the blocks.",
     "",
-    'Emit findings (possibly none) as JSON matching the output schema:',
+    "This pass EXTRACTS facts the blocks already state. Do not generalise",
+    "past them, do not write advice, and do not describe a method — a",
+    "separate pass asks for those.",
+    "",
+    "Emit findings (possibly none) as JSON matching the output schema:",
     '- kind "user-preference": something about Johan himself (how he works,',
     "  what he wants). Derive ONLY from blocks with author=johan and cite",
     "  exactly those uuids in sources.",
     '- kind "project-fact": a durable fact about this project, from any author.',
-    '- kind "procedure": a repeatable procedure worth a reusable skill.',
+    "  The environment is a fact about the project (#71): an observation of",
+    "  how things ARE — a version floor, a required port, an empty PATH under",
+    "  launchd, a tool that is not installed — belongs here. Record the state",
+    "  as it stands. The fix for it is not yours to write.",
     "Use a stable kebab-case slug per finding so repeats converge.",
     "Cite the uuid(s) each finding derives from in sources.",
     "",
-    ...blocks,
+    ...blocksOf(records),
+  ].join("\n");
+}
+
+/**
+ * Pass 2 of 2 (#69) — the skills writer, asked separately because it is a
+ * different cognitive task. #54's `S3` showed every model tier answering the
+ * conflated ask with a topic-level summary of the episode, and `S2`/`S4`
+ * showed it inventing procedures out of status chatter and incident reports.
+ * So the ask states what a procedure is, and makes silence the default.
+ */
+export function buildProcedurePrompt(records: ProvenanceRecord[]): string {
+  return [
+    "You are the Argus skills writer. The blocks below are transcript turns",
+    "from agent sessions in this repo, each tagged with its registry-verified",
+    "author. Do not run any commands; judge only from the blocks.",
+    "",
+    "One question only: do these blocks show a REPEATABLE PROCEDURE worth a",
+    "reusable skill — a transferable method that would still help on a",
+    "different ticket, on a different day, about a different subject?",
+    "",
+    "Almost always the answer is no. Emit a finding only when all of these",
+    "hold:",
+    "- the blocks show a method: steps someone followed, in an order, to get",
+    "  a result;",
+    "- the method survives having its subject matter stripped out — remove",
+    "  the ticket numbers, file names and the particular bug, and something",
+    "  usable is left;",
+    "- writing it down would change what someone DOES next time, not just",
+    "  tell them what happened this time.",
+    "",
+    "Write the transferable method, not the episode. A summary of what",
+    "happened in these blocks is not a skill: if that is all you can write,",
+    "emit no findings. A one-off incident, a status report, a plan for one",
+    "ticket, and a decision already taken are none of them procedures — say",
+    "nothing about them here.",
+    "",
+    "Nor is an observation of how the ENVIRONMENT is. A version floor, a",
+    "port, a PATH, a missing binary, a machine on the wrong build: each is a",
+    "fact and not a skill, however obvious the fix looks. Do not turn one",
+    "into steps here — a skill is a how, not a what, and the other pass has",
+    "already recorded the what.",
+    "",
+    "Use a stable kebab-case slug so repeats converge. Cite the uuid(s) the",
+    "procedure derives from in sources.",
+    "",
+    ...blocksOf(records),
   ].join("\n");
 }
 
@@ -193,26 +261,54 @@ export class ReviewerEye {
     }
   }
 
-  /** One brain attempt under the machine-wide cap; throws to trigger retry. */
+  /**
+   * One evaluation under the machine-wide cap; throws to trigger retry.
+   *
+   * TWO passes over the same batch (#69): extraction, then procedure-writing.
+   * They are separate prompts with separate schemas because they are separate
+   * jobs — the eye holds one cap slot across both, so a split ask still costs
+   * one slot of machine-wide concurrency, and a failure in either retries the
+   * pair (the passes are pure functions of the batch, so re-asking is safe).
+   */
   private async evaluateOnce(batch: PendingEntry[]): Promise<Verdict> {
+    const records = batch.map(({ record }) => record);
     const release = await this.options.cap.acquire();
     try {
-      const outcome = await this.options.brain.evaluate({
-        prompt: buildPrompt(batch.map(({ record }) => record)),
-        schema: REVIEWER_OUTPUT_SCHEMA,
-        cwd: this.options.repo,
-      });
-      if (!outcome.ok) {
-        throw new Error(`brain ${outcome.reason}: ${outcome.detail}`);
-      }
-      const verdict = parseVerdict(outcome.text);
-      if (verdict === null) {
-        throw new Error(`brain schema miss: ${outcome.text.slice(0, 500)}`);
-      }
-      return verdict;
+      const facts = await this.ask(
+        buildExtractionPrompt(records),
+        EXTRACTION_OUTPUT_SCHEMA,
+        ["user-preference", "project-fact"],
+      );
+      const procedures = await this.ask(
+        buildProcedurePrompt(records),
+        PROCEDURE_OUTPUT_SCHEMA,
+        ["procedure"],
+      );
+      return { findings: [...facts.findings, ...procedures.findings] };
     } finally {
       await release();
     }
+  }
+
+  /** One pass. A kind this pass did not ask for is a schema miss, not a write. */
+  private async ask(
+    prompt: string,
+    schema: object,
+    allowed: readonly FindingKind[],
+  ): Promise<Verdict> {
+    const outcome = await this.options.brain.evaluate({
+      prompt,
+      schema,
+      cwd: this.options.repo,
+    });
+    if (!outcome.ok) {
+      throw new Error(`brain ${outcome.reason}: ${outcome.detail}`);
+    }
+    const verdict = parseVerdict(outcome.text, allowed);
+    if (verdict === null) {
+      throw new Error(`brain schema miss: ${outcome.text.slice(0, 500)}`);
+    }
+    return verdict;
   }
 
   /**

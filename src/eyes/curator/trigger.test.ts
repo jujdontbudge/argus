@@ -105,15 +105,32 @@ async function withWorld(body: (world: World) => Promise<void>): Promise<void> {
 }
 
 /** A brain that answers the Reviewer, then the curator, then repeats. */
-function twoTierBrain(reviewer: string, curator: string): Brain & { prompts: string[] } {
+const NOTHING = JSON.stringify({ findings: [] });
+
+/**
+ * Three asks share this loop's brain since #69 split the Reviewer's: the
+ * fact-extraction pass, the skills-writer pass, and the curator. Each pass
+ * announces itself in its first line, and each gets an answer its own schema
+ * can express — a procedure returned to the extraction pass is a schema miss.
+ */
+function eyeBrain(
+  facts: string,
+  procedures: string,
+  curator: string,
+): Brain & { prompts: string[] } {
   const prompts: string[] = [];
   return {
     prompts,
     async evaluate({ prompt }) {
       prompts.push(prompt);
+      if (prompt.startsWith("You are the Argus curator")) {
+        return { ok: true, text: curator };
+      }
       return {
         ok: true,
-        text: prompt.startsWith("You are the Argus curator") ? curator : reviewer,
+        text: prompt.startsWith("You are the Argus skills writer")
+          ? procedures
+          : facts,
       };
     },
   };
@@ -146,7 +163,7 @@ describe("the curator rides the Reviewer loop (SPEC §5.1 — a pass, not a sixt
   test("the Reviewer's first evaluation only seeds the gate; nothing is curated", async () => {
     await withWorld(async (world) => {
       await plantStaleSkill(world, "legacy-deploy-dance");
-      const brain = twoTierBrain(JSON.stringify({ findings: [] }), QUIET_CURATOR);
+      const brain = eyeBrain(NOTHING, NOTHING, QUIET_CURATOR);
       const eye = await world.open(brain);
 
       await eye.ingest([record("uuid-1", "agent", "some turn")]);
@@ -164,7 +181,7 @@ describe("the curator rides the Reviewer loop (SPEC §5.1 — a pass, not a sixt
   test("a week of turns later, the same loop curates the stale skill out", async () => {
     await withWorld(async (world) => {
       await plantStaleSkill(world, "legacy-deploy-dance");
-      const brain = twoTierBrain(JSON.stringify({ findings: [] }), QUIET_CURATOR);
+      const brain = eyeBrain(NOTHING, NOTHING, QUIET_CURATOR);
       const eye = await world.open(brain);
 
       await eye.ingest([record("uuid-1", "agent", "turn one")]);
@@ -187,7 +204,7 @@ describe("the curator rides the Reviewer loop (SPEC §5.1 — a pass, not a sixt
   test("no curator config means no curator — an eye opened without it is unchanged", async () => {
     await withWorld(async (world) => {
       await plantStaleSkill(world, "legacy-deploy-dance");
-      const brain = twoTierBrain(JSON.stringify({ findings: [] }), QUIET_CURATOR);
+      const brain = eyeBrain(NOTHING, NOTHING, QUIET_CURATOR);
       const eye = await ReviewerEye.open({
         repo: world.repo,
         brain,
@@ -215,7 +232,8 @@ describe("the curator rides the Reviewer loop (SPEC §5.1 — a pass, not a sixt
 describe("the Reviewer is the curator's telemetry source (research #16 §7)", () => {
   test("writing a skill records it in the sidecar, so the clock starts on first sight", async () => {
     await withWorld(async (world) => {
-      const brain = twoTierBrain(
+      const brain = eyeBrain(
+        NOTHING,
         JSON.stringify({ findings: [procedure("uuid-1", "rotate-staging-cert")] }),
         QUIET_CURATOR,
       );
@@ -236,7 +254,8 @@ describe("the Reviewer is the curator's telemetry source (research #16 §7)", ()
 
   test("a skill Johan asked for is recorded as his, and pinned out of the curator's reach", async () => {
     await withWorld(async (world) => {
-      const brain = twoTierBrain(
+      const brain = eyeBrain(
+        NOTHING,
         JSON.stringify({ findings: [procedure("uuid-johan", "johans-ritual")] }),
         QUIET_CURATOR,
       );
@@ -259,7 +278,7 @@ describe("the curator can never take the Reviewer down", () => {
       // A file where the skills directory should be: every store write throws.
       await rm(world.skillsDir, { force: true, recursive: true });
       await Bun.write(world.skillsDir, "not a directory\n");
-      const brain = twoTierBrain(JSON.stringify({ findings: [] }), QUIET_CURATOR);
+      const brain = eyeBrain(NOTHING, NOTHING, QUIET_CURATOR);
       const eye = await world.open(brain);
 
       await eye.ingest([record("uuid-1", "agent", "turn one")]);

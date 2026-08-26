@@ -192,14 +192,18 @@ export {
   type RejectionReason,
 } from "./reviewer/outputs";
 export {
+  buildExtractionPrompt,
+  buildProcedurePrompt,
   openReviewer,
   ReviewerEye,
   type OpenReviewerOverrides,
   type ReviewerEyeOptions,
 } from "./reviewer/reviewer";
 export {
+  EXTRACTION_OUTPUT_SCHEMA,
   normalizeSlug,
   parseVerdict,
+  PROCEDURE_OUTPUT_SCHEMA,
   REVIEWER_OUTPUT_SCHEMA,
   type Finding,
   type FindingKind,

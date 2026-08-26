@@ -10,7 +10,9 @@ import {
   LIVE_WATCHER_BRAINS_GATE,
   resolveWatcherBrainGate,
 } from "../live-gate";
-import { parseVerdict, REVIEWER_OUTPUT_SCHEMA } from "./schema";
+import { buildExtractionPrompt } from "./reviewer";
+import { EXTRACTION_OUTPUT_SCHEMA, parseVerdict } from "./schema";
+import type { ProvenanceRecord } from "../../provenance";
 
 /**
  * The ONE live-luna integration test (ticket #30): the real `codex exec`
@@ -33,6 +35,35 @@ console.log(
   ),
 );
 
+/** A minimal provenance record, so the live call uses the PRODUCTION prompt. */
+function liveRecord(
+  uuid: string,
+  author: ProvenanceRecord["author"],
+  role: "assistant" | "user",
+  text: string,
+): ProvenanceRecord {
+  return {
+    sessionId: "live-sess",
+    author,
+    via: author === "johan" ? "takeover" : "assistant",
+    registered: true,
+    startedBy: "hermes",
+    johanTouched: author === "johan",
+    ts: "2026-08-25T00:00:00.000Z",
+    text,
+    event: {
+      type: "message",
+      sessionId: "live-sess",
+      role,
+      text,
+      ts: "2026-08-25T00:00:00.000Z",
+      uuid,
+      candidate: role === "user",
+      file: "/transcripts/live-sess.jsonl",
+    },
+  };
+}
+
 describe.skipIf(liveGate.status !== "run")(
   liveHalfTitle("live luna brain (integration)", liveGate),
   () => {
@@ -46,21 +77,21 @@ describe.skipIf(liveGate.status !== "run")(
           reasoningEffort: DEFAULT_EYES_CONFIG.brain.reasoningEffort,
         });
         const outcome = await brain.evaluate({
-          prompt: [
-            "You are the Argus Reviewer eye. The blocks below are transcript",
-            "turns tagged with registry-verified authors. Decide whether",
-            "anything DURABLE happened. Do not run any commands; judge only",
-            "from the blocks. Emit findings as JSON matching the output",
-            "schema; cite each finding's source uuids. Use kind",
-            '"user-preference" only for blocks with author=johan.',
-            "",
-            "[uuid=live-1 author=johan session=s1 role=user ts=2026-08-25T00:00:00Z]",
-            "please always write commit messages in present tense, I keep saying this",
-            "",
-            "[uuid=live-2 author=agent session=s1 role=assistant ts=2026-08-25T00:00:05Z]",
-            "Done. Also noted the dev server only binds on port 4114 in this repo.",
-          ].join("\n"),
-          schema: REVIEWER_OUTPUT_SCHEMA,
+          prompt: buildExtractionPrompt([
+            liveRecord(
+              "live-1",
+              "johan",
+              "user",
+              "please always write commit messages in present tense, I keep saying this",
+            ),
+            liveRecord(
+              "live-2",
+              "agent",
+              "assistant",
+              "Done. Also noted the dev server only binds on port 4114 in this repo.",
+            ),
+          ]),
+          schema: EXTRACTION_OUTPUT_SCHEMA,
           cwd: sandboxRepo,
         });
 
@@ -68,10 +99,9 @@ describe.skipIf(liveGate.status !== "run")(
         if (outcome.ok) {
           const verdict = parseVerdict(outcome.text);
           expect(verdict).not.toBeNull();
+          // #69: the extraction pass can return facts and nothing else.
           for (const finding of verdict!.findings) {
-            expect(["user-preference", "project-fact", "procedure"]).toContain(
-              finding.kind,
-            );
+            expect(["user-preference", "project-fact"]).toContain(finding.kind);
           }
         }
       } finally {
