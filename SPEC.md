@@ -248,6 +248,18 @@ outputs):
   - `MEMORY.md`: durable project facts from **any** provenance ("Metro runs on 8082"
     is true no matter who discovered it). Johan-authored directives weigh highest.
 - **A procedure** → create or update a skill in `.argus/skills/` (SKILL.md format).
+  A procedure is a repeatable *how*, and only that.
+
+**Environment observations are facts (ticket #71).** How the machine, the tools or
+the repo *are* — a version floor, a required port, an empty PATH under launchd, a
+tool that is not installed — is a durable project fact, and goes to `MEMORY.md`. It
+is not a skill however obvious its fix looks: #54 measured the brain turning
+"cmux must be ≥ 0.64.22" into a skill called *Upgrade cmux before acceptance
+testing* on every attempt. The two destinations are read back for different
+purposes — a fact filed as a skill is retrieved as **advice**, so Argus recommends
+an environment quirk as a technique, and the deliberately narrow skills surface
+fills with what is really state. Both prompts state the boundary from their own
+side: the extraction pass claims the environment, the skills pass disclaims it.
 
 **Two asks, never one (ticket #69).** Extracting a fact and writing a transferable
 procedure are different jobs, and [#54's benchmark](docs/research/watcher-brain-tiers.md)

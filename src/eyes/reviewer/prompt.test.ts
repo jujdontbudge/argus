@@ -147,3 +147,19 @@ describe("#69/#71 — the parse boundary refuses out-of-pass kinds", () => {
     expect(parseVerdict(procedureVerdict)?.findings).toHaveLength(1);
   });
 });
+
+describe("#71 — the fact/skill boundary is stated in both prompts", () => {
+  test("the extraction prompt calls environment and state observations facts", () => {
+    const prompt = buildExtractionPrompt(BATCH);
+    expect(prompt).toMatch(/environment/i);
+    expect(prompt).toMatch(/version|port|path/i);
+    expect(prompt).toMatch(/how (things|the machine) (are|is)|observation of how/i);
+  });
+
+  test("the procedure prompt rules those same observations out", () => {
+    const prompt = buildProcedurePrompt(BATCH);
+    expect(prompt).toMatch(/environment/i);
+    expect(prompt).toMatch(/not a skill/i);
+    expect(prompt).toMatch(/a how, not a what|how, not a what/i);
+  });
+});
