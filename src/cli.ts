@@ -19,6 +19,7 @@ Commands:
   complete verify, merge, close and map finished tickets (SPEC §7.3.4)
   signals  consume push events and run one slow-poll fallback sweep
   search   search the transcript archive
+  memory   one-time memory-store migrations
   install  install argus from this checkout
 
 Flags:
@@ -419,6 +420,11 @@ export async function main(args: string[]): Promise<number> {
 
   if (args[0] === "signals") {
     return signals(args.slice(1));
+  }
+
+  if (args[0] === "memory" && args[1] === "claude-mem") {
+    const { claudeMemCommand } = await import("./memory/cli.ts");
+    return claudeMemCommand(args.slice(2));
   }
 
   if (args[0] === "watch") {
