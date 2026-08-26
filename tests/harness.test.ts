@@ -329,11 +329,16 @@ describe("fake-Johan harness", () => {
         assertions: result.assertions,
         error: null,
         id: result.id,
+        // #63: a scenario that spawned no agent has no live evidence, so its
+        // verdict is STRUCTURAL. The report carries both, and the artifact is
+        // where a reader who never saw the suite output finds them.
+        liveEvidence: [],
         name: "mechanics-isolation",
         sandboxRoot: result.sandboxRoot,
         status: "passed",
         teardown: "completed",
         up: result.up,
+        verdict: "STRUCTURAL",
       });
     } finally {
       await rm(reportDirectory, { force: true, recursive: true });
