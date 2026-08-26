@@ -123,7 +123,8 @@ test.skipIf(gate.claude.status !== "run")(
       // genuine linked-worktree cwd must resolve to the parent sandbox repo.
       // Keep this at the live seam where #49 first exposed the missing feature
       // so fixture-only coverage cannot make the mapping appear complete.
-      expect(metas.map(({ repo }) => repo)).toContain(await realpath(sandbox.repo));
+      const parentRepo = await realpath(sandbox.repo);
+      expect(metas.every(({ repo }) => repo === parentRepo)).toBe(true);
 
       const messages = events.filter(
         (event): event is MessageEvent => event.type === "message",
