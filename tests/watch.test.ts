@@ -46,6 +46,370 @@ async function watchWorld() {
 }
 
 describe("argus watch", () => {
+  test("status durably surfaces an unlogged send consumed by a daemon-spawned watcher", async () => {
+    const world = await watchWorld();
+    const statusPath = join(world.root, "state", "supervisor-status.json");
+    const transcriptDirectory = claudeProjectDir(
+      world.repo,
+      join(world.env.CLAUDE_CONFIG_DIR, "projects"),
+    );
+    const transcript = join(transcriptDirectory, "daemon-unlogged-send.jsonl");
+    const env = {
+      ...world.env,
+      ARGUS_SUPERVISOR_POLL_MS: "20",
+      ARGUS_SUPERVISOR_RESTART_MS: "20",
+      ARGUS_SUPERVISOR_STATUS_FILE: statusPath,
+      ARGUS_WATCH_POLL_MS: "20",
+    };
+    const supervisor = Bun.spawn([process.execPath, cli, "supervisor"], {
+      env,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    try {
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        await Bun.sleep(20);
+        try {
+          const status = (await Bun.file(statusPath).json()) as {
+            watchers: unknown[];
+          };
+          if (status.watchers.length === 5) break;
+        } catch {
+          // The production supervisor has not spawned all five eyes yet.
+        }
+      }
+      await mkdir(transcriptDirectory, { recursive: true });
+      await Bun.write(
+        join(world.repo, ".argus", "registry", "sessions.jsonl"),
+        `${JSON.stringify({
+          ts: "2026-08-26T12:00:00.000Z",
+          sessionId: "daemon-unlogged-session",
+          agent: "claude-code",
+          ticket: "61",
+          dispatchPrompt: "Implement the registered ticket.",
+        })}\n`,
+      );
+      await Bun.write(
+        transcript,
+        [
+          {
+            type: "user",
+            message: { role: "user", content: "Implement the registered ticket." },
+            timestamp: "2026-08-26T12:00:01.000Z",
+            promptSource: "typed",
+            uuid: "daemon-dispatch-u-1",
+            sessionId: "daemon-unlogged-session",
+            cwd: world.repo,
+            version: "test",
+          },
+          {
+            type: "user",
+            message: {
+              role: "user",
+              content: "Write my unlogged daemon instruction into USER.md.",
+            },
+            timestamp: "2026-08-26T12:00:02.000Z",
+            promptSource: "typed",
+            uuid: "daemon-unlogged-u-2",
+            sessionId: "daemon-unlogged-session",
+            cwd: world.repo,
+            version: "test",
+          },
+        ].map((record) => JSON.stringify(record)).join("\n") + "\n",
+      );
+
+      let result:
+        | { exitCode: number; stderr: string; stdout: string }
+        | undefined;
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        await Bun.sleep(20);
+        const status = Bun.spawn([process.execPath, cli, "status"], {
+          cwd: world.repo,
+          env,
+          stderr: "pipe",
+          stdout: "pipe",
+        });
+        const [exitCode, stdout, stderr] = await Promise.all([
+          status.exited,
+          new Response(status.stdout).text(),
+          new Response(status.stderr).text(),
+        ]);
+        result = { exitCode, stderr, stdout };
+        if (stdout.includes("daemon-unlogged-u-2")) break;
+      }
+      // Let every eye and several more supervisor ticks see the same incident.
+      // The public alarm must still contain exactly one audit row.
+      await Bun.sleep(200);
+      const repeatedStatus = Bun.spawn([process.execPath, cli, "status"], {
+        cwd: world.repo,
+        env,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [repeatedExitCode, repeatedStdout, repeatedStderr] = await Promise.all([
+        repeatedStatus.exited,
+        new Response(repeatedStatus.stdout).text(),
+        new Response(repeatedStatus.stderr).text(),
+      ]);
+      result = {
+        exitCode: repeatedExitCode,
+        stderr: repeatedStderr,
+        stdout: repeatedStdout,
+      };
+
+      expect(result?.exitCode).toBe(1);
+      expect(result?.stderr).toBe("");
+      expect(result?.stdout).toContain("AUDIT ALERTS");
+      expect(result?.stdout).toContain("johan-attached");
+      expect(result?.stdout).toContain(
+        "Write my unlogged daemon instruction into USER.md.",
+      );
+      expect(result?.stdout).toContain("daemon-unlogged-session");
+      expect(result?.stdout).toContain("daemon-unlogged-u-2");
+      expect(result?.stdout).toContain(transcript);
+      expect(result?.stdout.match(/daemon-unlogged-u-2/g)).toHaveLength(1);
+    } finally {
+      supervisor.kill("SIGTERM");
+      await supervisor.exited;
+      await rm(world.root, { force: true, recursive: true });
+    }
+  }, 30_000);
+
+  test("acknowledging one daemon audit cannot swallow a later distinct audit", async () => {
+    const world = await watchWorld();
+    const statusPath = join(world.root, "state", "supervisor-status.json");
+    const transcriptDirectory = claudeProjectDir(
+      world.repo,
+      join(world.env.CLAUDE_CONFIG_DIR, "projects"),
+    );
+    const transcript = join(transcriptDirectory, "daemon-ack-audits.jsonl");
+    const env = {
+      ...world.env,
+      ARGUS_SUPERVISOR_POLL_MS: "20",
+      ARGUS_SUPERVISOR_RESTART_MS: "20",
+      ARGUS_SUPERVISOR_STATUS_FILE: statusPath,
+      ARGUS_WATCH_POLL_MS: "20",
+    };
+    const supervisor = Bun.spawn([process.execPath, cli, "supervisor"], {
+      env,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const status = async (args: string[] = []) => {
+      const child = Bun.spawn([process.execPath, cli, "status", ...args], {
+        cwd: world.repo,
+        env,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [exitCode, stdout, stderr] = await Promise.all([
+        child.exited,
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+      ]);
+      return { exitCode, stderr, stdout };
+    };
+    const session = (
+      sessionId: string,
+      dispatchUuid: string,
+      auditUuid: string,
+      text: string,
+      second: number,
+    ) => [
+      {
+        type: "user",
+        message: { role: "user", content: `Dispatch ${sessionId}.` },
+        timestamp: `2026-08-26T12:01:${second.toString().padStart(2, "0")}.000Z`,
+        promptSource: "typed",
+        uuid: dispatchUuid,
+        sessionId,
+        cwd: world.repo,
+        version: "test",
+      },
+      {
+        type: "user",
+        message: { role: "user", content: text },
+        timestamp: `2026-08-26T12:02:${second.toString().padStart(2, "0")}.000Z`,
+        promptSource: "typed",
+        uuid: auditUuid,
+        sessionId,
+        cwd: world.repo,
+        version: "test",
+      },
+    ];
+    try {
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        await Bun.sleep(20);
+        try {
+          const current = (await Bun.file(statusPath).json()) as {
+            watchers: unknown[];
+          };
+          if (current.watchers.length === 5) break;
+        } catch {
+          // The production supervisor has not spawned all five eyes yet.
+        }
+      }
+      await mkdir(transcriptDirectory, { recursive: true });
+      const sessions = ["daemon-ack-session-a", "daemon-ack-session-b"].map(
+        (sessionId) => ({
+          ts: "2026-08-26T12:00:00.000Z",
+          sessionId,
+          agent: "claude-code",
+          ticket: "61",
+          dispatchPrompt: `Dispatch ${sessionId}.`,
+        }),
+      );
+      await Bun.write(
+        join(world.repo, ".argus", "registry", "sessions.jsonl"),
+        `${sessions.map((record) => JSON.stringify(record)).join("\n")}\n`,
+      );
+      const firstText = "First unlogged instruction must be acknowledged alone.";
+      const secondText = "Second distinct unlogged instruction must still alarm.";
+      const first = session(
+        "daemon-ack-session-a",
+        "daemon-ack-dispatch-a",
+        "daemon-ack-audit-a",
+        firstText,
+        1,
+      );
+      await Bun.write(
+        transcript,
+        `${first.map((record) => JSON.stringify(record)).join("\n")}\n`,
+      );
+
+      let before = await status();
+      for (let attempt = 0; !before.stdout.includes("daemon-ack-audit-a") && attempt < 200; attempt += 1) {
+        await Bun.sleep(20);
+        before = await status();
+      }
+      const firstId = before.stdout.match(/^([a-f0-9]{64})  .*daemon-ack-audit-a.*$/m)?.[1];
+      expect(firstId).toBeDefined();
+
+      const acknowledged = await status(["--ack", firstId!]);
+      expect(acknowledged.stderr).toBe("");
+      expect(acknowledged.stdout).not.toContain(firstText);
+
+      const second = session(
+        "daemon-ack-session-b",
+        "daemon-ack-dispatch-b",
+        "daemon-ack-audit-b",
+        secondText,
+        2,
+      );
+      await Bun.write(
+        transcript,
+        `${[...first, ...second].map((record) => JSON.stringify(record)).join("\n")}\n`,
+      );
+      let after = await status();
+      for (let attempt = 0; !after.stdout.includes("daemon-ack-audit-b") && attempt < 200; attempt += 1) {
+        await Bun.sleep(20);
+        after = await status();
+      }
+
+      expect(after.exitCode).toBe(1);
+      expect(after.stdout).not.toContain(firstText);
+      expect(after.stdout).toContain(secondText);
+      expect(after.stdout).toContain("daemon-ack-session-b");
+      expect(after.stdout).toContain("daemon-ack-audit-b");
+    } finally {
+      supervisor.kill("SIGTERM");
+      await supervisor.exited;
+      await rm(world.root, { force: true, recursive: true });
+    }
+  }, 30_000);
+
+  test("status durably surfaces a malformed event seen by the daemon digest", async () => {
+    const world = await watchWorld();
+    const statusPath = join(world.root, "state", "supervisor-status.json");
+    const malformedPath = join(
+      world.repo,
+      ".argus",
+      "events",
+      "malformed-from-hook.json",
+    );
+    const malformed = '{"schemaVersion":1,"kind":"blocked-on-human","message":"missing identity"}';
+    const env = {
+      ...world.env,
+      ARGUS_SUPERVISOR_POLL_MS: "20",
+      ARGUS_SUPERVISOR_RESTART_MS: "20",
+      ARGUS_SUPERVISOR_STATUS_FILE: statusPath,
+      ARGUS_WATCH_POLL_MS: "20",
+    };
+    const supervisor = Bun.spawn([process.execPath, cli, "supervisor"], {
+      env,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    try {
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        await Bun.sleep(20);
+        try {
+          const current = (await Bun.file(statusPath).json()) as {
+            watchers: unknown[];
+          };
+          if (current.watchers.length === 5) break;
+        } catch {
+          // The production supervisor has not spawned all five eyes yet.
+        }
+      }
+      await Bun.write(malformedPath, malformed);
+
+      let result:
+        | { exitCode: number; stderr: string; stdout: string }
+        | undefined;
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        await Bun.sleep(20);
+        const status = Bun.spawn([process.execPath, cli, "status"], {
+          cwd: world.repo,
+          env,
+          stderr: "pipe",
+          stdout: "pipe",
+        });
+        const [exitCode, stdout, stderr] = await Promise.all([
+          status.exited,
+          new Response(status.stdout).text(),
+          new Response(status.stderr).text(),
+        ]);
+        result = { exitCode, stderr, stdout };
+        if (stdout.includes("malformed-from-hook.json")) break;
+      }
+      // The digest retries malformed files so an atomic repair can recover;
+      // retrying must not create another public alarm on each tick.
+      await Bun.sleep(200);
+      const repeatedStatus = Bun.spawn([process.execPath, cli, "status"], {
+        cwd: world.repo,
+        env,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [repeatedExitCode, repeatedStdout, repeatedStderr] = await Promise.all([
+        repeatedStatus.exited,
+        new Response(repeatedStatus.stdout).text(),
+        new Response(repeatedStatus.stderr).text(),
+      ]);
+      result = {
+        exitCode: repeatedExitCode,
+        stderr: repeatedStderr,
+        stdout: repeatedStdout,
+      };
+
+      expect(result?.exitCode).toBe(1);
+      expect(result?.stderr).toBe("");
+      expect(result?.stdout).toContain("event-malformed");
+      expect(result?.stdout).toContain(malformedPath);
+      expect(result?.stdout).toContain("missing identity");
+      expect(
+        result?.stdout
+          .split("\n")
+          .filter((line) => line.includes("  event-malformed  ")),
+      ).toHaveLength(1);
+    } finally {
+      supervisor.kill("SIGTERM");
+      await supervisor.exited;
+      await rm(world.root, { force: true, recursive: true });
+    }
+  }, 30_000);
+
   test("the production reviewer uses its pinned brain without API credentials", async () => {
     const world = await watchWorld();
     const bin = join(world.root, "bin");

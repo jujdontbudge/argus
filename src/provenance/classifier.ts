@@ -65,7 +65,14 @@ export interface ProvenanceRecord {
 export type ProvenanceAuditEvent =
   | { type: "duplicate-session-registration"; sessionId: string }
   /** Johan attached to a registered session (first takeover message). */
-  | { type: "johan-attached"; sessionId: string; ts: string; text: string; uuid?: string }
+  | {
+      type: "johan-attached";
+      sessionId: string;
+      ts: string;
+      text: string;
+      file: string;
+      uuid?: string;
+    }
   /**
    * A hash-miss equal to one line of a pending multi-line send — the signature
    * of a newline-encoding bug in Hermes' adapter. Classification stays Johan.
@@ -404,6 +411,7 @@ export class ProvenanceClassifier {
         sessionId: event.sessionId,
         ts: event.ts,
         text: event.text,
+        file: event.file,
         ...(event.uuid !== undefined && { uuid: event.uuid }),
       });
     }

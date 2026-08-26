@@ -9,6 +9,7 @@ import { ProvenanceFeed } from "./eyes/source.ts";
 import { parseArgusEvent } from "./events/schema.ts";
 import { acquireWatchLease } from "./watch/lease.ts";
 import { EyeHealthReporter } from "./supervisor/health.ts";
+import { recordAudits } from "./audits/store.ts";
 
 interface OpenWatcher {
   readonly resource: unknown;
@@ -54,8 +55,21 @@ async function consumeLifecycleEvents(
   const files = (await readdir(directory).catch(() => [] as string[])).sort();
   for (const name of files) {
     if (seen.has(name) || !name.endsWith(".json")) continue;
-    const parsed = parseArgusEvent(await Bun.file(join(directory, name)).text());
-    if (parsed === null || parsed.repo !== repo) continue;
+    const file = join(directory, name);
+    const raw = await Bun.file(file).text();
+    const parsed = parseArgusEvent(raw);
+    if (parsed === null) {
+      await recordAudits(repo, "digest", [
+        {
+          type: "event-malformed",
+          file,
+          raw,
+          reason: "payload does not match Argus event schema version 1",
+        },
+      ]);
+      continue;
+    }
+    if (parsed.repo !== repo) continue;
     await consume({
       kind:
         parsed.kind === "end-of-session" ? "session-end" : "session-blocked",
@@ -66,7 +80,12 @@ async function consumeLifecycleEvents(
   }
 }
 
-function reportAudits(eye: EyeName, audits: readonly unknown[]): void {
+async function reportAudits(
+  eye: EyeName,
+  repo: string,
+  audits: readonly import("./provenance/index.ts").ProvenanceAudit[],
+): Promise<void> {
+  await recordAudits(repo, eye, audits);
   for (const audit of audits) {
     console.error(`argus watch ${eye}: provenance audit: ${JSON.stringify(audit)}`);
   }
@@ -88,14 +107,13 @@ async function openEye(
   const feed = new ProvenanceFeed(
     source,
     repo,
-    registryPath,
     await loadCursors(cursorPath),
   );
   const ingest = async (
     consume: (batch: Awaited<ReturnType<ProvenanceFeed["catchUp"]>>) => Promise<void>,
   ): Promise<void> => {
     const batch = await feed.catchUp();
-    reportAudits(eye, batch.audits);
+    await reportAudits(eye, repo, batch.audits);
     await consume(batch);
     await persistCursors(cursorPath, feed.cursors());
   };
@@ -181,9 +199,7 @@ async function openEye(
           const { classifier, audits } = classifierFromRegistry(
             await loadRegistry(registryPaths(repo)),
           );
-          for (const audit of audits) {
-            console.error(`argus watch archiver: provenance audit: ${JSON.stringify(audit)}`);
-          }
+          await reportAudits("archiver", repo, audits);
           await resource.catchUp(tailer, classifier);
         },
       };
