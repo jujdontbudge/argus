@@ -751,3 +751,310 @@ a UUID. Note the irony worth keeping: Hermes used a short ref BECAUSE the old
 skill told it to ("Always use typed, prefixed refs such as `workspace:15` and
 `pane:38`"), with no distinction between reading and destroying. That sentence
 is now gone.
+
+==============================================================================
+11. THE CALL LOG — the proof of who acted
+==============================================================================
+Committed verbatim because a GitHub comment does not survive a clone.
+Only the first two argus lines are the ticket author's (`init`, `up`, §2).
+Everything else was issued by Hermes, or by Argus running under Hermes.
+
+------------------------------------------------------------------------------
+$SANDBOX/log/argus.log  (every argus invocation, in order)
+------------------------------------------------------------------------------
+$ argus init
+    -> exit 0
+$ argus up
+    -> exit 0
+$ argus --help
+    -> exit 0
+$ argus dispatch --help
+    -> exit 1
+$ argus status
+    -> exit 0
+$ argus dispatch
+    -> exit 0
+$ argus status
+    -> exit 0
+$ argus signals
+    -> exit 0
+$ argus complete
+    -> exit 0
+$ argus dispatch
+    -> exit 0
+$ argus signals
+    -> exit 0
+$ argus dispatch
+    -> exit 0
+$ argus signals
+    -> exit 0
+$ argus signals
+    -> exit 0
+$ argus complete
+    -> exit 0
+$ argus dispatch
+    -> exit 0
+$ argus complete
+    -> exit 1
+$ argus signals
+    -> exit 0
+$ argus complete
+    -> exit 0
+$ argus dispatch
+    -> exit 0
+$ argus complete
+    -> exit 0
+
+------------------------------------------------------------------------------
+$SANDBOX/log/cmux.log  (every cmux invocation, in order)
+------------------------------------------------------------------------------
+$ cmux --version
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux new-surface --type terminal --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux rename-tab --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10 --surface E4E51E17-5D62-4496-B0F8-B4A43C40FE70 argus #1
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux new-surface --type terminal --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux rename-tab --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10 --surface D20D3E96-1531-4E92-943B-A0DB82DC2CED argus #2
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux new-surface --type terminal --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux rename-tab --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10 --surface 9BA8627E-FA6B-4A69-B1D9-98AD645F2363 argus #3
+    -> exit 0
+$ cmux tree --workspace workspace:2
+    -> exit 0
+$ cmux read-screen --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10 --surface E4E51E17-5D62-4496-B0F8-B4A43C40FE70 --scrollback --lines 80
+    -> exit 1
+$ cmux read-screen --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10 --surface D20D3E96-1531-4E92-943B-A0DB82DC2CED --scrollback --lines 80
+    -> exit 1
+$ cmux read-screen --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10 --surface 9BA8627E-FA6B-4A69-B1D9-98AD645F2363 --scrollback --lines 80
+    -> exit 1
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux close-surface --surface E4E51E17-5D62-4496-B0F8-B4A43C40FE70 --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux close-surface --surface D20D3E96-1531-4E92-943B-A0DB82DC2CED --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux close-surface --surface 9BA8627E-FA6B-4A69-B1D9-98AD645F2363 --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux new-surface --type terminal --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux rename-tab --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10 --surface 369B36DF-A8C9-4ED3-9598-19C8F5E059DB argus #1
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux new-surface --type terminal --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux rename-tab --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10 --surface 856AB7A6-B710-4703-8BEB-A2E95B8EB82F argus #2
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux new-surface --type terminal --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux rename-tab --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10 --surface 93DF15CD-9533-490B-A221-8EDE2F51E888 argus #3
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux close-surface --surface 369B36DF-A8C9-4ED3-9598-19C8F5E059DB --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux close-surface --surface 856AB7A6-B710-4703-8BEB-A2E95B8EB82F --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux close-surface --surface 93DF15CD-9533-490B-A221-8EDE2F51E888 --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux new-surface --type terminal --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux rename-tab --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10 --surface 37F9FFFB-0C9D-41A4-B5FF-B08E50B592C4 argus #1
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux new-surface --type terminal --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux rename-tab --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10 --surface 40DACFE8-43E5-4FBC-877C-1B027E1979C5 argus #2
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux new-surface --type terminal --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux rename-tab --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10 --surface ABC0AB09-7047-4366-A0D5-73D168A1D905 argus #3
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux close-surface --surface 37F9FFFB-0C9D-41A4-B5FF-B08E50B592C4 --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux close-surface --surface 40DACFE8-43E5-4FBC-877C-1B027E1979C5 --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux close-surface --surface ABC0AB09-7047-4366-A0D5-73D168A1D905 --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10
+    -> exit 0
+$ cmux --id-format both tree --all --json
+    -> exit 0
+$ cmux read-screen --workspace workspace:1 --surface surface:58 --scrollback --lines 40
+    -> exit 1
+$ cmux list-pane-surfaces --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10 --pane 85C84E04-918A-4801-AF38-FD3102E616EF
+    -> exit 0
+$ cmux read-screen --surface ABC0AB09-7047-4366-A0D5-73D168A1D905 --scrollback --lines 40
+    -> exit 1
+$ cmux --id-format both new-surface --type terminal --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10
+    -> exit 0
+$ cmux send --workspace workspace:1 --surface surface:60 /private/tmp/argus-82-run2/resume-ticket-3.sh
+    -> exit 0
+$ cmux send-key --workspace workspace:1 --surface surface:60 Enter
+    -> exit 0
+$ cmux rename-tab --workspace workspace:1 --surface surface:60 argus #3 conflict recovery
+    -> exit 0
+$ cmux set-status worker-3 resolving-conflict --icon wrench --workspace workspace:1
+    -> exit 0
+$ cmux read-screen --workspace workspace:1 --surface surface:60 --scrollback --lines 30
+    -> exit 0
+$ cmux notify --title Argus audit event --subtitle Ticket #3 follow-up did not land --body Codex resume used the wrong CODEX_HOME; the registered follow-up is being retried after correcting the worker environment. --workspace workspace:1
+    -> exit 0
+$ cmux send --workspace workspace:1 --surface surface:60 /private/tmp/argus-82-run2/resume-ticket-3.sh
+    -> exit 0
+$ cmux send-key --workspace workspace:1 --surface surface:60 Enter
+    -> exit 0
+$ cmux read-screen --workspace workspace:1 --surface surface:60 --scrollback --lines 35
+    -> exit 0
+$ cmux read-screen --workspace workspace:1 --surface surface:60 --scrollback --lines 70
+    -> exit 0
+$ cmux list-status --workspace workspace:1
+    -> exit 0
+$ cmux sidebar-state --workspace workspace:1
+    -> exit 0
+$ cmux clear-status worker-3 --workspace workspace:1
+    -> exit 0
+$ cmux set-progress 1.0 --label Argus batch complete: 3/3 closed --workspace workspace:1
+    -> exit 0
+$ cmux notify --title Argus batch complete --body Tickets #1, #2, and #3 are merged, closed, and green. --workspace workspace:1
+    -> exit 0
+$ cmux close-surface --workspace workspace:1 --surface surface:60
+    -> exit 0
+
+------------------------------------------------------------------------------
+$SANDBOX/repo/.argus/registry/sends.jsonl  (the logged follow-up protocol)
+------------------------------------------------------------------------------
+{"agent":"codex","content":"Ticket #3 verification hit merge conflicts after ticket #1 merged. Merge main into this branch, resolve the conflicts while preserving both the clamp and median implementations and tests, run bun x tsc --noEmit and bun test, then commit the conflict resolution. Do not merge into main, push, or close the ticket.","contentSha256":"a36b046960e659463a9c10d19549c55d8b7e7462c8ca4e35197573db7bce3d5b","kind":"follow-up","sessionId":"01a04014-c882-7361-ba69-6cf926c61b0b","surface":"surface:60","ts":"2026-08-26T22:04:04.708835Z","workspace":"workspace:1"}
+{"agent":"codex","content":"Ticket #3 verification hit merge conflicts after ticket #1 merged. Merge main into this branch, resolve the conflicts while preserving both the clamp and median implementations and tests, run bun x tsc --noEmit and bun test, then commit the conflict resolution. Do not merge into main, push, or close the ticket.","contentSha256":"a36b046960e659463a9c10d19549c55d8b7e7462c8ca4e35197573db7bce3d5b","kind":"follow-up-retry","sessionId":"01a04014-c882-7361-ba69-6cf926c61b0b","surface":"surface:60","ts":"2026-08-26T22:04:38.308349Z","workspace":"workspace:1"}
+
+==============================================================================
+12. CLEANUP AND THE FOUR CHECKS
+==============================================================================
+See §1 on why the `pgrep` form is reported alongside a `ps` form: run inside a
+shell whose command line contains the pattern, `pgrep -f` matches its own
+invoking shell and reports a watcher that does not exist.
+
+  $ pgrep -f 'bin/bun.*cli\.ts watch' | wc -l
+  $ ps -Ao pid,command | grep -E 'bin/bun.*cli\.ts watch' | grep -v grep | wc -l
+  $ launchctl list | grep -ci argus
+  $ cmux --id-format both tree --all | grep -c "workspace "
+  $ ls -d /private/tmp/argus-* 2>/dev/null
+
+Results are printed in the ticket comment and reproduced in §13.
+
+WATCHERS: this run started NONE. `argus up` on the sandbox installed no
+supervisor LaunchAgent — #86's scratch-HOME refusal held with
+ARGUS_ALLOW_SCRATCH_LAUNCHD unset — and no watcher process ever referenced the
+sandbox path. Five `cli.ts watch` processes WERE running on this machine during
+the run; all five belong to ticket #89's `grill-live` worktree, pointing at
+`argus-harness-Luf48j`, started 16:50:20, one minute BEFORE this run's
+`argus up`. They are #89's fleet lease, not this run's, and were not touched.
+Judged by path and start time, not by ppid.
+
+PROCESSES: no `hermes -z` or `codex exec` process from this run survives. A
+naive `ps | grep -E '[h]ermes -z|[c]odex exec'` still returns 1 — it matches
+this Claude session's own command line, which contains those strings in the
+ticket text. Same self-match class as the `pgrep` problem in §1.
+
+SANDBOXES REMOVED: this run's `/private/tmp/argus-82-run2`, and also the FIRST
+attempt's `/private/tmp/argus-82-FDdfFh` and `/private/tmp/argus-t82-LFSpxD`,
+which the ticket authorised as the same ticket's. `/private/tmp/argus-89-smoke`
+is #89's and was left alone.
+
+WORKSPACES: 8 before, 8 during every check, 8 after. Argus issued ZERO
+`cmux new-workspace` calls; the sandbox `cmux` shim would have refused one
+anyway, and never had to.
+
+==============================================================================
+13. WHAT THIS RUN REFUSED TO DO
+==============================================================================
+- Did not read or copy `~/.claude/.credentials.json`. Checksummed once, never
+  opened. No `claude setup-token`, `/login`, `/logout` or `claude auth`.
+- Did not write to the real `~/.hermes`, `~/.claude`, `~/argus`, or any real
+  project. The one scratch Hermes config written mirrors only the model block
+  of Johan's real config (gpt-5.6-sol / openai-codex / high) so the run used the
+  same subscription tier — no MCP servers, no secrets, no default changes (#54).
+- Did not write Johan's live `~/.codex/config.toml`; `grep -c "argus:notify"`
+  on it is still 0. The notify hook Argus installs went into the scratch
+  CODEX_HOME.
+- Did not use an API key or token on either vendor. `env -i` built every child
+  environment from an explicit list containing none. Subscription only, SPEC §1
+  items 7 and 8.
+- Did not create a cmux workspace, in production or in the harness. The harness
+  `cmux` shim refuses `new-workspace` and `close-workspace` unconditionally, so
+  the first attempt's eight-workspace mistake could not repeat.
+- Did not kill a process it did not spawn — specifically not #89's five
+  watchers, which were running throughout.
+- DID NOT REPAIR THE ROTATED CODEX CREDENTIAL (§8). Writing a stale token back
+  over a live one is how one incident becomes two.
+- Did not re-drive Hermes against the CORRECTED skill. The credential rule
+  halted live work, and a second drive is the obvious next ticket rather than
+  something to sneak in past a stop condition.
+- Did not claim the vanished "argus grill" tab (§10) was someone else's fault,
+  and did not claim it as proven to be this run's either.
