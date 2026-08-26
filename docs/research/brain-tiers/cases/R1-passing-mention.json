@@ -1,0 +1,71 @@
+{
+  "id": "R1-passing-mention",
+  "eye": "reviewer",
+  "what": "One durable Johan preference stated once, buried in typo-heavy text, surrounded by agent status chatter and a transient question.",
+  "prompt": "You are the Argus Reviewer eye. The blocks below are transcript turns\nfrom agent sessions in this repo, each tagged with its registry-verified\nauthor. Decide whether anything DURABLE happened. Do not run any\ncommands; judge only from the blocks.\n\nEmit findings (possibly none) as JSON matching the output schema:\n- kind \"user-preference\": something about Johan himself (how he works,\n  what he wants). Derive ONLY from blocks with author=johan and cite\n  exactly those uuids in sources.\n- kind \"project-fact\": a durable fact about this project, from any author.\n- kind \"procedure\": a repeatable procedure worth a reusable skill.\nUse a stable kebab-case slug per finding so repeats converge.\nCite the uuid(s) each finding derives from in sources.\n\n[uuid=c2b83ece-1e62-40b1-886e-817f6c6087aa author=claude-code session=0a3ac707-b3db-412d-9744-0260a0ba08ff role=assistant ts=2026-08-24T23:19:03.613Z]\nBoth lanes are saturated and building — the loop is fully back in motion:\n\n- **18 build tickets** cut under map #18, covering the spec's implementation surface.\n- **Codex lane**: #19 (argus CLI skeleton) — working now.\n- **Fable lane**: #24 (send-matcher implementation, straight from #11's research) — working now.\n- Dispatcher on its 5-minute cadence, watchdog armed, tab hygiene clean (exactly four tabs: monitoring, dispatcher, two workers).\n[uuid=68714bd8-a740-422c-a02d-a077db5beb33 author=johan session=0a3ac707-b3db-412d-9744-0260a0ba08ff role=user ts=2026-08-24T18:17:33.090Z]\nok there is way to much shit going on firts of all when a agent is spawn it need to spawn in teh in the ewn workspace as a new tab. not  new workspace. you are spawning htem in a new worksapce. plase do not do this. second of all the tabs or wokrpxaces need to close fully when done. please mointoir evyerhing going right now. let ones that are currnely going ifnsih. cut all of the rest hat are finisehd pracice and make sure you can spawn in new tab. evreify by screenshoting the acutla screen. then form now on. do that there is jsut ay to many workpasces spawning in.\n[uuid=05a8b12e-dec2-402f-a010-6af5efc90f91 author=claude-code session=0a3ac707-b3db-412d-9744-0260a0ba08ff role=assistant ts=2026-08-25T18:08:50.511Z]\n**Nearly there: 17 of 18 build tickets are done.** #35 (curator pass) closed, and the only ticket left is **#36 — the v1 live acceptance run**, which is executing right now as a healthy headless worker (PID alive, 4 minutes in). The dispatcher smartly pre-loaded its brief with already-verified facts so it spends its time proving rather than re-deriving.\n[uuid=9f860666-a5a2-43d3-b989-26fcebc7f40d author=johan session=0a3ac707-b3db-412d-9744-0260a0ba08ff role=user ts=2026-08-24T19:03:10.523Z]\nso evyer tick will start in a cleared context new sesion right?",
+  "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "findings"
+    ],
+    "properties": {
+      "findings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "slug",
+            "title",
+            "content",
+            "sources"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "user-preference",
+                "project-fact",
+                "procedure"
+              ]
+            },
+            "slug": {
+              "type": "string",
+              "description": "kebab-case identity, stable across repeats"
+            },
+            "title": {
+              "type": "string"
+            },
+            "content": {
+              "type": "string"
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "uuids of the transcript messages this derives from"
+            }
+          }
+        }
+      }
+    }
+  },
+  "cwd": "/Users/johansardar/argus-worktrees/brain-tiers",
+  "groundTruth": {
+    "mustFind": [
+      {
+        "kind": "user-preference",
+        "about": "agents spawn as a TAB in the existing cmux workspace, never a new workspace; tabs close fully when the work is done",
+        "statedIn": "68714bd8-a740-422c-a02d-a077db5beb33"
+      }
+    ],
+    "mustNotCiteInUserPreference": [
+      "c2b83ece-1e62-40b1-886e-817f6c6087aa",
+      "05a8b12e-dec2-402f-a010-6af5efc90f91"
+    ],
+    "notes": "Recall test. The fact appears exactly once and is spelled badly."
+  }
+}

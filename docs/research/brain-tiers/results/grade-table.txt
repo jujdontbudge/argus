@@ -1,0 +1,154 @@
+case                        config       rep    s   in    out  schema  verdict
+D1-done                    luna-medium   1   24 18779   314  ok      603b50b3=done
+D1-done                    luna-low      1   25 18779   313  ok      603b50b3=done
+D1-done                    luna-max      1   37 18779   672  ok      603b50b3=done
+D2-blocked                 luna-low      1   14 18300   146  ok      0a3ac707=blocked
+D1-done                    sol-low       1   28 20337   314  ok      603b50b3=done
+D1-done                    sol-medium    1   29 20337   388  ok      603b50b3=done
+D2-blocked                 luna-medium   1   14 18227   185  ok      0a3ac707=blocked
+D2-blocked                 luna-max      1   17 18300   317  ok      0a3ac707=blocked
+D2-blocked                 sol-low       1   15 19858   206  ok      0a3ac707=blocked
+D3-running                 luna-low      1   12 18523   161  ok      603b50b3=running
+D2-blocked                 sol-medium    1   17 19858   191  ok      0a3ac707=blocked
+D3-running                 luna-medium   1   13 18523   202  ok      603b50b3=running
+D3-running                 luna-max      1   18 18523   301  ok      603b50b3=running
+D3-running                 sol-low       1   17 20081   182  ok      603b50b3=running
+D3-running                 sol-medium    1   17 20081   180  ok      603b50b3=running
+D4-two-sessions            luna-low      1   18 19039   437  ok      603b50b3=done 0a3ac707=blocked
+D4-two-sessions            luna-medium   1   18 19039   495  ok      603b50b3=done 0a3ac707=blocked
+D4-two-sessions            luna-max      1   25 19039   911  ok      603b50b3=done 0a3ac707=blocked
+D4-two-sessions            sol-low       1   19 20597   568  ok      603b50b3=done 0a3ac707=blocked
+R1-passing-mention         luna-low      1   14 18788   323  ok      3 finding(s) [UUU] applied u:3 f:0 s:0 rej:0
+D4-two-sessions            sol-medium    1   22 20597   621  ok      603b50b3=done 0a3ac707=blocked
+R1-passing-mention         luna-medium   1   22 18715   593  ok      7 finding(s) [UUUPPPP] applied u:3 f:3 s:1 rej:0
+R1-passing-mention         sol-low       1   19 20346   409  ok      4 finding(s) [UUUP] applied u:3 f:1 s:0 rej:0
+R2-provenance-trap         luna-low      1   15 18550   357  ok      2 finding(s) [UP] applied u:1 f:0 s:1 rej:0
+R1-passing-mention         sol-medium    1   19 20346   392  ok      2 finding(s) [UP] applied u:0 f:1 s:0 rej:1
+R2-provenance-trap         luna-medium   1   50 18550   335  ok      2 finding(s) [UP] applied u:1 f:0 s:1 rej:0
+R1-passing-mention         luna-max      1   85 18788  3529  ok      5 finding(s) [UUUPP] applied u:3 f:1 s:1 rej:0
+R2-provenance-trap         luna-max      1   85 18550  1180  ok      2 finding(s) [UP] applied u:1 f:0 s:1 rej:0
+R2-provenance-trap         sol-medium    1   59 20108   267  ok      2 finding(s) [UP] applied u:1 f:0 s:1 rej:0
+R2-provenance-trap         sol-low       1   69 20108   298  ok      2 finding(s) [PU] applied u:1 f:0 s:1 rej:0
+R3-nothing-durable         luna-low      1   60 18512   257  ok      1 finding(s) [U] applied u:1 f:0 s:0 rej:0
+R3-nothing-durable         luna-medium   1   75 18536   262  ok      1 finding(s) [U] applied u:1 f:0 s:0 rej:0
+R3-nothing-durable         luna-max      1   72 18536  1134  ok      1 finding(s) [U] applied u:1 f:0 s:0 rej:0
+R3-nothing-durable         sol-low       1   44 20094   224  ok      1 finding(s) [U] applied u:1 f:0 s:0 rej:0
+R3-nothing-durable         sol-medium    1   43 20094   243  ok      1 finding(s) [U] applied u:1 f:0 s:0 rej:0
+R4-dense-multi-fact        luna-low      1   36 18842   297  ok      2 finding(s) [UU] applied u:2 f:0 s:0 rej:0
+R4-dense-multi-fact        luna-medium   1   37 18842   482  ok      2 finding(s) [UU] applied u:2 f:0 s:0 rej:0
+R4-dense-multi-fact        sol-low       1  112 20400   395  ok      3 finding(s) [UUP] applied u:2 f:1 s:0 rej:0
+R4-dense-multi-fact        sol-medium    1  118 20400   578  ok      3 finding(s) [UUP] applied u:2 f:1 s:0 rej:0
+R4-dense-multi-fact        luna-max      1  161 18842  3403  ok      3 finding(s) [UUP] applied u:2 f:0 s:1 rej:0
+R5-near-miss               luna-medium   1   64 18530   141  ok      0 finding(s) [] applied u:0 f:0 s:0 rej:0
+R5-near-miss               luna-low      1  106 18530   240  ok      1 finding(s) [P] applied u:0 f:1 s:0 rej:0
+D1-done                    luna-medium   2   59 18779   350  ok      603b50b3=done
+R5-near-miss               sol-low       1   47 20088   316  ok      2 finding(s) [UP] applied u:1 f:1 s:0 rej:0
+D1-done                    luna-low      2   62 18779   282  ok      603b50b3=done
+D1-done                    luna-max      2   70 18779   742  ok      603b50b3=done
+R5-near-miss               luna-max      1   82 18530  1646  ok      1 finding(s) [P] applied u:0 f:0 s:1 rej:0
+R5-near-miss               sol-medium    1   50 20088   385  ok      3 finding(s) [UPP] applied u:1 f:2 s:0 rej:0
+D1-done                    sol-low       2   52 20337   420  ok      603b50b3=done
+R6-agent-only-facts        luna-low      1   81 18697   417  ok      4 finding(s) [PPPP] applied u:0 f:3 s:1 rej:0
+D2-blocked                 luna-low      2   71 18300   170  ok      0a3ac707=blocked
+D1-done                    sol-medium    2   81 20337   460  ok      603b50b3=done
+D1-done                    luna-low      3   77 18779   263  ok      603b50b3=done
+D1-done                    luna-medium   3   80 18779   360  ok      603b50b3=done
+R6-agent-only-facts        luna-medium   1   80 18697   527  ok      5 finding(s) [PPPPP] applied u:0 f:4 s:1 rej:0
+D1-done                    luna-max      3   83 18779   634  ok      603b50b3=done
+D2-blocked                 luna-medium   2   76 18300   191  ok      0a3ac707=blocked
+D2-blocked                 luna-max      2   59 18300   256  ok      0a3ac707=blocked
+R6-agent-only-facts        sol-low       1   59 20255   250  ok      2 finding(s) [PP] applied u:0 f:1 s:1 rej:0
+R6-agent-only-facts        luna-max      1  102 18697  2969  ok      5 finding(s) [PPPPP] applied u:0 f:4 s:1 rej:0
+D2-blocked                 luna-low      3   54 18300   178  ok      0a3ac707=blocked
+D2-blocked                 sol-low       2   73 19858   207  ok      0a3ac707=blocked
+D1-done                    sol-low       3   81 20337   394  ok      603b50b3=done
+D1-done                    sol-medium    3   80 20337   448  ok      603b50b3=done
+R6-agent-only-facts        sol-medium    1   79 20255   418  ok      3 finding(s) [PPP] applied u:0 f:2 s:1 rej:0
+D2-blocked                 sol-medium    2   64 19858   203  ok      0a3ac707=blocked
+S1-procedure-present       luna-medium   1   51 18715   428  ok      2 finding(s) [UP] applied u:1 f:0 s:1 rej:0
+D3-running                 luna-low      2   64 18523   156  ok      603b50b3=running
+S1-procedure-present       luna-low      1   68 18715   236  ok      2 finding(s) [UP] applied u:0 f:0 s:1 rej:1
+D2-blocked                 luna-medium   3   74 18300   171  ok      0a3ac707=blocked
+D3-running                 luna-medium   2   63 18523   194  ok      603b50b3=running
+D2-blocked                 luna-max      3   69 18300   207  ok      0a3ac707=blocked
+S1-procedure-present       sol-low       1   77 20273   389  ok      4 finding(s) [UUPP] applied u:2 f:0 s:2 rej:0
+D2-blocked                 sol-low       3  115 19858   214  ok      0a3ac707=blocked
+D3-running                 luna-max      2   92 18523   301  ok      603b50b3=running
+S1-procedure-present       luna-max      1  118 18715  3902  ok      3 finding(s) [UPP] applied u:1 f:1 s:1 rej:0
+D3-running                 sol-low       2   96 20081   160  ok      603b50b3=running
+S2-no-procedure            luna-medium   1   67 18486   117  ok      0 finding(s) [] applied u:0 f:0 s:0 rej:0
+S1-procedure-present       sol-medium    1  151 20237   357  ok      2 finding(s) [UP] applied u:1 f:0 s:1 rej:0
+S2-no-procedure            luna-low      1  116 18486   308  ok      2 finding(s) [UU] applied u:2 f:0 s:0 rej:0
+S2-no-procedure            luna-max      1   45 18486   319  ok      0 finding(s) [] applied u:0 f:0 s:0 rej:0
+S2-no-procedure            sol-low       1   57 20044   277  ok      1 finding(s) [U] applied u:1 f:0 s:0 rej:0
+S2-no-procedure            sol-medium    1   45 20044    97  ok      0 finding(s) [] applied u:0 f:0 s:0 rej:0
+S3-scattered-procedure     luna-low      1   74 19359   633  ok      5 finding(s) [PPPPP] applied u:0 f:4 s:1 rej:0
+S3-scattered-procedure     luna-medium   1   92 19359   440  ok      2 finding(s) [PP] applied u:0 f:1 s:1 rej:0
+S3-scattered-procedure     sol-low       1   53 20917   481  ok      4 finding(s) [PPPP] applied u:0 f:4 s:0 rej:0
+S3-scattered-procedure     luna-max      1  107 19359  2107  ok      5 finding(s) [PPPPP] applied u:0 f:4 s:1 rej:0
+S3-scattered-procedure     sol-medium    1   54 20917   603  ok      4 finding(s) [PPPP] applied u:0 f:3 s:1 rej:0
+S4-one-off-incident        luna-low      1   44 18534   403  ok      4 finding(s) [PPPP] applied u:0 f:3 s:1 rej:0
+S4-one-off-incident        luna-medium   1   37 18534   528  ok      5 finding(s) [PPPPP] applied u:0 f:4 s:1 rej:0
+S4-one-off-incident        sol-low       1   28 20092   390  ok      3 finding(s) [PPP] applied u:0 f:2 s:1 rej:0
+S4-one-off-incident        luna-max      1   45 18534  1376  ok      4 finding(s) [PPPP] applied u:0 f:3 s:1 rej:0
+S4-one-off-incident        sol-medium    1   43 20092   552  ok      3 finding(s) [PPP] applied u:0 f:3 s:0 rej:0
+T1-clean-match             luna-low      1   44 24821   108  ok      drift=false/conf=true/files=false
+T1-clean-match             luna-medium   1   74 24821   144  ok      drift=false/conf=true/files=false
+T1-clean-match             luna-max      1   78 24821   534  ok      drift=false/conf=true/files=false
+T1-clean-match             sol-low       1   63 26379    55  ok      drift=false/conf=true/files=false
+T1-clean-match             sol-medium    1   67 26379    55  ok      drift=false/conf=true/files=false
+T2-ambiguous-spec-change   luna-low      1   63 24562    87  ok      drift=false/conf=true/files=false
+T2-ambiguous-spec-change   luna-medium   1   77 24562    98  ok      drift=false/conf=true/files=false
+T2-ambiguous-spec-change   luna-max      1   50 24562   277  ok      drift=false/conf=true/files=false
+T2-ambiguous-spec-change   sol-low       1   59 26120    55  ok      drift=false/conf=true/files=false
+T2-ambiguous-spec-change   sol-medium    1   72 26120   108  ok      drift=false/conf=true/files=false
+T3-mismatched              luna-medium   1   49 24014   181  ok      drift=true/conf=true/files=true
+T3-mismatched              luna-low      1   71 24014   209  ok      drift=true/conf=true/files=true
+T3-mismatched              luna-max      1   54 24014   560  ok      drift=true/conf=true/files=true
+T3-mismatched              sol-medium    1   43 25572   189  ok      drift=true/conf=true/files=true
+T3-mismatched              sol-low       1   69 25572   191  ok      drift=true/conf=true/files=true
+T4-real-plus-one-stray     luna-low      1   43 23354   195  ok      drift=true/conf=true/files=true
+T4-real-plus-one-stray     luna-medium   1   43 23354   217  ok      drift=true/conf=true/files=true
+T4-real-plus-one-stray     luna-max      1   32 23354   444  ok      drift=true/conf=true/files=true
+T4-real-plus-one-stray     sol-low       1   25 24912   169  ok      drift=true/conf=true/files=true
+T4-real-plus-one-stray     sol-medium    1   27 24912   169  ok      drift=true/conf=true/files=true
+T5-large-in-scope          luna-low      1   24 24499   109  ok      drift=false/conf=true/files=false
+T5-large-in-scope          luna-medium   1   31 24499    93  ok      drift=false/conf=true/files=false
+T5-large-in-scope          sol-low       1   31 26057    55  ok      drift=false/conf=true/files=false
+T5-large-in-scope          luna-max      1   46 24499   469  ok      drift=false/conf=true/files=false
+T5-large-in-scope          sol-medium    1   23 26057    55  ok      drift=false/conf=true/files=false
+T6-self-labelled-extra     luna-low      1   39 24494   100  ok      drift=false/conf=true/files=false
+T6-self-labelled-extra     luna-medium   1   43 24494    92  ok      drift=false/conf=true/files=false
+T6-self-labelled-extra     sol-low       1   35 26052    55  ok      drift=false/conf=true/files=false
+T6-self-labelled-extra     luna-max      1   72 24494   311  ok      drift=false/conf=true/files=false
+T6-self-labelled-extra     sol-medium    1   43 25477    76  ok      drift=false/conf=true/files=false
+R1-passing-mention         luna-low      2  167 18784   435  ok      5 finding(s) [UUUPP] applied u:3 f:1 s:1 rej:0
+R1-passing-mention         luna-medium   2  171 18784   571  ok      5 finding(s) [UUUPP] applied u:3 f:1 s:1 rej:0
+R1-passing-mention         luna-max      2  189 18784  1146  ok      1 finding(s) [U] applied u:1 f:0 s:0 rej:0
+R1-passing-mention         sol-low       2   37 20342   342  ok      2 finding(s) [UU] applied u:2 f:0 s:0 rej:0
+R1-passing-mention         sol-medium    2   34 20342   213  ok      1 finding(s) [U] applied u:1 f:0 s:0 rej:0
+R5-near-miss               luna-low      2   21 18526   183  ok      2 finding(s) [PP] applied u:0 f:2 s:0 rej:0
+R5-near-miss               luna-medium   2   44 18526   169  ok      0 finding(s) [] applied u:0 f:0 s:0 rej:0
+R5-near-miss               sol-low       2   47 20084   289  ok      2 finding(s) [UP] applied u:1 f:1 s:0 rej:0
+S2-no-procedure            luna-low      2   11 18486    90  ok      1 finding(s) [P] applied u:0 f:1 s:0 rej:0
+R5-near-miss               sol-medium    2   23 20084   478  ok      1 finding(s) [P] applied u:0 f:1 s:0 rej:0
+S2-no-procedure            luna-medium   2   12 18486   121  ok      1 finding(s) [P] applied u:0 f:1 s:0 rej:0
+S2-no-procedure            sol-low       2   15 20044   242  ok      1 finding(s) [U] applied u:1 f:0 s:0 rej:0
+R5-near-miss               luna-max      2   98 18526  3307  ok      2 finding(s) [PP] applied u:0 f:1 s:1 rej:0
+S2-no-procedure            sol-medium    2   15 20044   298  ok      1 finding(s) [U] applied u:1 f:0 s:0 rej:0
+R1-passing-mention         luna-low      3   14 18784   400  ok      5 finding(s) [UUUPP] applied u:3 f:2 s:0 rej:0
+S2-no-procedure            luna-max      2   52 18486  2357  ok      3 finding(s) [UPP] applied u:1 f:1 s:1 rej:0
+R1-passing-mention         luna-medium   3   15 18784   424  ok      3 finding(s) [UUP] applied u:2 f:0 s:1 rej:0
+R1-passing-mention         sol-low       3   17 20342   421  ok      3 finding(s) [UUP] applied u:2 f:1 s:0 rej:0
+R1-passing-mention         sol-medium    3   20 20342   459  ok      3 finding(s) [UUP] applied u:2 f:0 s:1 rej:0
+R5-near-miss               luna-low      3   17 18526   374  ok      2 finding(s) [PP] applied u:0 f:1 s:1 rej:0
+R5-near-miss               luna-medium   3   20 18526   383  ok      2 finding(s) [PP] applied u:0 f:1 s:1 rej:0
+R5-near-miss               sol-low       3   20 20084   389  ok      3 finding(s) [PPU] applied u:1 f:2 s:0 rej:0
+R5-near-miss               sol-medium    3   13 20084   272  ok      2 finding(s) [UP] applied u:1 f:1 s:0 rej:0
+R5-near-miss               luna-max      3   53 18526  2383  ok      4 finding(s) [UPPP] applied u:1 f:2 s:1 rej:0
+R1-passing-mention         luna-max      3   96 18784  4942  ok      3 finding(s) [UPP] applied u:1 f:1 s:1 rej:0
+S2-no-procedure            luna-low      3   15 18486   254  ok      1 finding(s) [U] applied u:1 f:0 s:0 rej:0
+S2-no-procedure            sol-low       3   11 20044    72  ok      0 finding(s) [] applied u:0 f:0 s:0 rej:0
+S2-no-procedure            luna-medium   3   14 18486   443  ok      2 finding(s) [UP] applied u:1 f:1 s:0 rej:0
+S2-no-procedure            sol-medium    3   15 20044   316  ok      1 finding(s) [U] applied u:1 f:0 s:0 rej:0
+S2-no-procedure            luna-max      3   47 18486  2166  ok      2 finding(s) [UP] applied u:1 f:1 s:0 rej:0

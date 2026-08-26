@@ -1,0 +1,64 @@
+{
+  "id": "D2-blocked",
+  "eye": "digest",
+  "what": "One agent turn that hands two manual tasks to Johan and cannot proceed.",
+  "prompt": "You are the Argus Digest eye. The blocks below are transcript turns from\nagent sessions in this repo, each tagged with its logical session id and\nregistry-verified author. Maintain each session's running narrative. Do\nnot run any commands; judge only from the blocks.\n\nEmit JSON matching the output schema: for EVERY distinct session id in\nthe blocks, one entry with\n- narrative: markdown for what happened in these turns (appended to the\n  session's digest — write it to be read after the earlier entries).\n- summary: ONE line describing where the session stands now.\n- status: \"done\" when the work concluded, \"blocked\" when it waits on a\n  human, otherwise \"running\".\n\n[session=0a3ac707-b3db-412d-9744-0260a0ba08ff author=claude-code role=assistant ts=2026-08-25T19:06:06.570Z]\nTwo things. That's it.\n\n**1. Upgrade cmux — 2 minutes.** Press ⌘Q to fully quit cmux (not just close the window), then reopen it. If the \"Update installed · Restart to update\" banner is still there afterward, click that banner directly. Verify by running `cmux version` — you want ≥0.64.22, not 0.62.2. Everything reopens and the loop keeps going; the dispatcher will detect the new version, close #15, and dispatch #7 on its own. Without this, v1 can never be fully proven, because one of the ten acceptance scenarios can't run.",
+  "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "sessions"
+    ],
+    "properties": {
+      "sessions": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sessionId",
+            "narrative",
+            "summary",
+            "status"
+          ],
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "description": "the transcript session id the entry digests"
+            },
+            "narrative": {
+              "type": "string",
+              "description": "markdown narrative of what happened since last time"
+            },
+            "summary": {
+              "type": "string",
+              "description": "one line describing the session's current state"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "running",
+                "blocked",
+                "done"
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "cwd": "/Users/johansardar/argus-worktrees/brain-tiers",
+  "groundTruth": {
+    "sessions": [
+      {
+        "sessionId": "0a3ac707-b3db-412d-9744-0260a0ba08ff",
+        "status": "blocked",
+        "narrativeMustMention": [
+          "the cmux upgrade to >= 0.64.22",
+          "the #37 scope-drift question"
+        ]
+      }
+    ],
+    "notes": "STATUS test. `status:` is Hermes' slow-poll signal (SPEC 6) — calling this `running` makes Hermes wait on a session that is waiting on Johan."
+  }
+}

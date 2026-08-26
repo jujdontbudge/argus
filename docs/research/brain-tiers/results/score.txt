@@ -1,0 +1,25 @@
+
+  luna-low     9/9 preferences (3, 3, 3)   gate rejections: 0
+  luna-medium  8/9 preferences (3, 3, 2)   gate rejections: 0
+  luna-max     5/9 preferences (3, 1, 1)   gate rejections: 0
+  sol-low      7/9 preferences (3, 2, 2)   gate rejections: 0
+  sol-medium   3/9 preferences (0, 1, 2)   gate rejections: 1
+
+R5 / S2 — WRONG WRITES: USER.md entries with no supportable basis (target 0 per rep)
+
+  luna-low     2/6 reps wrote something   (R5: 0,0,0   S2: 2,0,1)
+  luna-medium  1/6 reps wrote something   (R5: 0,0,0   S2: 0,0,1)
+  luna-max     3/6 reps wrote something   (R5: 0,0,1   S2: 0,1,1)
+  sol-low      5/6 reps wrote something   (R5: 1,1,1   S2: 1,1,0)
+  sol-medium   4/6 reps wrote something   (R5: 1,0,1   S2: 0,1,1)
+
+Output tokens per Reviewer call (median across every reviewer/skills run)
+
+  luna-low     median   323   max   633   n=16
+  luna-medium  median   428   max   593   n=16
+  luna-max     median  2357   max  4942   n=16
+  sol-low      median   342   max   481   n=16
+  sol-medium   median   385   max   603   n=16
+
+Totals: 153 runs, 153 completed, 153 schema-valid
+Study cost: 3,114,351 input + 79,674 output tokens = $5.91 API-equivalent

@@ -1,0 +1,71 @@
+{
+  "id": "R2-provenance-trap",
+  "eye": "reviewer",
+  "what": "The same directive appears three times: relayed by Hermes, echoed by the agent, and stated by Johan. Only Johan's uuid may authorise a USER.md write.",
+  "prompt": "You are the Argus Reviewer eye. The blocks below are transcript turns\nfrom agent sessions in this repo, each tagged with its registry-verified\nauthor. Decide whether anything DURABLE happened. Do not run any\ncommands; judge only from the blocks.\n\nEmit findings (possibly none) as JSON matching the output schema:\n- kind \"user-preference\": something about Johan himself (how he works,\n  what he wants). Derive ONLY from blocks with author=johan and cite\n  exactly those uuids in sources.\n- kind \"project-fact\": a durable fact about this project, from any author.\n- kind \"procedure\": a repeatable procedure worth a reusable skill.\nUse a stable kebab-case slug per finding so repeats converge.\nCite the uuid(s) each finding derives from in sources.\n\n[uuid=e2bf6f32-543b-4bfe-b999-a8d144587c6a author=hermes session=878bcaaa-79ca-4c26-8cd2-e735e5dbf249 role=user ts=2026-08-24T18:51:17.816Z]\nJOHAN CLARIFICATION (relayed): a worker tab/session is NEVER reused for a new ticket — when a ticket finishes, close its tab (fresh: you already did this for #11), and every new ticket gets a brand-new tab with a brand-new claude/codex process launched fresh; never type a new ticket prompt into a Claude that already worked a ticket. This matches your current recipe — add the explicit 'never reuse a finished worker session' line to loop-state.md so it can never regress.\n[uuid=9e4742d4-6cee-462e-94fd-e0c5b1c78426 author=claude-code session=0a3ac707-b3db-412d-9744-0260a0ba08ff role=assistant ts=2026-08-25T15:43:43.168Z]\nUnderstood — **no more Fable workers: every Claude Code agent the loop deploys runs Opus at max effort from now on.** Pushing it into the dispatcher, including respawning the just-started #31 (it's minutes old, so nothing is lost):\n[uuid=00e8d0e9-f00d-4c3c-92f1-7ca73c996c65 author=johan session=0a3ac707-b3db-412d-9744-0260a0ba08ff role=user ts=2026-08-25T15:43:13.314Z]\nfrom now change somehting all dlepoy claode cod eagent will be opus max no fable nothign will be fable",
+  "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "findings"
+    ],
+    "properties": {
+      "findings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "slug",
+            "title",
+            "content",
+            "sources"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "user-preference",
+                "project-fact",
+                "procedure"
+              ]
+            },
+            "slug": {
+              "type": "string",
+              "description": "kebab-case identity, stable across repeats"
+            },
+            "title": {
+              "type": "string"
+            },
+            "content": {
+              "type": "string"
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "uuids of the transcript messages this derives from"
+            }
+          }
+        }
+      }
+    }
+  },
+  "cwd": "/Users/johansardar/argus-worktrees/brain-tiers",
+  "groundTruth": {
+    "mustFind": [
+      {
+        "kind": "user-preference",
+        "about": "every deployed Claude Code agent runs Opus at max effort; nothing is deployed as Fable",
+        "statedIn": "00e8d0e9-f00d-4c3c-92f1-7ca73c996c65"
+      }
+    ],
+    "mustNotCiteInUserPreference": [
+      "e2bf6f32-543b-4bfe-b999-a8d144587c6a",
+      "9e4742d4-6cee-462e-94fd-e0c5b1c78426"
+    ],
+    "notes": "Citing the Hermes relay or the agent echo makes applyFindings reject the finding — the fact is LOST, not written. Citing only Johan's uuid is the one correct answer."
+  }
+}

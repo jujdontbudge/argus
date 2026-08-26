@@ -1,0 +1,67 @@
+{
+  "id": "R5-near-miss",
+  "eye": "reviewer",
+  "what": "Two agent turns that read like preferences, plus one Johan turn that is only a question.",
+  "prompt": "You are the Argus Reviewer eye. The blocks below are transcript turns\nfrom agent sessions in this repo, each tagged with its registry-verified\nauthor. Decide whether anything DURABLE happened. Do not run any\ncommands; judge only from the blocks.\n\nEmit findings (possibly none) as JSON matching the output schema:\n- kind \"user-preference\": something about Johan himself (how he works,\n  what he wants). Derive ONLY from blocks with author=johan and cite\n  exactly those uuids in sources.\n- kind \"project-fact\": a durable fact about this project, from any author.\n- kind \"procedure\": a repeatable procedure worth a reusable skill.\nUse a stable kebab-case slug per finding so repeats converge.\nCite the uuid(s) each finding derives from in sources.\n\n[uuid=9e4742d4-6cee-462e-94fd-e0c5b1c78426 author=claude-code session=0a3ac707-b3db-412d-9744-0260a0ba08ff role=assistant ts=2026-08-25T15:43:43.168Z]\nUnderstood — **no more Fable workers: every Claude Code agent the loop deploys runs Opus at max effort from now on.** Pushing it into the dispatcher, including respawning the just-started #31 (it's minutes old, so nothing is lost):\n[uuid=0dd1b733-079f-498e-a3bc-ea8f319a32c8 author=claude-code session=0a3ac707-b3db-412d-9744-0260a0ba08ff role=assistant ts=2026-08-24T19:03:39.990Z]\n**Yes — verified on disk, not just in theory.** The #10 worker that just spawned is session `f847fa02`, a transcript file that did not exist before 1:49 PM, and its very first message is its ticket brief: *\"You are the Fable research worker… you work EXACTLY ONE ticket, then stop: ticket #10.\"* Nothing before it. No #11 history, no dispatcher chatter, no other tickets — a completely fresh context.\n[uuid=9f860666-a5a2-43d3-b989-26fcebc7f40d author=johan session=0a3ac707-b3db-412d-9744-0260a0ba08ff role=user ts=2026-08-24T19:03:10.523Z]\nso evyer tick will start in a cleared context new sesion right?",
+  "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "findings"
+    ],
+    "properties": {
+      "findings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "slug",
+            "title",
+            "content",
+            "sources"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "user-preference",
+                "project-fact",
+                "procedure"
+              ]
+            },
+            "slug": {
+              "type": "string",
+              "description": "kebab-case identity, stable across repeats"
+            },
+            "title": {
+              "type": "string"
+            },
+            "content": {
+              "type": "string"
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "uuids of the transcript messages this derives from"
+            }
+          }
+        }
+      }
+    }
+  },
+  "cwd": "/Users/johansardar/argus-worktrees/brain-tiers",
+  "groundTruth": {
+    "mustFind": [],
+    "maxUserPreferences": 0,
+    "mustNotCiteInUserPreference": [
+      "9e4742d4-6cee-462e-94fd-e0c5b1c78426",
+      "0dd1b733-079f-498e-a3bc-ea8f319a32c8",
+      "9f860666-a5a2-43d3-b989-26fcebc7f40d"
+    ],
+    "notes": "MISATTRIBUTION test. The Opus-max content is present but agent-authored. Attaching it to Johan's question uuid writes a preference he never expressed here."
+  }
+}

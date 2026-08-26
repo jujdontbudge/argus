@@ -1,0 +1,65 @@
+{
+  "id": "D4-two-sessions",
+  "eye": "digest",
+  "what": "Turns from two different sessions interleaved in one coalesced batch.",
+  "prompt": "You are the Argus Digest eye. The blocks below are transcript turns from\nagent sessions in this repo, each tagged with its logical session id and\nregistry-verified author. Maintain each session's running narrative. Do\nnot run any commands; judge only from the blocks.\n\nEmit JSON matching the output schema: for EVERY distinct session id in\nthe blocks, one entry with\n- narrative: markdown for what happened in these turns (appended to the\n  session's digest — write it to be read after the earlier entries).\n- summary: ONE line describing where the session stands now.\n- status: \"done\" when the work concluded, \"blocked\" when it waits on a\n  human, otherwise \"running\".\n\n[session=603b50b3-f6c2-4de4-b17d-aebb1ae33b81 author=claude-code role=assistant ts=2026-08-25T19:35:56.598Z]\n**Slice 4 — red:** `decideDrift`, the encoded false-positive policy. Both directions.\n[session=0a3ac707-b3db-412d-9744-0260a0ba08ff author=claude-code role=assistant ts=2026-08-25T18:08:50.511Z]\n**Nearly there: 17 of 18 build tickets are done.** #35 (curator pass) closed, and the only ticket left is **#36 — the v1 live acceptance run**, which is executing right now as a healthy headless worker (PID alive, 4 minutes in). The dispatcher smartly pre-loaded its brief with already-verified facts so it spends its time proving rather than re-deriving.\n[session=603b50b3-f6c2-4de4-b17d-aebb1ae33b81 author=claude-code role=assistant ts=2026-08-25T20:20:28.250Z]\nTicket #38 built and committed to `build/scope-drift`; comment posted.\n\n**What shipped:** a third Retro-eye signal that feeds on the *other* half of attribution — the work a registered ticket session **does** cover — and asks one brain question: is this diff what the ticket asked for? It reuses the existing git scan's worktree→parent mapping and evidence caps, reads stated scope through the existing `gh` seam (closed tickets included), and files through the existing compose + tracker path. No sixth watcher, no new brain, no new model tier.\n\n**The false-positive stance is in both halves:** stated in the prompt (burden of proof on drift, named safe list, ambiguity → silence, cost asymmetry spelled out) and enforced in `decideDrift` — two booleans plus articulated prose, or nothing files. A scope too thin to measure against never reaches the brain.\n\n**Gates green** on current main: `bun x tsc --noEmit` exit 0; `bun test` 571 pass / 2 skip / 0 fail.\n\nThree things worth your attention:\n\n1. **The live-luna test passed both directions.** It builds the real prompt via `buildDriftPrompt`, and luna at `low` effort called the refactor in-scope and the billing webhooks drift — with the schema accepted, no bare `exit 1`. `schema.test.ts` also walks the whole schema asserting `required` == `properties` at every node, so #35's lesson can't regress.\n\n2. **One fix beyond the ticket text:** a `Brain` that *throws* rather than returning `ok: false` escaped the drift pass and would have taken the watcher down. Now it degrades to the same audited silence, cap slot released on every path. Red test first, last commit.\n\n3. **`all-scenarios.ts` was on main** when I rebased (#36 landed mid-flight, and #40 after), so I registered there — both directions pinned in `CONTRIBUTED[2]`. My half chains slot 2 via `registry.get(2)`; #36's ordering already runs retro among the extenders, so it survives.\n\nNot merged, ticket left open, main and other worktrees untouched.\n\nDONE\n[session=0a3ac707-b3db-412d-9744-0260a0ba08ff author=claude-code role=assistant ts=2026-08-25T19:06:06.570Z]\nTwo things. That's it.\n\n**1. Upgrade cmux — 2 minutes.** Press ⌘Q to fully quit cmux (not just close the window), then reopen it. If the \"Update installed · Restart to update\" banner is still there afterward, click that banner directly. Verify by running `cmux version` — you want ≥0.64.22, not 0.62.2. Everything reopens and the loop keeps going; the dispatcher will detect the new version, close #15, and dispatch #7 on its own. Without this, v1 can never be fully proven, because one of the ten acceptance scenarios can't run.",
+  "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "sessions"
+    ],
+    "properties": {
+      "sessions": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sessionId",
+            "narrative",
+            "summary",
+            "status"
+          ],
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "description": "the transcript session id the entry digests"
+            },
+            "narrative": {
+              "type": "string",
+              "description": "markdown narrative of what happened since last time"
+            },
+            "summary": {
+              "type": "string",
+              "description": "one line describing the session's current state"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "running",
+                "blocked",
+                "done"
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "cwd": "/Users/johansardar/argus-worktrees/brain-tiers",
+  "groundTruth": {
+    "sessions": [
+      {
+        "sessionId": "603b50b3-f6c2-4de4-b17d-aebb1ae33b81",
+        "status": "done"
+      },
+      {
+        "sessionId": "0a3ac707-b3db-412d-9744-0260a0ba08ff",
+        "status": "blocked"
+      }
+    ],
+    "exactlyNSessions": 2,
+    "notes": "STRUCTURAL test: one entry per distinct session id, each with its own status. Merging them corrupts two digests at once."
+  }
+}

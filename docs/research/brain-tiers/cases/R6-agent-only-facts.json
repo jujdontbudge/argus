@@ -1,0 +1,75 @@
+{
+  "id": "R6-agent-only-facts",
+  "eye": "reviewer",
+  "what": "Three agent turns carrying durable project facts and no Johan turn at all.",
+  "prompt": "You are the Argus Reviewer eye. The blocks below are transcript turns\nfrom agent sessions in this repo, each tagged with its registry-verified\nauthor. Decide whether anything DURABLE happened. Do not run any\ncommands; judge only from the blocks.\n\nEmit findings (possibly none) as JSON matching the output schema:\n- kind \"user-preference\": something about Johan himself (how he works,\n  what he wants). Derive ONLY from blocks with author=johan and cite\n  exactly those uuids in sources.\n- kind \"project-fact\": a durable fact about this project, from any author.\n- kind \"procedure\": a repeatable procedure worth a reusable skill.\nUse a stable kebab-case slug per finding so repeats converge.\nCite the uuid(s) each finding derives from in sources.\n\n[uuid=fd7f79fa-6b77-4d2b-9420-15507f47300f author=claude-code session=0a3ac707-b3db-412d-9744-0260a0ba08ff role=assistant ts=2026-08-25T17:17:33.666Z]\nHeadless mode is working — your call paid off immediately. **Three workers launched** (#23 Hermes tailing source, #34 events + push hooks, #35 curator), running as detached background processes writing to logs in their worktrees, and they're actively producing output right now (the Hermes-source worker is already 2,891 lines deep). No cmux restart needed, no tabs required, throughput restored.\n[uuid=b1ce4b37-9100-4799-ac5c-1dbcd9535400 author=claude-code session=0a3ac707-b3db-412d-9744-0260a0ba08ff role=assistant ts=2026-08-25T19:53:47.626Z]\n**One ticket is genuinely running: #39** (implement `argus watch <eye>` for all five eyes), a Codex worker 11 minutes in, with real commits in its worktree.\n\nBut I found a problem while checking. **#38 and #40 are marked claimed but have no live process** — they're orphaned. Both did real work before vanishing: the scope-drift worktree has a spec commit (\"v1 detects in-ticket scope drift (§14)\") and the status-temp worktree has the supervisor fix committed. So they either finished and their closure step silently failed — the same failure mode that idled a lane for 2.6 hours yesterday — or they died mid-task after committing.\n[uuid=16b138ea-f5bf-4ed2-9f86-7aefc9ca385b author=claude-code session=0a3ac707-b3db-412d-9744-0260a0ba08ff role=assistant ts=2026-08-25T22:19:55.444Z]\nWatchdog restarted (it crashed on a bad process check — my bug, now replaced with a version that uses the dispatcher's loop-state file as the loop's heartbeat instead of trying to fingerprint worker processes among your ~15 Claude sessions).\n\nProgress in the meantime: **#43, #44 and #45 all closed**, and the agent-doable gate I asked for got filed as **#47** — \"Hermes live verification silently skips forever (no profile exists to read),\" which is the Hermes half of the environment blockers.",
+  "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "findings"
+    ],
+    "properties": {
+      "findings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "slug",
+            "title",
+            "content",
+            "sources"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "user-preference",
+                "project-fact",
+                "procedure"
+              ]
+            },
+            "slug": {
+              "type": "string",
+              "description": "kebab-case identity, stable across repeats"
+            },
+            "title": {
+              "type": "string"
+            },
+            "content": {
+              "type": "string"
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "uuids of the transcript messages this derives from"
+            }
+          }
+        }
+      }
+    }
+  },
+  "cwd": "/Users/johansardar/argus-worktrees/brain-tiers",
+  "groundTruth": {
+    "mustFind": [
+      {
+        "kind": "project-fact",
+        "about": "workers can run headless as detached background processes writing to logs in their worktrees — no cmux tab required",
+        "statedIn": "fd7f79fa-6b77-4d2b-9420-15507f47300f"
+      }
+    ],
+    "mayFind": [
+      {
+        "kind": "project-fact",
+        "about": "a ticket can be claimed with no live process — work committed, closure step silently failed — which idles a lane",
+        "statedIn": "b1ce4b37-9100-4799-ac5c-1dbcd9535400"
+      }
+    ],
+    "maxUserPreferences": 0,
+    "notes": "No Johan turn exists, so any user-preference is a hard fabrication."
+  }
+}
