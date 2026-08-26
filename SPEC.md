@@ -249,6 +249,17 @@ outputs):
     is true no matter who discovered it). Johan-authored directives weigh highest.
 - **A procedure** → create or update a skill in `.argus/skills/` (SKILL.md format).
 
+**Two asks, never one (ticket #69).** Extracting a fact and writing a transferable
+procedure are different jobs, and [#54's benchmark](docs/research/watcher-brain-tiers.md)
+measured the brain doing the first reliably and the second not at all: at every tier
+it answered the conflated ask with a topic-level summary of the episode, and invented
+procedures out of status chatter and incident reports. So the eye asks **twice** per
+evaluation, over the same batch: an **extraction** pass whose schema can express only
+the two fact kinds, then a **skills-writer** pass whose schema can express only a
+procedure and whose default is silence. Same brain tier for both, both inside one cap
+slot. A kind a pass did not ask for is a schema miss, not a write — so nothing the
+memory-writing pass says can reach `.argus/skills/`.
+
 A **curator pass** (weekly, cloned from Hermes' native curator: stale after 30 days,
 archive after 90) prunes and archives skills, and deduplicates/compacts the memory
 files. Creation, update, and deletion are all part of this same loop.
