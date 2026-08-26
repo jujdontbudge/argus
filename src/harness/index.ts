@@ -21,9 +21,11 @@ import {
   type HonchoWorkspaceInput,
 } from "../up/bindings.ts";
 import { createWatcherSpawner } from "../supervisor/daemon.ts";
+import { readEyeHealth, type EyeHealth } from "../supervisor/health.ts";
 import {
   EYE_NAMES,
   WatcherSupervisor,
+  type EyeName,
   type SpawnWatcher,
   type SupervisorStatus,
 } from "../supervisor/runtime.ts";
@@ -658,13 +660,43 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-async function snapshotTree(root: string): Promise<string> {
+/**
+ * Files a RUNNING instance rewrites on its own clock, and #76's one honest
+ * exclusion from the blast-radius byte comparison.
+ *
+ * Slot 10 used to snapshot a dormant `.argus/`, where byte-identity was
+ * trivially true. Once the peer's five eyes actually run — which is the whole
+ * point of the ticket — three kinds of file change every poll for reasons that
+ * have nothing to do with the primary being wiped: each eye's `health.json`
+ * heartbeat (a fresh `updatedAt` every 250ms tick), SQLite's WAL/SHM sidecars,
+ * and the `.tmp` files `persistCursors` renames into place.
+ *
+ * They are excluded from the byte comparison and asserted SEPARATELY and more
+ * strictly instead — the heartbeat must ADVANCE (a frozen eye is a dead eye),
+ * `lastError` must not gain an entry, and the archive's row count must be
+ * unchanged. Nothing is exempted; the volatile files carry a stronger claim
+ * than byte-identity could.
+ */
+function isLiveInstanceHeartbeat(relativePath: string): boolean {
+  return (
+    basename(relativePath) === "health.json" ||
+    relativePath.endsWith(".tmp") ||
+    relativePath.endsWith("-wal") ||
+    relativePath.endsWith("-shm")
+  );
+}
+
+async function snapshotTree(
+  root: string,
+  skip: (relativePath: string) => boolean = () => false,
+): Promise<string> {
   const entries: Array<{ content?: string; path: string; type: string }> = [];
 
   const visit = async (directory: string, prefix = ""): Promise<void> => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
       const relativePath = join(prefix, entry.name);
+      if (skip(relativePath)) continue;
       if (entry.isDirectory()) {
         entries.push({ path: relativePath, type: "directory" });
         await visit(path, relativePath);
@@ -847,6 +879,37 @@ export const semanticIsolationScenario: ScenarioHandler = async ({
   }
 };
 
+/**
+ * SPEC §13.10 — "wipe the sandbox repo's `.argus/`. Assert: no other repo's
+ * instance noticed."
+ *
+ * REWRITTEN BY #76, and the rewrite is the whole of the ticket's slot-10 half.
+ * The scenario used to create a peer sandbox, converge it with `argus up`, and
+ * then assert its `.argus/` was byte-identical across the primary's wipe —
+ * WITHOUT ever starting the peer's eyes. `verdicts.ts` graded that PARTIAL in
+ * its own words: "'noticed nothing' is asserted of a dormant directory.
+ * Byte-identity is trivially true when nothing is watching, which is the one
+ * thing SPEC §13.10 rests on."
+ *
+ * So the peer's instance now RUNS. The same `WatcherSupervisor` scenario 6
+ * uses spawns the same five real `argus watch` eye processes over the peer
+ * repo, they are waited for until each has written its own state, and only
+ * then is the primary wiped. "Noticed nothing" is then four claims about
+ * something that was demonstrably watching:
+ *
+ *   - its durable state is byte-identical across the wipe;
+ *   - not one of the five processes died or was restarted;
+ *   - no eye recorded a new error;
+ *   - and it was AWAKE, not merely alive — every heartbeat advanced past the
+ *     wipe, and the peer archiver went on to archive a message written after
+ *     it.
+ *
+ * COSTS NO AGENT CALL, which is why #74 could name this slot as cheap real
+ * progress: the five eyes are production processes, and an idle repo gives
+ * their brains nothing to spend a subscription call on. This slot therefore
+ * still declares the `agent` and `brain` doubles and still grades STRUCTURAL.
+ * What it stops declaring is `peer-instance`.
+ */
 export const blastRadiusZeroScenario: ScenarioHandler = async ({
   assert,
   sandbox,
@@ -855,29 +918,246 @@ export const blastRadiusZeroScenario: ScenarioHandler = async ({
   try {
     assert(sandbox.up.exitCode === 0, "primary sandbox was converged by argus up");
     assert(peer.up.exitCode === 0, "peer sandbox was converged by argus up");
-    const peerArgus = join(peer.repo, ".argus");
-    const peerStateBefore = await snapshotTree(peerArgus);
-    const peerSupervisor = envPath(peer, "ARGUS_REPOS_FILE");
-    const peerSupervisorBefore = await Bun.file(peerSupervisor).text();
 
-    await sandbox.scope.remove(join(sandbox.repo, ".argus"));
+    const peerRepo = await realpath(peer.repo);
+    const peerArgus = join(peerRepo, ".argus");
+    const statusPath = join(peer.root, "state", "blast-radius-status.json");
+    const supervisor = new WatcherSupervisor({
+      registryPath: envPath(peer, "ARGUS_REPOS_FILE"),
+      restartDelayMilliseconds: 25,
+      spawn: createSandboxWatcherSpawner(
+        [process.execPath, fileURLToPath(new URL("../cli.ts", import.meta.url))],
+        peer,
+      ),
+      statusPath,
+    });
+    // #49: adopt on the same read that produces the snapshot, so no pid this
+    // scenario has seen is killable before it was checked against the peer's
+    // own repo. The production dispatcher supervises the real `~/argus` here.
+    const snapshot = async (): Promise<SupervisorStatus> => {
+      const status = await supervisorSnapshot(statusPath);
+      adoptSandboxWatchers(peer.scope, peerRepo, status);
+      return status;
+    };
+    const observedPids = new Set<number>();
+
+    try {
+      await supervisor.reconcile();
+      for (const eye of EYE_NAMES) {
+        const readyPath =
+          eye === "archiver"
+            ? join(peerArgus, "archive.db")
+            : join(peerArgus, "eyes", eye, "cursors.json");
+        for (
+          let attempt = 0;
+          !(await Bun.file(readyPath).exists()) && attempt < 500;
+          attempt += 1
+        ) {
+          await Bun.sleep(20);
+        }
+      }
+      const running = await snapshot();
+      for (const watcher of running.watchers) observedPids.add(watcher.pid);
+      assert(
+        running.watchers.length === EYE_NAMES.length &&
+          running.watchers.every(
+            ({ pid, repo }) => repo === peerRepo && processIsAlive(pid),
+          ),
+        "the peer repo's five real eyes were running before the wipe",
+      );
+      const pidsBefore = watcherPids(running);
+      const healthBefore = await eyeHealth(peerRepo);
+
+      // Everything the peer's own eyes rewrite on their own clock is compared
+      // separately and more strictly; see `isLiveInstanceHeartbeat`.
+      const peerStateBefore = await snapshotTree(peerArgus, isLiveInstanceHeartbeat);
+      const peerSupervisor = envPath(peer, "ARGUS_REPOS_FILE");
+      const peerSupervisorBefore = await Bun.file(peerSupervisor).text();
+      const peerArchiveBefore = archivedRowCount(peerRepo);
+
+      await sandbox.scope.remove(join(sandbox.repo, ".argus"));
+
+      // Give the peer's five eyes several poll intervals to react — the point
+      // is to let them notice, not to measure before they could have.
+      const heartbeatsAdvanced = await waitForHeartbeats(peerRepo, healthBefore);
+
+      assert(
+        !(await exists(join(sandbox.repo, ".argus"))),
+        "primary .argus state was removed",
+      );
+      assert(
+        (await snapshotTree(peerArgus, isLiveInstanceHeartbeat)) === peerStateBefore,
+        "peer .argus state stayed byte-identical while its own eyes were running",
+      );
+      assert(
+        (await Bun.file(peerSupervisor).text()) === peerSupervisorBefore,
+        "peer supervisor state stayed byte-identical",
+      );
+      assert(
+        archivedRowCount(peerRepo) === peerArchiveBefore,
+        "the peer archive gained and lost nothing across the wipe",
+      );
+
+      const afterWipe = await snapshot();
+      assert(
+        watcherPids(afterWipe) === pidsBefore &&
+          afterWipe.watchers.every(({ pid }) => processIsAlive(pid)),
+        "every peer eye kept its pid across the wipe — none died or restarted",
+      );
+      const healthAfter = await eyeHealth(peerRepo);
+      assert(
+        EYE_NAMES.every(
+          (eye) =>
+            JSON.stringify(healthAfter[eye]?.lastError ?? null) ===
+            JSON.stringify(healthBefore[eye]?.lastError ?? null),
+        ),
+        "no peer eye recorded a new error across the wipe",
+      );
+      // Alive is not the same as awake: a stopped-but-unreaped process passes
+      // a pid check. An advanced heartbeat is a completed poll AFTER the wipe.
+      assert(
+        heartbeatsAdvanced,
+        "every peer eye's heartbeat advanced past the wipe — awake, not merely alive",
+      );
+
+      // And the instance still WORKS: production's own archiver, in the peer
+      // repo, consuming a transcript written after the primary was wiped.
+      assert(
+        await peerArchivedAfterWipe(peer, peerRepo),
+        "the peer instance archived a message written after the primary wipe",
+      );
+    } finally {
+      await supervisor.stop();
+      for (let attempt = 0; attempt < 1_500; attempt += 1) {
+        if ([...observedPids].every((pid) => !processIsAlive(pid))) break;
+        await Bun.sleep(20);
+      }
+    }
 
     assert(
-      !(await exists(join(sandbox.repo, ".argus"))),
-      "primary .argus state was removed",
-    );
-    assert(
-      (await snapshotTree(peerArgus)) === peerStateBefore,
-      "peer .argus state stayed byte-identical",
-    );
-    assert(
-      (await Bun.file(peerSupervisor).text()) === peerSupervisorBefore,
-      "peer supervisor state stayed byte-identical",
+      (await supervisorSnapshot(statusPath)).watchers.length === 0 &&
+        [...observedPids].every((pid) => !processIsAlive(pid)),
+      "every peer eye this scenario started was stopped at teardown",
     );
   } finally {
     await peer.teardown();
   }
 };
+
+function watcherPids(status: SupervisorStatus): string {
+  return JSON.stringify(
+    status.watchers
+      .map(({ eye, pid }) => [eye, pid])
+      .sort(([left], [right]) => String(left).localeCompare(String(right))),
+  );
+}
+
+async function eyeHealth(
+  repo: string,
+): Promise<Partial<Record<EyeName, EyeHealth>>> {
+  const health: Partial<Record<EyeName, EyeHealth>> = {};
+  for (const eye of EYE_NAMES) {
+    const reported = await readEyeHealth(repo, eye);
+    if (reported !== null) health[eye] = reported;
+  }
+  return health;
+}
+
+/** Every eye completed at least one poll AFTER the moment it was read. */
+async function waitForHeartbeats(
+  repo: string,
+  before: Partial<Record<EyeName, EyeHealth>>,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 750; attempt += 1) {
+    const now = await eyeHealth(repo);
+    const advanced = EYE_NAMES.every((eye) => {
+      const previous = before[eye]?.updatedAt;
+      const current = now[eye]?.updatedAt;
+      return (
+        current !== undefined && (previous === undefined || current > previous)
+      );
+    });
+    if (advanced) return true;
+    await Bun.sleep(20);
+  }
+  return false;
+}
+
+function archivedRowCount(repo: string): number {
+  const path = join(repo, ".argus", "archive.db");
+  try {
+    const database = new Database(path, { readonly: true });
+    try {
+      return (
+        database
+          .query<{ count: number }, []>(
+            "SELECT count(*) AS count FROM archive_messages",
+          )
+          .get()?.count ?? 0
+      );
+    } finally {
+      database.close();
+    }
+  } catch {
+    return -1;
+  }
+}
+
+/**
+ * The liveness probe: a session the peer repo learns about only after the
+ * primary was wiped, archived by the peer's own running archiver watcher.
+ */
+async function peerArchivedAfterWipe(
+  peer: Sandbox,
+  peerRepo: string,
+): Promise<boolean> {
+  const sessionId = "scenario-10-peer-after-wipe";
+  const text = "The peer instance was still watching after the primary wipe.";
+  const ts = "2026-08-26T12:00:00.000Z";
+  await appendFile(
+    join(peerRepo, ".argus", "registry", "sessions.jsonl"),
+    `${JSON.stringify({ ts, sessionId, agent: "claude", dispatchPrompt: text })}\n`,
+  );
+  const transcriptDirectory = claudeProjectDir(
+    peerRepo,
+    join(envPath(peer, "CLAUDE_CONFIG_DIR"), "projects"),
+  );
+  await mkdir(transcriptDirectory, { recursive: true });
+  await Bun.write(
+    join(transcriptDirectory, `${sessionId}.jsonl`),
+    `${JSON.stringify({
+      type: "user",
+      message: { role: "user", content: text },
+      timestamp: ts,
+      promptSource: "typed",
+      uuid: "scenario-10-peer-u-1",
+      sessionId,
+      cwd: peerRepo,
+      version: "test",
+    })}\n`,
+  );
+  for (let attempt = 0; attempt < 500; attempt += 1) {
+    await Bun.sleep(20);
+    try {
+      const database = new Database(join(peerRepo, ".argus", "archive.db"), {
+        readonly: true,
+      });
+      try {
+        const archived = database
+          .query<{ count: number }, [string]>(
+            "SELECT count(*) AS count FROM archive_messages WHERE content = ?",
+          )
+          .get(text)!.count;
+        if (archived === 1) return true;
+      } finally {
+        database.close();
+      }
+    } catch {
+      // The archiver may be mid-batch; retry until the budget runs out.
+    }
+  }
+  return false;
+}
 
 export const mechanicsScenario: ScenarioHandler = ({
   assertSandboxed,

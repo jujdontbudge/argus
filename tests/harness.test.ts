@@ -408,7 +408,10 @@ describe("fake-Johan harness", () => {
     }
   }, 90_000);
 
-  test("scenario 10 wipes one converged repo without changing another sandbox", async () => {
+  // #76: the peer's own eyes now RUN across the wipe. The old expectation —
+  // five assertions over a dormant peer directory — was the shape of the
+  // overclaim: byte-identity is trivially true when nothing is watching.
+  test("scenario 10 wipes one converged repo without a RUNNING peer instance noticing", async () => {
     const reportDirectory = await mkdtemp(join(tmpdir(), "argus-reports-"));
     const scenario = createScenarioRegistry().get(10);
 
@@ -425,9 +428,45 @@ describe("fake-Johan harness", () => {
       expect(result.assertions).toEqual([
         { description: "primary sandbox was converged by argus up", passed: true },
         { description: "peer sandbox was converged by argus up", passed: true },
+        {
+          description: "the peer repo's five real eyes were running before the wipe",
+          passed: true,
+        },
         { description: "primary .argus state was removed", passed: true },
-        { description: "peer .argus state stayed byte-identical", passed: true },
+        {
+          description:
+            "peer .argus state stayed byte-identical while its own eyes were running",
+          passed: true,
+        },
         { description: "peer supervisor state stayed byte-identical", passed: true },
+        {
+          description: "the peer archive gained and lost nothing across the wipe",
+          passed: true,
+        },
+        {
+          description:
+            "every peer eye kept its pid across the wipe — none died or restarted",
+          passed: true,
+        },
+        {
+          description: "no peer eye recorded a new error across the wipe",
+          passed: true,
+        },
+        {
+          description:
+            "every peer eye's heartbeat advanced past the wipe — awake, not merely alive",
+          passed: true,
+        },
+        {
+          description:
+            "the peer instance archived a message written after the primary wipe",
+          passed: true,
+        },
+        {
+          description:
+            "every peer eye this scenario started was stopped at teardown",
+          passed: true,
+        },
       ]);
     } finally {
       await rm(reportDirectory, { force: true, recursive: true });

@@ -69,7 +69,6 @@ export type Double =
   | "hermes"
   | "honcho"
   | "hooks"
-  | "peer-instance"
   | "supervisor"
   | "tracker";
 
@@ -80,7 +79,6 @@ export const DOUBLE_MEANING: Readonly<Record<Double, string>> = {
   hermes: "no Hermes process ran; sends are appended rows",
   honcho: "Honcho is `FixtureHoncho`, an in-memory array",
   hooks: "hook handlers are called in-process with hand-authored payloads",
-  "peer-instance": "the peer repo's eyes never start; its instance is dormant",
   supervisor:
     "a scratch registry disables launchd control; no supervisor or eyes start",
   tracker: "`gh` is `createFakeGh`; no tracker was written",
@@ -613,7 +611,12 @@ export const SPEC_MANIFESTS: Readonly<
     ],
   },
   10: {
-    doubles: ["agent", "brain", "peer-instance"],
+    // #76: `peer-instance` is GONE, and it is the only double this ticket
+    // removed anywhere. The peer's five real eyes now run — see
+    // `blastRadiusZeroScenario`. `agent` and `brain` stay, because an idle
+    // peer repo gives the eyes' brains nothing to spend a call on, so this
+    // slot still grades STRUCTURAL and does not pretend otherwise.
+    doubles: ["agent", "brain"],
     number: 10,
     title: "Blast-radius zero",
     requirements: [
@@ -624,13 +627,24 @@ export const SPEC_MANIFESTS: Readonly<
         spec: "wipe the sandbox repo's `.argus/`",
       },
       {
+        // The shortfall #76 closed, and what closed it. The peer's instance
+        // is running when the primary is wiped, so byte-identity is no longer
+        // trivially true: it is asserted of a repo whose five production
+        // watcher processes were mid-poll, none of which died, restarted or
+        // recorded an error, all of which completed a poll AFTER the wipe,
+        // and whose archiver then archived a message written after it.
         assertions: [
-          "peer .argus state stayed byte-identical",
+          "the peer repo's five real eyes were running before the wipe",
+          "peer .argus state stayed byte-identical while its own eyes were running",
           "peer supervisor state stayed byte-identical",
+          "the peer archive gained and lost nothing across the wipe",
+          "every peer eye kept its pid across the wipe — none died or restarted",
+          "no peer eye recorded a new error across the wipe",
+          "every peer eye's heartbeat advanced past the wipe — awake, not merely alive",
+          "the peer instance archived a message written after the primary wipe",
         ],
         id: "13.10.no-other-instance-noticed",
-        shortfall:
-          "the peer has NO instance running: `blastRadiusZeroScenario` never starts the peer's eyes, so 'noticed nothing' is asserted of a dormant directory. Byte-identity is trivially true when nothing is watching, which is the one thing SPEC §13.10 rests on",
+        shortfall: "",
         spec: "no other repo's instance noticed",
       },
     ],
