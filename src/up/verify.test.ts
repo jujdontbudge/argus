@@ -126,4 +126,23 @@ describe("wiring verification", () => {
     expect(checks[2]!.ok).toBe(false);
     expect(checks[2]!.detail).toContain("global-memories");
   });
+
+  test("fails when the Hermes profile omits the canonical skills store", async () => {
+    const repo = await scratchRepo();
+    const hermes = join(repo, "hermes");
+    const profile = join(hermes, "profiles", "argus-repo");
+    await mkdir(profile, { recursive: true });
+    await symlink(join(repo, ".argus", "memory"), join(profile, "memories"));
+    await Bun.write(join(profile, "config.yaml"), "skills:\n  external_dirs: []\n");
+
+    const checks = await verifyWiring(repo, {
+      hermes: { profile: "argus-repo", root: hermes },
+    });
+
+    expect(checks[3]).toEqual({
+      detail: `profile skills.external_dirs omits ${join(repo, ".argus", "skills")}`,
+      name: "Hermes skills binding",
+      ok: false,
+    });
+  });
 });

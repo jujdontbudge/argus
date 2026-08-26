@@ -169,6 +169,43 @@ async function checkHermesMemoryBinding(
   return { detail: "profile memories -> .argus/memory", name, ok: true };
 }
 
+/** SPEC §8.2: the repo's one skills store must be a Hermes reader source. */
+async function checkHermesSkillsBinding(
+  repo: string,
+  hermesRoot: string,
+  profile: string,
+): Promise<WiringCheck> {
+  const name = "Hermes skills binding";
+  const configPath = join(hermesRoot, "profiles", profile, "config.yaml");
+  const configFile = Bun.file(configPath);
+  if (!(await configFile.exists())) {
+    return { detail: `${configPath} is missing`, name, ok: false };
+  }
+  const parsed = Bun.YAML.parse(await configFile.text()) as {
+    skills?: { external_dirs?: unknown };
+  } | null;
+  const configured = parsed?.skills?.external_dirs;
+  const directories =
+    typeof configured === "string"
+      ? [configured]
+      : Array.isArray(configured)
+        ? configured.filter((value): value is string => typeof value === "string")
+        : [];
+  const canonical = join(repo, ".argus", "skills");
+  if (!directories.includes(canonical)) {
+    return {
+      detail: `profile skills.external_dirs omits ${canonical}`,
+      name,
+      ok: false,
+    };
+  }
+  return {
+    detail: "profile skills.external_dirs includes .argus/skills",
+    name,
+    ok: true,
+  };
+}
+
 export interface WiringOptions {
   /** Set only by `argus up`, which is the half that writes the binding. */
   hermes?: { profile: string; root: string };
@@ -185,6 +222,7 @@ export async function verifyWiring(
   if (options.hermes) {
     checks.push(
       await checkHermesMemoryBinding(repo, options.hermes.root, options.hermes.profile),
+      await checkHermesSkillsBinding(repo, options.hermes.root, options.hermes.profile),
     );
   }
   return checks;

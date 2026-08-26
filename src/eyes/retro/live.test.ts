@@ -2,8 +2,14 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { liveHalfTitle } from "../../harness/live-gate";
 import { createCodexBrain } from "../brain";
 import { DEFAULT_EYES_CONFIG } from "../config";
+import {
+  describeLiveIntegrationGate,
+  LIVE_WATCHER_BRAINS_GATE,
+  resolveWatcherBrainGate,
+} from "../live-gate";
 import { loadScaledMs } from "../test-budget";
 import {
   buildDriftCandidates,
@@ -22,12 +28,22 @@ import {
 /**
  * The ONE live-luna integration test for the Retro eye (ticket #33): the real
  * `codex exec` invocation against the real prompt and schema, proving the
- * contract the fixture brain stands in for everywhere else. Skipped when the
- * codex CLI is not installed, so `bun test` never REQUIRES the subscription
- * (SPEC §13). Sandboxed to temp dirs; nothing here can reach GitHub — the eye
+ * contract the fixture brain stands in for everywhere else. Skipped unless
+ * ARGUS_LIVE_WATCHER_BRAINS=1 explicitly opts into a subscription call
+ * (SPEC §1). Sandboxed to temp dirs; nothing here can reach GitHub — the eye
  * is not involved, only the brain seam.
  */
-const codexAvailable = Bun.which("codex") !== null;
+const liveGate = resolveWatcherBrainGate({
+  codexInstalled: Bun.which("codex") !== null,
+  env: Bun.env,
+});
+console.log(
+  describeLiveIntegrationGate(
+    "live Retro watcher-brain integrations",
+    LIVE_WATCHER_BRAINS_GATE,
+    liveGate,
+  ),
+);
 
 /**
  * Per-test budget. One real `codex exec` round trip each, measured at 6.98s in
@@ -72,7 +88,9 @@ const PROMPT = [
   "- #22 Write the launch announcement",
 ].join("\n");
 
-describe.skipIf(!codexAvailable)("live luna brain (retro integration)", () => {
+describe.skipIf(liveGate.status !== "run")(
+  liveHalfTitle("live luna brain (retro integration)", liveGate),
+  () => {
   test(
     "the real brain returns a schema-conforming retro verdict it can act on",
     async () => {
@@ -119,7 +137,8 @@ describe.skipIf(!codexAvailable)("live luna brain (retro integration)", () => {
     },
     BUDGET_MS,
   );
-});
+  },
+);
 
 /**
  * The ONE live-luna test for the SCOPE-DRIFT contract (#38). It builds the
@@ -203,7 +222,9 @@ const IN_SCOPE = question(
   }),
 );
 
-describe.skipIf(!codexAvailable)("live luna brain (scope-drift integration)", () => {
+describe.skipIf(liveGate.status !== "run")(
+  liveHalfTitle("live luna brain (scope-drift integration)", liveGate),
+  () => {
   test(
     "the real brain answers the scope question on contract, both directions",
     async () => {
@@ -249,4 +270,5 @@ describe.skipIf(!codexAvailable)("live luna brain (scope-drift integration)", ()
     },
     BUDGET_MS,
   );
-});
+  },
+);

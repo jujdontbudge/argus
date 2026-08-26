@@ -3,7 +3,17 @@ import { mkdtemp, readdir, realpath, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { NATIVE_CLAUDE } from "../harness/subscription-gate.ts";
+import {
+  LIVE_HALF_BANNER,
+  liveHalfTitle,
+  type LiveHalfOutcome,
+} from "../harness/live-gate.ts";
+import {
+  describeSubscriptionGate,
+  NATIVE_CLAUDE,
+  probeSubscriptionMode,
+  resolveSubscriptionGate,
+} from "../harness/subscription-gate.ts";
 import {
   claudeProjectDir,
   createClaudeCodeSource,
@@ -38,10 +48,30 @@ import { deployWorker } from "./index.ts";
  */
 const LIVE_BUDGET_MS = 300_000;
 
-const claudeGate =
-  Bun.env.ARGUS_LIVE_AGENTS === "1" ||
-  Bun.env.ARGUS_LIVE_CLAUDE_SUBSCRIPTION === "1";
-const codexGate = Bun.env.ARGUS_LIVE_CODEX_DEPLOY === "1";
+const claudeGate = resolveSubscriptionGate(probeSubscriptionMode());
+console.log(describeSubscriptionGate(claudeGate));
+
+const LIVE_CODEX_DEPLOY_GATE = "ARGUS_LIVE_CODEX_DEPLOY";
+const codexGate: LiveHalfOutcome = (() => {
+  if (Bun.env[LIVE_CODEX_DEPLOY_GATE] !== "1") {
+    return {
+      reason: `${LIVE_CODEX_DEPLOY_GATE} is unset — the default gate never touches the network`,
+      status: "gate-unset",
+    };
+  }
+  if (Bun.which("codex") === null) {
+    return { reason: "the codex CLI is not on PATH", status: "not-run" };
+  }
+  return {
+    reason: "gate set and the codex CLI is on PATH",
+    status: "run",
+  };
+})();
+console.log(
+  codexGate.status === "gate-unset"
+    ? `argus: live Codex deploy integration SKIPPED — set ${LIVE_CODEX_DEPLOY_GATE}=1 to run it; it touches the network`
+    : `argus: live Codex deploy integration ${LIVE_HALF_BANNER[codexGate.status].trim()} — ${codexGate.reason}`,
+);
 
 const DISPATCH =
   "You are working ticket #55. Reply with exactly the word ACKNOWLEDGED and " +
@@ -64,8 +94,11 @@ async function sandboxRepo(prefix: string): Promise<string> {
 
 const isMessage = (event: TailEvent): event is MessageEvent => event.type === "message";
 
-describe.skipIf(!claudeGate)(
-  "deployWorker live (#55): a real Claude session, registered before it existed",
+describe.skipIf(claudeGate.claude.status !== "run")(
+  liveHalfTitle(
+    "deployWorker live (#55): a real Claude session, registered before it existed",
+    claudeGate.claude,
+  ),
   () => {
     test(
       "the preassigned id IS the transcript's session id, and the dispatch is hermes",
@@ -143,8 +176,11 @@ describe.skipIf(!claudeGate)(
   },
 );
 
-describe.skipIf(!codexGate)(
-  "deployWorker live (#55): a real codex session, registered before the prompt lands",
+describe.skipIf(codexGate.status !== "run")(
+  liveHalfTitle(
+    "deployWorker live (#55): a real codex session, registered before the prompt lands",
+    codexGate,
+  ),
   () => {
     test(
       "the row is durable while the rollout file still has no user message",

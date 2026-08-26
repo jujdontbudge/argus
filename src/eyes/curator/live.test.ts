@@ -2,20 +2,37 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { liveHalfTitle } from "../../harness/live-gate";
 import { createCodexBrain } from "../brain";
 import { DEFAULT_EYES_CONFIG } from "../config";
+import {
+  describeLiveIntegrationGate,
+  LIVE_WATCHER_BRAINS_GATE,
+  resolveWatcherBrainGate,
+} from "../live-gate";
 import { buildCuratorPrompt } from "./prompt";
 import { CURATOR_OUTPUT_SCHEMA, parseCuratorVerdict } from "./schema";
 
 /**
  * The ONE live-luna integration test for the curator pass (ticket #35): the
  * real `codex exec` against the real prompt and schema, proving the contract
- * the stub brain stands in for everywhere else. Skipped when the codex CLI is
- * not installed, so `bun test` never REQUIRES the subscription (SPEC §13).
+ * the stub brain stands in for everywhere else. Skipped unless
+ * ARGUS_LIVE_WATCHER_BRAINS=1 explicitly opts into a subscription call
+ * (SPEC §1).
  * Sandboxed to a temp dir; the eye is not involved, only the brain seam, so
  * nothing here can move a file in any repo.
  */
-const codexAvailable = Bun.which("codex") !== null;
+const liveGate = resolveWatcherBrainGate({
+  codexInstalled: Bun.which("codex") !== null,
+  env: Bun.env,
+});
+console.log(
+  describeLiveIntegrationGate(
+    "live Curator watcher-brain integration",
+    LIVE_WATCHER_BRAINS_GATE,
+    liveGate,
+  ),
+);
 
 const PROMPT = buildCuratorPrompt({
   dryRun: false,
@@ -50,7 +67,9 @@ const PROMPT = buildCuratorPrompt({
   orphans: [{ kind: "index-without-file", slug: "ghost" }],
 });
 
-describe.skipIf(!codexAvailable)("live luna brain (curator integration)", () => {
+describe.skipIf(liveGate.status !== "run")(
+  liveHalfTitle("live luna brain (curator integration)", liveGate),
+  () => {
   test(
     "the real brain returns a schema-conforming curator verdict the eye can act on",
     async () => {
@@ -86,4 +105,5 @@ describe.skipIf(!codexAvailable)("live luna brain (curator integration)", () => 
     },
     240_000,
   );
-});
+  },
+);
