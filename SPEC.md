@@ -458,6 +458,14 @@ Each watcher has a hard RSS ceiling of **512 MiB** by default, configurable with
 cleanly after logging the measured RSS and configured ceiling when the cap is
 crossed; the supervisor then performs the logged restart.
 
+Watcher restarts use exponential backoff from one second up to 60 seconds. After
+five restarts for the same repo/eye within five minutes, the supervisor gives up
+until that rolling window clears instead of spinning forever. The base delay, cap,
+limit, and window are configurable with `ARGUS_SUPERVISOR_RESTART_MS`,
+`ARGUS_SUPERVISOR_RESTART_MAX_MS`, `ARGUS_SUPERVISOR_RESTART_LIMIT`, and
+`ARGUS_SUPERVISOR_RESTART_WINDOW_MS`. Watcher exits, retry delays, and brakes are
+written to `~/Library/Logs/Argus/supervisor.log` by the LaunchAgent.
+
 ---
 
 ## 10. CLI

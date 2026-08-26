@@ -133,6 +133,9 @@ export function supervisorConfiguration(
   const plistPath =
     env.ARGUS_SUPERVISOR_PLIST ??
     join(home, "Library", "LaunchAgents", `${label}.plist`);
+  const logPath =
+    env.ARGUS_SUPERVISOR_LOG_FILE ??
+    join(home, "Library", "Logs", "Argus", "supervisor.log");
   const launchctlExecutable = env.ARGUS_LAUNCHCTL ?? "/bin/launchctl";
   const customRegistry = env.ARGUS_REPOS_FILE !== undefined;
   const manageLaunchd =
@@ -153,10 +156,18 @@ export function supervisorConfiguration(
       codexPath,
       ghPath,
       label,
+      logPath,
       path: launchdPath(env.PATH, [bunPath, codexPath, ghPath]),
       plistPath,
+      restartDelayMilliseconds: env.ARGUS_SUPERVISOR_RESTART_MS ?? "1000",
+      restartLimit: env.ARGUS_SUPERVISOR_RESTART_LIMIT ?? "5",
+      restartMaxDelayMilliseconds:
+        env.ARGUS_SUPERVISOR_RESTART_MAX_MS ?? "60000",
+      restartWindowMilliseconds:
+        env.ARGUS_SUPERVISOR_RESTART_WINDOW_MS ?? "300000",
       registryPath,
       statusPath,
+      watchMaxRssMiB: env.ARGUS_WATCH_MAX_RSS_MB ?? "512",
     },
     launchctl: new CommandLaunchctl(launchctlExecutable, domain, label),
     manageLaunchd,

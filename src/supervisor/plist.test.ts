@@ -43,7 +43,19 @@ describe("supervisor launchd plist", () => {
     <string>/tmp/argus-test/repos</string>
     <key>ARGUS_SUPERVISOR_STATUS_FILE</key>
     <string>/tmp/argus-test/status.json</string>
+    <key>ARGUS_SUPERVISOR_RESTART_MS</key>
+    <string>1000</string>
+    <key>ARGUS_SUPERVISOR_RESTART_LIMIT</key>
+    <string>5</string>
+    <key>ARGUS_SUPERVISOR_RESTART_MAX_MS</key>
+    <string>60000</string>
+    <key>ARGUS_SUPERVISOR_RESTART_WINDOW_MS</key>
+    <string>300000</string>
+    <key>ARGUS_WATCH_MAX_RSS_MB</key>
+    <string>512</string>
   </dict>
+  <key>StandardErrorPath</key>
+  <string>/tmp/argus-test/status.json.log</string>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
