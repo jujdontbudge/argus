@@ -12,9 +12,11 @@ import { readEyeHealth } from "./health.ts";
 import { disableRepo, readEnabledRepos } from "./registry.ts";
 import { EYE_NAMES, type EyeName, type SupervisorStatus } from "./runtime.ts";
 import {
-  readOriginRefusals,
-  type OriginRefusalAudit,
-} from "../provenance/origin-audit.ts";
+  acknowledgeAudit,
+  importLegacyOriginAudits,
+  readAudits,
+  type DurableAudit,
+} from "../audits/store.ts";
 
 interface CommandResult {
   exitCode: number;
@@ -246,19 +248,33 @@ export async function supervisorStatus(
   );
 }
 
-export interface OriginRefusalStatus extends OriginRefusalAudit {
-  repo: string;
+export async function auditStatus(
+  configuration = supervisorConfiguration(),
+): Promise<DurableAudit[]> {
+  const repos = await readEnabledRepos(configuration.job.registryPath);
+  await importLegacyOriginAudits(configuration.job.registryPath, repos);
+  return (await Promise.all(repos.map(readAudits)))
+    .flat()
+    .filter(({ acknowledgedAt }) => acknowledgedAt === null)
+    .sort(
+      (left, right) =>
+        left.repo.localeCompare(right.repo) || left.id.localeCompare(right.id),
+    );
 }
 
-export async function originRefusalStatus(
+export async function acknowledgeAuditStatus(
+  id: string,
   configuration = supervisorConfiguration(),
-): Promise<OriginRefusalStatus[]> {
-  return readOriginRefusals(configuration.job.registryPath);
+): Promise<boolean> {
+  const repos = await readEnabledRepos(configuration.job.registryPath);
+  return (await Promise.all(repos.map((repo) => acknowledgeAudit(repo, id)))).some(
+    Boolean,
+  );
 }
 
 export function formatSupervisorStatus(
   rows: readonly ProcessStatusRow[],
-  originRefusals: readonly OriginRefusalStatus[] = [],
+  audits: readonly DurableAudit[] = [],
 ): string {
   const values = [
     [
@@ -293,11 +309,15 @@ export function formatSupervisorStatus(
         .trimEnd(),
     )
     .join("\n");
-  const alerts = originRefusals
+  const durable = audits
     .map(
-      ({ kind, repo, ts }) =>
-        `${repo}: refused Claude origin.kind ${JSON.stringify(kind)} at ${ts}`,
+      ({ details, firstSeenAt, id, repo, sourceEye, type }) =>
+        `${id}  ${repo}  ${sourceEye}  ${firstSeenAt}  ${type}  ${JSON.stringify(details)}`,
     )
     .join("\n");
-  return `${watchers}\n${alerts === "" ? "" : `\nCANDIDACY ALERTS\n${alerts}\n`}`;
+  return `${watchers}\n${
+    durable === ""
+      ? ""
+      : `\nAUDIT ALERTS (acknowledge one with: argus status --ack <id>)\n${durable}\n`
+  }`;
 }

@@ -1,7 +1,8 @@
 import { gitRoot } from "../up/git.ts";
 import {
+  acknowledgeAuditStatus,
+  auditStatus,
   formatSupervisorStatus,
-  originRefusalStatus,
   stopRepo,
   supervisorStatus,
 } from "./control.ts";
@@ -20,11 +21,21 @@ export async function down(cwd = process.cwd()): Promise<number> {
   return 0;
 }
 
-export async function status(): Promise<number> {
-  const [rows, refusals] = await Promise.all([
+export async function status(args: string[] = []): Promise<number> {
+  if (args.length > 0) {
+    if (args.length !== 2 || args[0] !== "--ack" || !/^[a-f0-9]{64}$/.test(args[1]!)) {
+      console.error("argus status: expected --ack <64-character audit id>");
+      return 1;
+    }
+    if (!(await acknowledgeAuditStatus(args[1]!))) {
+      console.error(`argus status: audit not found: ${args[1]}`);
+      return 1;
+    }
+  }
+  const [rows, audits] = await Promise.all([
     supervisorStatus(),
-    originRefusalStatus(),
+    auditStatus(),
   ]);
-  console.log(formatSupervisorStatus(rows, refusals).trimEnd());
-  return rows.some(({ state }) => state === "degraded") ? 1 : 0;
+  console.log(formatSupervisorStatus(rows, audits).trimEnd());
+  return rows.some(({ state }) => state === "degraded") || audits.length > 0 ? 1 : 0;
 }

@@ -219,6 +219,7 @@ describe("loud failure surfacing (SPEC §5 rule 3b, §13 scenario 5)", () => {
         sessionId: "sess-a",
         ts: iso(30_000),
         text: "stop, do the auth bug first",
+        file: "/transcripts/sess-a.jsonl",
         uuid: takeover.record!.event.uuid as string,
       },
     ]);

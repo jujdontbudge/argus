@@ -11,7 +11,7 @@ Usage: argus <command>
 Commands:
   up       converge and start this repo's eyes
   down     stop this repo's eyes
-  status   inspect this repo's eyes
+  status   inspect eyes and audits; acknowledge with --ack <audit-id>
   watch    run one eye
   dispatch run one AFK ticket-dispatch pass (SPEC §7.3)
   complete verify, merge, close and map finished tickets (SPEC §7.3.4)
@@ -258,7 +258,7 @@ export async function main(args: string[]): Promise<number> {
 
   if (args[0] === "status") {
     const { status } = await import("./supervisor/commands.ts");
-    return status();
+    return status(args.slice(1));
   }
 
   if (args[0] === "supervisor") {

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { ProvenanceFeed } from "../eyes/source.ts";
 import { createClaudeCodeSource } from "../tailing/claude-code.ts";
+import { recordAudits } from "../audits/store.ts";
 
 const roots: string[] = [];
 const cli = fileURLToPath(new URL("../cli.ts", import.meta.url));
@@ -45,6 +46,14 @@ function userRecord(originKind?: string): Record<string, unknown> {
   };
 }
 
+async function ingestAudits(
+  source: ReturnType<typeof createClaudeCodeSource>,
+  repo: string,
+): Promise<void> {
+  const batch = await new ProvenanceFeed(source, repo).catchUp();
+  await recordAudits(repo, "reviewer", batch.audits);
+}
+
 async function runStatus(
   options: Awaited<ReturnType<typeof scratch>>,
 ): Promise<{ exitCode: number; stderr: string; stdout: string }> {
@@ -71,19 +80,20 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { force: true, recursive: true })));
 });
 
-describe("argus status candidacy alarms", () => {
+describe("argus status audit alarms", () => {
   test("surfaces the first refusal of an unknown Claude origin kind", async () => {
     const options = await scratch();
     await mkdir(dirname(options.transcript), { recursive: true });
     await Bun.write(options.transcript, `${JSON.stringify(userRecord("human_v2"))}\n`);
     const source = createClaudeCodeSource({ dir: options.claudeDir });
 
-    await new ProvenanceFeed(source, options.repo, options.registryPath).catchUp();
+    await ingestAudits(source, options.repo);
     const result = await runStatus(options);
 
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode).toBe(1);
     expect(result.stderr).toBe("");
-    expect(result.stdout).toContain('refused Claude origin.kind "human_v2"');
+    expect(result.stdout).toContain("claude-origin-kind-refused");
+    expect(result.stdout).toContain('\"kind\":\"human_v2\"');
   });
 
   test("does not re-alarm on the second through hundredth refusal of one kind", async () => {
@@ -98,11 +108,15 @@ describe("argus status candidacy alarms", () => {
     );
     const source = createClaudeCodeSource({ dir: options.claudeDir });
 
-    await new ProvenanceFeed(source, options.repo, options.registryPath).catchUp();
+    await ingestAudits(source, options.repo);
     const result = await runStatus(options);
 
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout.match(/refused Claude origin\.kind "operator"/g)).toHaveLength(1);
+    expect(result.exitCode).toBe(1);
+    expect(
+      result.stdout
+        .split("\n")
+        .filter((line) => line.includes("  claude-origin-kind-refused  ")),
+    ).toHaveLength(1);
   });
 
   test("does not alarm on the normal headless record shape with no origin", async () => {
@@ -110,15 +124,15 @@ describe("argus status candidacy alarms", () => {
     await Bun.write(options.transcript, `${JSON.stringify(userRecord())}\n`);
     const source = createClaudeCodeSource({ dir: options.claudeDir });
 
-    await new ProvenanceFeed(source, options.repo, options.registryPath).catchUp();
+    await ingestAudits(source, options.repo);
     const result = await runStatus(options);
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).not.toContain("CANDIDACY ALERTS");
+    expect(result.stdout).not.toContain("AUDIT ALERTS");
     expect(result.stdout).not.toContain("origin.kind");
   });
 
-  test("deduplicates one origin kind across all enabled repos", async () => {
+  test("keeps the same origin-kind alarm independent in each repo", async () => {
     const options = await scratch();
     const secondRepo = join(options.root, "second-repo");
     const secondClaudeDir = join(options.root, "second-claude-project");
@@ -133,19 +147,45 @@ describe("argus status candidacy alarms", () => {
       Bun.write(secondTranscript, `${JSON.stringify(userRecord("human_v2"))}\n`),
     ]);
 
-    await new ProvenanceFeed(
+    await ingestAudits(
       createClaudeCodeSource({ dir: options.claudeDir }),
       options.repo,
-      options.registryPath,
-    ).catchUp();
-    await new ProvenanceFeed(
+    );
+    await ingestAudits(
       createClaudeCodeSource({ dir: secondClaudeDir }),
       secondRepo,
-      options.registryPath,
-    ).catchUp();
+    );
     const result = await runStatus(options);
 
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout.match(/refused Claude origin\.kind "human_v2"/g)).toHaveLength(1);
+    expect(result.exitCode).toBe(1);
+    expect(
+      result.stdout
+        .split("\n")
+        .filter((line) => line.includes("  claude-origin-kind-refused  ")),
+    ).toHaveLength(2);
+    expect(result.stdout).toContain(options.repo);
+    expect(result.stdout).toContain(secondRepo);
+  });
+
+  test("imports an existing global origin alarm without letting it go quiet", async () => {
+    const options = await scratch();
+    const legacyDirectory = `${options.registryPath}.audits/claude-origin-kind-refusals`;
+    await mkdir(legacyDirectory, { recursive: true });
+    await Bun.write(
+      join(legacyDirectory, "legacy-human-v2.json"),
+      `${JSON.stringify({
+        kind: "human_v2",
+        repo: options.repo,
+        sessionId: "legacy-origin-session",
+        ts: "2026-08-25T20:00:00.000Z",
+      })}\n`,
+    );
+
+    const result = await runStatus(options);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("claude-origin-kind-refused");
+    expect(result.stdout).toContain("legacy-origin-session");
+    expect(result.stdout).toContain(options.repo);
   });
 });
