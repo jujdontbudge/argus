@@ -43,8 +43,8 @@ in this repo.
 5. **Provenance-aware, always-on.** Watchers never stop; they change *how* they write
    based on who authored each message (§5). Johan's words and agent output are never
    conflated.
-6. **Every session is attachable.** All deployed work runs in cmux workspaces a human
-   can open and type into at any moment. Johan taking over mid-ticket is a first-class
+6. **Every session is attachable.** All deployed work runs in cmux tabs a human can
+   open and type into at any moment. Johan taking over mid-ticket is a first-class
    use case, not an exception.
 7. **Argus must never require Anthropic API access. Claude capability comes from
    Johan's subscription via the `claude` CLI only.** (Johan directive, 2026-08-25 —
@@ -123,12 +123,35 @@ same five watchers. The watchers treat the three transcript sources uniformly:
 ## 3. Worker surface: cmux
 
 All deployed sessions run in the cmux macOS terminal app, driven by its CLI and socket
-API (`cmux new-workspace`, `send`, `send-key`, `read-screen`, `notify`, `set-status`,
-`set-progress`, markdown viewer panes). Not tmux.
+API (`cmux new-surface`, `close-surface`, `tree`, `send`, `send-key`, `read-screen`,
+`notify`, `set-status`, `set-progress`, markdown viewer panes). Not tmux.
 
-- **One cmux workspace per deployed session** (grill, ticket, or ad hoc), created with
-  `--cwd` set to the target repo (or the ticket's worktree, §7.3), named
-  `<repo>/<ticket-or-purpose>`.
+- **One cmux TAB per deployed session** (grill, ticket, or ad hoc), opened with
+  `cmux new-surface --workspace <the workspace Argus is running in>`, and **CLOSED with
+  `cmux close-surface` when the deployment ends**.
+
+  **Argus never creates a cmux workspace.** This is Johan's standing directive
+  (Directive 14 / R6) and it overrides what this section said until #95: "one cmux
+  workspace per deployed session, created with `--cwd`". Production implemented that
+  sentence faithfully, and #82's live drive left three top-level workspaces on Johan's
+  machine pointing at its sandbox worktrees — an earlier attempt left eight. He closed
+  both sets by hand. The SPEC was wrong, not the code, and #95 changed the SPEC.
+
+  The workspace is not looked up either, because it cannot be: **cmux 0.62.2 exposes no
+  working directory for a workspace anywhere** — not in `list-workspaces`, not in
+  `identify`, not in `tree --json` — so there is no way to ask "which workspace is repo
+  R open in", and workspace TITLES are unusable for it (cmux retitles a workspace from
+  whatever its session is currently doing). Argus instead uses the workspace it is
+  ALREADY RUNNING IN, via `CMUX_WORKSPACE_ID`: the dispatcher for repo R runs in R's
+  workspace by construction. **One workspace per repo, opened by Johan, never by
+  Argus.** No `CMUX_WORKSPACE_ID` means no tab and the deployment proceeds without one
+  (§3's rule below: a tab is context, never a requirement).
+
+- **A tab is closed when its deployment ends, both ways it can end.** Cleanly, in the
+  verify/merge/close pass beside the worktree retirement (§7.3.4); and by dying, in
+  dead-slot recovery (§7.3), which is the ending that actually leaks — a worker that
+  crashes never reaches the clean path at all. The handles come from the registry row,
+  which is the only record both endings can reach.
 - **Mission control:** Hermes lives in a fixed workspace. It surfaces worker status via
   `cmux set-status`, batch progress via `cmux set-progress`, blocking events via
   `cmux notify`, and opens digest/ticket markdown panes beside workers with
@@ -159,7 +182,8 @@ API (`cmux new-workspace`, `send`, `send-key`, `read-screen`, `notify`, `set-sta
   config.yaml             # instance config: repo id, tracker, caps, model choices
   registry/               # provenance registry (§5)
     sessions.jsonl        # one record per deployment: session id, agent, ticket,
-                          #   dispatch prompt hash, workspace ref
+                          #   dispatch prompt hash, workspace ref, tab (surface)
+                          #   ref — the tab handle is what teardown closes (§3)
     sends.jsonl           # every Hermes-authored message into any session
   memory/
     USER.md               # who Johan is, in this project's context
@@ -359,7 +383,17 @@ Push-first, poll as safety net:
   stale mission handle would type `[argus]` lines into whatever human or worker session
   happened to be selected while reporting success. The send seam therefore resolves the
   handle against cmux's own listing first and degrades rather than misdelivers
-  (`src/events/notify.ts`).
+  (`src/events/notify.ts`). #95 re-measured this read-only and it still holds:
+  `list-pane-surfaces --workspace workspace:9999` exits 0 and answers for the focused
+  workspace. Pointed at `close-surface` it would close one of Johan's tabs, so tab
+  teardown resolves before it acts, exactly as the send seam does.
+- **`list-workspaces` is current-window only (#95).** Measured: a caller in
+  `workspace:1` gets back the OTHER window's workspaces and not its own. The resolve
+  guard above therefore falls back to `cmux --id-format both tree --all --json`, the
+  only whole-machine inventory, before it refuses a handle — otherwise it would refuse
+  every handle outside the focused window, including the workspace every worker tab
+  lives in. `--id-format both` is also what maps a `CMUX_WORKSPACE_ID` (a UUID) onto a
+  ref.
 - **Poll:** the repo-scoped Hermes profile runs `argus signals --repo <repo>` every
   five minutes. Each sweep reads bounded terminal candidates from `INDEX.md`, confirms
   their digest frontmatter, and resolves registered worker handles before a bounded
@@ -382,8 +416,10 @@ per target repo (native sub-issues + blocking edges = visible frontier).
 ### 7.2 Grill flow (HITL)
 
 1. Johan tells Hermes "grill X for repo R."
-2. Hermes registers the deployment, creates a cmux workspace in R, spawns Claude Code
-   with the grill skill, and notifies Johan to attach.
+2. Hermes registers the deployment, opens a cmux **tab** in R's existing workspace (§3
+   — never a new workspace), spawns Claude Code with the grill skill, and notifies
+   Johan to attach. The notification names the **tab**, not the workspace: the
+   workspace is one Johan already has open and is probably already looking at.
 3. Johan answers in the terminal directly. All five watchers cover the session live;
    Reviewer and Honcho capture the decisions as they are made; the digest gives Hermes
    the planning picture without reading the whole transcript.
@@ -391,16 +427,16 @@ per target repo (native sub-issues + blocking edges = visible frontier).
 ### 7.3 Ticket dispatch (AFK)
 
 1. Hermes reads the frontier (open, unblocked, unclaimed tickets) from GitHub.
-2. Per ticket: claim (assign) → create a **git worktree** → new cmux workspace on that
-   worktree → **fresh session** (one ticket, one session, always) → register the
-   deployment → dispatch to the routed agent.
+2. Per ticket: claim (assign) → create a **git worktree** → **a cmux tab in the existing
+   workspace** (§3 — never a new workspace) → **fresh session** (one ticket, one
+   session, always) → register the deployment → dispatch to the routed agent.
 3. Concurrency cap: **3**, a config knob (`.argus/config.yaml`), raised only after the
    merge/verify loop proves itself. Worktrees exist because parallel agents in one
    working tree race the index.
 4. On green (tests pass, review clean): merge the worktree, close the ticket, update
    the map. `implement` does not reliably close tickets itself; the dispatcher owns
    ticket state.
-5. Johan can attach to any ticket workspace and take over at any time; provenance
+5. Johan can attach to any ticket tab and take over at any time; provenance
    classification and the retro watcher make this safe by construction.
 
 ### 7.4 Johan's ad hoc sessions
