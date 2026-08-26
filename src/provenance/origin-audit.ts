@@ -6,20 +6,22 @@ import type { ProvenanceAudit } from "./classifier.ts";
 
 export interface OriginRefusalAudit {
   kind: string;
+  repo: string;
   sessionId: string;
   ts: string;
 }
 
-function auditDirectory(repo: string): string {
-  return join(repo, ".argus", "audits", "claude-origin-kind-refusals");
+function auditDirectory(registryPath: string): string {
+  return `${registryPath}.audits/claude-origin-kind-refusals`;
 }
 
-function auditPath(repo: string, kind: string): string {
+function auditPath(registryPath: string, kind: string): string {
   const name = createHash("sha256").update(kind, "utf8").digest("hex");
-  return join(auditDirectory(repo), `${name}.json`);
+  return join(auditDirectory(registryPath), `${name}.json`);
 }
 
 export async function recordOriginRefusals(
+  registryPath: string,
   repo: string,
   audits: readonly ProvenanceAudit[],
 ): Promise<ProvenanceAudit[]> {
@@ -28,10 +30,10 @@ export async function recordOriginRefusals(
       audit.type === "claude-origin-kind-refused",
   );
   if (refusals.length === 0) return [];
-  await mkdir(auditDirectory(repo), { recursive: true });
+  await mkdir(auditDirectory(registryPath), { recursive: true });
   const recorded: ProvenanceAudit[] = [];
   for (const audit of refusals) {
-    const directory = auditDirectory(repo);
+    const directory = auditDirectory(registryPath);
     const temporary = join(
       directory,
       `.origin-refusal.${process.pid}.${randomUUID()}.tmp`,
@@ -39,11 +41,11 @@ export async function recordOriginRefusals(
     try {
       await writeFile(
         temporary,
-        `${JSON.stringify({ kind: audit.kind, sessionId: audit.sessionId, ts: audit.ts })}\n`,
+        `${JSON.stringify({ kind: audit.kind, repo, sessionId: audit.sessionId, ts: audit.ts })}\n`,
         { flag: "wx" },
       );
       try {
-        await link(temporary, auditPath(repo, audit.kind));
+        await link(temporary, auditPath(registryPath, audit.kind));
         recorded.push(audit);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -55,9 +57,11 @@ export async function recordOriginRefusals(
   return recorded;
 }
 
-export async function readOriginRefusals(repo: string): Promise<OriginRefusalAudit[]> {
+export async function readOriginRefusals(
+  registryPath: string,
+): Promise<OriginRefusalAudit[]> {
   const refusals: OriginRefusalAudit[] = [];
-  const directory = auditDirectory(repo);
+  const directory = auditDirectory(registryPath);
   const names = await readdir(directory).catch(() => [] as string[]);
   for (const name of names.filter((candidate) => candidate.endsWith(".json")).sort()) {
     try {
@@ -67,10 +71,16 @@ export async function readOriginRefusals(repo: string): Promise<OriginRefusalAud
       >;
       if (
         typeof value.kind === "string" &&
+        typeof value.repo === "string" &&
         typeof value.sessionId === "string" &&
         typeof value.ts === "string"
       ) {
-        refusals.push({ kind: value.kind, sessionId: value.sessionId, ts: value.ts });
+        refusals.push({
+          kind: value.kind,
+          repo: value.repo,
+          sessionId: value.sessionId,
+          ts: value.ts,
+        });
       }
     } catch {
       // A partial audit marker must not make `argus status` itself go quiet.

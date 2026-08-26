@@ -190,14 +190,7 @@ export interface OriginRefusalStatus extends OriginRefusalAudit {
 export async function originRefusalStatus(
   configuration = supervisorConfiguration(),
 ): Promise<OriginRefusalStatus[]> {
-  const repos = await readEnabledRepos(configuration.job.registryPath);
-  return (
-    await Promise.all(
-      repos.map(async (repo) =>
-        (await readOriginRefusals(repo)).map((audit) => ({ ...audit, repo })),
-      ),
-    )
-  ).flat();
+  return readOriginRefusals(configuration.job.registryPath);
 }
 
 export function formatSupervisorStatus(

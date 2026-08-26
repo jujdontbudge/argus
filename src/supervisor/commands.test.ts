@@ -78,7 +78,7 @@ describe("argus status candidacy alarms", () => {
     await Bun.write(options.transcript, `${JSON.stringify(userRecord("human_v2"))}\n`);
     const source = createClaudeCodeSource({ dir: options.claudeDir });
 
-    await new ProvenanceFeed(source, options.repo).catchUp();
+    await new ProvenanceFeed(source, options.repo, options.registryPath).catchUp();
     const result = await runStatus(options);
 
     expect(result.exitCode).toBe(0);
@@ -98,7 +98,7 @@ describe("argus status candidacy alarms", () => {
     );
     const source = createClaudeCodeSource({ dir: options.claudeDir });
 
-    await new ProvenanceFeed(source, options.repo).catchUp();
+    await new ProvenanceFeed(source, options.repo, options.registryPath).catchUp();
     const result = await runStatus(options);
 
     expect(result.exitCode).toBe(0);
@@ -110,11 +110,42 @@ describe("argus status candidacy alarms", () => {
     await Bun.write(options.transcript, `${JSON.stringify(userRecord())}\n`);
     const source = createClaudeCodeSource({ dir: options.claudeDir });
 
-    await new ProvenanceFeed(source, options.repo).catchUp();
+    await new ProvenanceFeed(source, options.repo, options.registryPath).catchUp();
     const result = await runStatus(options);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).not.toContain("CANDIDACY ALERTS");
     expect(result.stdout).not.toContain("origin.kind");
+  });
+
+  test("deduplicates one origin kind across all enabled repos", async () => {
+    const options = await scratch();
+    const secondRepo = join(options.root, "second-repo");
+    const secondClaudeDir = join(options.root, "second-claude-project");
+    const secondTranscript = join(secondClaudeDir, "session.jsonl");
+    await Promise.all([
+      mkdir(secondRepo, { recursive: true }),
+      mkdir(secondClaudeDir, { recursive: true }),
+    ]);
+    await Bun.write(options.registryPath, `${options.repo}\n${secondRepo}\n`);
+    await Promise.all([
+      Bun.write(options.transcript, `${JSON.stringify(userRecord("human_v2"))}\n`),
+      Bun.write(secondTranscript, `${JSON.stringify(userRecord("human_v2"))}\n`),
+    ]);
+
+    await new ProvenanceFeed(
+      createClaudeCodeSource({ dir: options.claudeDir }),
+      options.repo,
+      options.registryPath,
+    ).catchUp();
+    await new ProvenanceFeed(
+      createClaudeCodeSource({ dir: secondClaudeDir }),
+      secondRepo,
+      options.registryPath,
+    ).catchUp();
+    const result = await runStatus(options);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.match(/refused Claude origin\.kind "human_v2"/g)).toHaveLength(1);
   });
 });
