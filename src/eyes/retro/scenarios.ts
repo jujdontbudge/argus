@@ -233,9 +233,15 @@ async function runDigest(
   }
 }
 
-/** Open the Retro eye against the sandbox with the fake gh wired in. */
-async function openRetroEye(sandbox: Sandbox, gh: FakeGh): Promise<RetroEye> {
-  return RetroEye.open({
+interface RetroScenarioEye {
+  eye: RetroEye;
+  tick(): Promise<RetroFiling[]>;
+}
+
+/** Open the Retro eye and drive the same timed `tick()` seam as the watcher. */
+async function openRetroEye(sandbox: Sandbox, gh: FakeGh): Promise<RetroScenarioEye> {
+  let nowMs = 0;
+  const eye = await RetroEye.open({
     repo: sandbox.repo,
     brain: fixtureRetroBrain(),
     cap: createBrainCap({
@@ -245,11 +251,19 @@ async function openRetroEye(sandbox: Sandbox, gh: FakeGh): Promise<RetroEye> {
     }),
     cadence: { quietWindowSeconds: 60, maxWaitSeconds: 600 },
     gh: gh.run,
-    now: () => 0,
+    now: () => nowMs,
     sleep: async () => {},
     onAlert: () => {},
     onAudit: () => {},
   });
+  return {
+    eye,
+    async tick() {
+      const due = eye.dueAt();
+      if (due !== null) nowMs = due;
+      return eye.tick();
+    },
+  };
 }
 
 const JOHAN_PROMPT =
@@ -274,9 +288,8 @@ export function rogueSessionScenario(
       body: "Retries, timeouts and error paths for src/fetch-helper.ts.",
     });
 
-    const eye = await openRetroEye(sandbox, gh);
-    // Whatever `argus up` left behind is the state of the world, not work.
-    await eye.prime();
+    const watcher = await openRetroEye(sandbox, gh);
+    const { eye } = watcher;
 
     // A registered ticket session doing its job — the control: covered work
     // must file NOTHING, however loudly it commits.
@@ -330,7 +343,7 @@ export function rogueSessionScenario(
       "provenance classified exactly Johan's rogue prompt as Johan-authored",
     );
 
-    const filings: RetroFiling[] = await eye.scan();
+    const filings: RetroFiling[] = await watcher.tick();
 
     assert(filings.length === 1, "exactly one retro was filed for the rogue work");
     const filing = filings[0]!;
@@ -392,7 +405,7 @@ export function rogueSessionScenario(
     }
 
     // Filing is once-only: a second sweep of the same world files nothing.
-    assert((await eye.scan()).length === 0, "the same rogue work is not re-filed");
+    assert((await watcher.tick()).length === 0, "the same rogue work is not re-filed");
   };
 }
 
@@ -462,9 +475,7 @@ export function scopeDriftScenario(
     gh.seed(TICKET_SEVEN);
     gh.seed(TICKET_NINE);
 
-    const eye = await openRetroEye(sandbox, gh);
-    // Whatever `argus up` left behind is the state of the world, not work.
-    await eye.prime();
+    const watcher = await openRetroEye(sandbox, gh);
 
     // The hijacked session: Hermes deployed it against #7, fake-Johan
     // attaches and points it somewhere else entirely.
@@ -513,7 +524,7 @@ export function scopeDriftScenario(
     );
     await nine.agentSays("Extracted the retry loop; tests still green. DONE.");
 
-    const filings: RetroFiling[] = await eye.scan();
+    const filings: RetroFiling[] = await watcher.tick();
 
     const drifts = filings.filter((filing) => filing.kind === "scope-drift");
     assert(
@@ -578,7 +589,7 @@ export function scopeDriftScenario(
       assertSandboxed(cwd, "every gh call ran inside the sandbox");
     }
 
-    assert((await eye.scan()).length === 0, "the same drift is not filed twice");
+    assert((await watcher.tick()).length === 0, "the same drift is not filed twice");
   };
 }
 
