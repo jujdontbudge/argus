@@ -214,14 +214,8 @@ export function createTabCmux(hostWorkspace: string, run: CmuxRun = runCmux): Cm
         hostWorkspace,
       ]);
       if (created.exitCode === 0 && cwd !== undefined) {
-        // The surface has to exist before it can be typed into, and cmux
-        // returns before the shell inside it is ready.
-        await Bun.sleep(1500);
         const fresh = await newestSurface(run, hostWorkspace);
-        if (fresh !== null) {
-          await run(["send", "--surface", fresh, "--", `cd ${JSON.stringify(cwd)}`]);
-          await run(["send-key", "--surface", fresh, "--", "enter"]);
-        }
+        if (fresh !== null) await settleShell(run, fresh, cwd);
       }
       return created;
     }
@@ -243,6 +237,63 @@ export function createTabCmux(hostWorkspace: string, run: CmuxRun = runCmux): Cm
     }
     return run(args);
   };
+}
+
+/**
+ * Put a freshly created tab into `cwd`, and do not return until it IS there.
+ *
+ * `cmux new-surface` returns as soon as the surface exists, which is BEFORE
+ * the shell inside it has printed its first prompt. Typing into that gap does
+ * not fail — the keystrokes interleave with the login banner, and on this
+ * machine `cd "<path>"` typed a beat too early arrived as a truncated path
+ * with an unterminated double quote. zsh then sat at `quote>` and consumed
+ * everything sent afterwards as continuation text, including the whole grill
+ * launch line, which therefore never ran and never reported that it had not.
+ * A blind `sleep` is the same bug with a longer fuse, so this waits on the
+ * shell's own output instead: a prompt, then `pwd` echoing the path back.
+ *
+ * This is the cost of the tab substitution, and it is worth stating plainly:
+ * `cmux new-workspace --cwd` has no such race, because the workspace is BORN
+ * in the directory and no keystroke is involved. Nothing in production runs
+ * this function.
+ */
+async function settleShell(run: CmuxRun, surface: string, cwd: string): Promise<boolean> {
+  const screen = async (): Promise<string> => {
+    const read = await run(["read-screen", "--surface", surface, "--lines", "40"]);
+    return read.exitCode === 0 ? read.stdout : "";
+  };
+  const type = async (line: string): Promise<void> => {
+    await run(["send", "--surface", surface, "--", line]);
+    await run(["send-key", "--surface", surface, "--", "enter"]);
+  };
+
+  // 1. A prompt, and a continuation prompt cleared if the shell is in one.
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    await Bun.sleep(500);
+    const text = await screen();
+    if (/\b(quote|dquote|cmdsubst)>/.test(text)) {
+      await run(["send-key", "--surface", surface, "--", "ctrl+c"]);
+      continue;
+    }
+    if (/[$%#]\s*$/m.test(text.trimEnd())) break;
+  }
+
+  // 2. `cd`, confirmed by the shell's own `pwd` rather than by assumption.
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await type(`cd ${JSON.stringify(cwd)} && pwd`);
+    for (let poll = 0; poll < 20; poll += 1) {
+      await Bun.sleep(500);
+      const text = await screen();
+      if (/\b(quote|dquote|cmdsubst)>/.test(text)) {
+        await run(["send-key", "--surface", surface, "--", "ctrl+c"]);
+        break;
+      }
+      // The echoed command also contains the path, so the match must be a
+      // line that is ONLY the path: that line is `pwd`'s output.
+      if (text.split(/\r?\n/).some((line) => line.trim() === cwd)) return true;
+    }
+  }
+  return false;
 }
 
 async function newestSurface(run: CmuxRun, workspace: string): Promise<string | null> {
@@ -607,7 +658,7 @@ export async function runGrillLive(
     // ---- the stand-in answer, through the registry-logged send ---------
     const askedBy = Date.now();
     let answered = false;
-    while (Date.now() - askedBy < 4 * 60 * 1000) {
+    while (Date.now() - askedBy < 3 * 60 * 1000) {
       await Bun.sleep(5000);
       await sampleFleet();
       const screen = await cmux(["read-screen", "--surface", started.workspace, "--lines", "80"]);
