@@ -68,6 +68,28 @@ in this repo.
      where it is currently relevant is a constraint the next design will not read.
    - Codex/Hermes are unaffected: they run on the ChatGPT subscription via `codex`,
      which is the same shape of dependency — a CLI the user is already logged into.
+8. **The same rule binds the OpenAI side: Argus never requires metered API access
+   from any provider. Agent capability comes from Johan's subscriptions.** (Johan
+   directive, 2026-08-26 — hard, permanent, architectural.) Item 7 was written about
+   Anthropic because that is where it was violated; stating it for only one vendor is
+   how the next design talks itself into a metered dependency on the other one.
+   - **Every background brain runs through `codex exec` on the ChatGPT subscription** —
+     Reviewer memory extraction, the skills writer, Digest, Retro including scope-drift,
+     and anything else that calls a model on a schedule. These are the dangerous ones:
+     they run unattended, on a cadence, forever, so a metered brain bills silently and
+     without anyone deciding to spend that money.
+   - A benchmark may **recommend** a model or effort that the subscription does not
+     reach. When that happens, implement the closest subscription-available
+     configuration and **say plainly in the ticket that the recommended one was not
+     reachable** — do not quietly adopt a metered config because a measurement favoured
+     it, and do not silently substitute without recording the substitution.
+   - This is not merely a cost preference. A metered dependency makes Argus stop working
+     the moment a credit balance runs out, on the one machine it runs on, which is the
+     same failure item 7 exists to prevent.
+   - Measured, not assumed: [#54](docs/research/watcher-brain-tiers.md) benchmarked the
+     paid step-up per eye and found it **worse**, so the subscription default is also the
+     quality default here. That is a happy accident, not the justification — the rule
+     holds even where a metered option would win.
 
 ---
 
