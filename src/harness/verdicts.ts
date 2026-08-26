@@ -69,7 +69,6 @@ export type Double =
   | "hermes"
   | "honcho"
   | "hooks"
-  | "peer-instance"
   | "supervisor"
   | "tracker";
 
@@ -80,7 +79,6 @@ export const DOUBLE_MEANING: Readonly<Record<Double, string>> = {
   hermes: "no Hermes process ran; sends are appended rows",
   honcho: "Honcho is `FixtureHoncho`, an in-memory array",
   hooks: "hook handlers are called in-process with hand-authored payloads",
-  "peer-instance": "the peer repo's eyes never start; its instance is dormant",
   supervisor:
     "a scratch registry disables launchd control; no supervisor or eyes start",
   tracker: "`gh` is `createFakeGh`; no tracker was written",
@@ -586,7 +584,7 @@ export const SPEC_MANIFESTS: Readonly<
         assertions: [],
         id: "13.9.query-workspace",
         shortfall:
-          "UNCOVERED: no Honcho workspace is queried. `FixtureHoncho` is an in-memory array in `src/eyes/honcho/scenarios.ts`; the only code in the tree that talks to a real instance is `src/eyes/honcho/live.test.ts`, behind its own gate and outside this slot",
+          "UNCOVERED: no Honcho workspace is queried. `FixtureHoncho` is an in-memory array in `src/eyes/honcho/scenarios.ts`. #76: the opt-in LIVE rendering covers this behind `ARGUS_LIVE_HONCHO=1` — see `HONCHO_ISOLATION_MANIFESTS` in `honcho-isolation.ts`, which drives both repos' production Honcho eyes into a real local instance and queries the workspaces back out of it. THIS slot's verdict is unchanged, because this slot still runs on an in-memory array, and when the gate is shut the live rendering does not run at all",
         spec: "query the repo's Honcho workspace",
       },
       {
@@ -596,7 +594,7 @@ export const SPEC_MANIFESTS: Readonly<
         ],
         id: "13.9.representation-johan-only",
         shortfall:
-          "`FixtureHoncho.representation` filters `this.messages` by `peer_id`. That is peer ROUTING, and it proves the eye addressed the right peer — it can never prove a DERIVED representation excludes non-Johan content, because no representation is derived",
+          "`FixtureHoncho.representation` filters `this.messages` by `peer_id`. That is peer ROUTING, and it proves the eye addressed the right peer — it can never prove a DERIVED representation excludes non-Johan content, because no representation is derived. #76's live rendering moves the routing claim onto the real service's own peer filter and queries the representation endpoint for real; it stays PARTIAL there too, because Honcho's Deriver waits for 512 tokens or 30 minutes and that drive deliberately stays under the threshold",
         spec: "the Johan representation derives only from Johan-authored messages",
       },
       {
@@ -607,13 +605,18 @@ export const SPEC_MANIFESTS: Readonly<
         ],
         id: "13.9.repo-isolation",
         shortfall:
-          "the two peers are given different `HERMES_HOME`s, which AUDIT.md §4 item 11 records as hiding the `argus-<basename>` collision that two same-named repos hit under one real HOME",
+          "the two peers are given different `HERMES_HOME`s, which AUDIT.md §4 item 11 records as hiding the `argus-<basename>` collision that two same-named repos hit under one real HOME. #76's live rendering proves the two workspaces separate on a real instance, but it inherits this same shortfall",
         spec: "query the repo's Honcho workspace [per-repo isolation]",
       },
     ],
   },
   10: {
-    doubles: ["agent", "brain", "peer-instance"],
+    // #76: `peer-instance` is GONE, and it is the only double this ticket
+    // removed anywhere. The peer's five real eyes now run — see
+    // `blastRadiusZeroScenario`. `agent` and `brain` stay, because an idle
+    // peer repo gives the eyes' brains nothing to spend a call on, so this
+    // slot still grades STRUCTURAL and does not pretend otherwise.
+    doubles: ["agent", "brain"],
     number: 10,
     title: "Blast-radius zero",
     requirements: [
@@ -624,13 +627,24 @@ export const SPEC_MANIFESTS: Readonly<
         spec: "wipe the sandbox repo's `.argus/`",
       },
       {
+        // The shortfall #76 closed, and what closed it. The peer's instance
+        // is running when the primary is wiped, so byte-identity is no longer
+        // trivially true: it is asserted of a repo whose five production
+        // watcher processes were mid-poll, none of which died, restarted or
+        // recorded an error, all of which completed a poll AFTER the wipe,
+        // and whose archiver then archived a message written after it.
         assertions: [
-          "peer .argus state stayed byte-identical",
+          "the peer repo's five real eyes were running before the wipe",
+          "peer .argus state stayed byte-identical while its own eyes were running",
           "peer supervisor state stayed byte-identical",
+          "the peer archive gained and lost nothing across the wipe",
+          "every peer eye kept its pid across the wipe — none died or restarted",
+          "no peer eye recorded a new error across the wipe",
+          "every peer eye's heartbeat advanced past the wipe — awake, not merely alive",
+          "the peer instance archived a message written after the primary wipe",
         ],
         id: "13.10.no-other-instance-noticed",
-        shortfall:
-          "the peer has NO instance running: `blastRadiusZeroScenario` never starts the peer's eyes, so 'noticed nothing' is asserted of a dormant directory. Byte-identity is trivially true when nothing is watching, which is the one thing SPEC §13.10 rests on",
+        shortfall: "",
         spec: "no other repo's instance noticed",
       },
     ],

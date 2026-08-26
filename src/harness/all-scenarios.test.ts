@@ -73,21 +73,32 @@ const CONTRIBUTED: Record<number, string[]> = {
     "Johan's representation contains only Johan-authored messages", // #32 honcho
   ],
   10: [
-    "peer .argus state stayed byte-identical", // #27 up
+    "peer .argus state stayed byte-identical while its own eyes were running", // #27 up, #76 live peer
+    "the peer instance archived a message written after the primary wipe", // #76
   ],
 };
 
 /**
  * #63 — the audit's central finding, as a number that cannot drift.
  *
- * Of 40 SPEC-derived requirements across the ten slots, 4 are COVERED with no
- * known shortfall, 34 are PARTIAL and 2 are UNCOVERED. All four gaps the audit
- * named are in here — scenario 1's closure (13.1.tickets-closed), scenario 7's
- * native hook (13.7.native-hook), scenario 9's representation
- * (13.9.representation-johan-only) and scenario 10's dormant peer
- * (13.10.no-other-instance-noticed) — and none of them is a failing test.
- * Downgrading a claim is what success looks like for this ticket, so `covered`
- * going DOWN is not a failure. Changing silently is.
+ * Of 40 SPEC-derived requirements across the ten slots, 5 are COVERED with no
+ * known shortfall, 33 are PARTIAL and 2 are UNCOVERED. Three of the four gaps
+ * the audit named are still in here — scenario 1's closure
+ * (13.1.tickets-closed), scenario 7's native hook (13.7.native-hook) and
+ * scenario 9's representation (13.9.representation-johan-only) — and none of
+ * them is a failing test. Downgrading a claim is what success looks like for
+ * these tickets, so `covered` going DOWN is not a failure. Changing silently
+ * is.
+ *
+ * AMENDED BY #76, which closed the fourth: scenario 10's dormant peer
+ * (13.10.no-other-instance-noticed) was PARTIAL because the slot never
+ * started the peer's eyes, so "noticed nothing" was asserted of a dormant
+ * directory. The peer's five real watcher processes now run across the wipe,
+ * so it grades COVERED — the only number in this table that moved, and it
+ * moved by the slot doing more, not by an assertion doing less. Slot 9's
+ * numbers are UNCHANGED on purpose: its live rendering is additive and
+ * separately graded in `honcho-isolation.ts`, and this slot still drives an
+ * in-memory array.
  */
 const PINNED_COVERAGE: Record<number, {
   covered: number;
@@ -103,7 +114,7 @@ const PINNED_COVERAGE: Record<number, {
   7: { covered: 1, partial: 3, uncovered: 0 },
   8: { covered: 0, partial: 3, uncovered: 0 },
   9: { covered: 0, partial: 2, uncovered: 1 },
-  10: { covered: 1, partial: 1, uncovered: 0 },
+  10: { covered: 2, partial: 0, uncovered: 0 },
 };
 
 describe("the full SPEC §13 suite", () => {
