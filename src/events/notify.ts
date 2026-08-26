@@ -1,8 +1,12 @@
-import { mkdir, open } from "node:fs/promises";
-import { basename, dirname } from "node:path";
+import { basename } from "node:path";
 
 import { hashText, normalize } from "../matching";
-import { loadRegistry, registryPaths, type SessionRecord } from "../provenance";
+import {
+  appendSendRow,
+  loadRegistry,
+  registryPaths,
+  type SessionRecord,
+} from "../provenance";
 import type { ArgusEvent } from "./schema.ts";
 
 export interface CmuxSendRequest {
@@ -50,17 +54,6 @@ function notificationText(event: ArgusEvent): string {
   );
 }
 
-async function appendDurably(path: string, row: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const file = await open(path, "a");
-  try {
-    await file.write(`${JSON.stringify(row)}\n`, undefined, "utf8");
-    await file.sync();
-  } finally {
-    await file.close();
-  }
-}
-
 export interface CmuxRunResult {
   exitCode: number;
   stderr: string;
@@ -70,7 +63,7 @@ export interface CmuxRunResult {
 /** The one place this module shells out; injected so the seam is testable. */
 export type CmuxRun = (args: readonly string[]) => Promise<CmuxRunResult>;
 
-const runCmux: CmuxRun = async (args) => {
+export const runCmux: CmuxRun = async (args) => {
   const child = Bun.spawn(["cmux", ...args], { stderr: "pipe", stdout: "pipe" });
   const [exitCode, stdout, stderr] = await Promise.all([
     child.exited,
@@ -81,7 +74,7 @@ const runCmux: CmuxRun = async (args) => {
 };
 
 /** `  workspace:14  argus` / `* surface:84  argus-dispatcher` → the ref. */
-function listedRefs(stdout: string): Set<string> {
+export function listedRefs(stdout: string): Set<string> {
   const refs = new Set<string>();
   for (const line of stdout.split(/\r?\n/)) {
     const match = /^[\s*]*((?:workspace|surface):[A-Za-z0-9-]+)\b/.exec(line);
@@ -89,6 +82,14 @@ function listedRefs(stdout: string): Set<string> {
   }
   return refs;
 }
+
+export interface CmuxTarget {
+  surface?: string;
+  workspace: string;
+}
+
+/** Does cmux itself resolve this handle? `ok: false` carries the reason. */
+export type CmuxResolve = (target: CmuxTarget) => Promise<CmuxSendResult>;
 
 /**
  * Ticket #7, measured against a real cmux 0.62.2: an unresolvable handle is
@@ -102,38 +103,59 @@ function listedRefs(stdout: string): Set<string> {
  * anything, and refuses when it does not resolve. The refusal reaches
  * `notifyMissionControl` as `ok: false`, which is already the durable
  * `ARGUS EVENT DELIVERY DEGRADED` path; the event file is untouched either way.
+ *
+ * EXTRACTED, #55: the worker dispatcher has to ask the same question BEFORE it
+ * logs a follow-up send, so that a send it cannot deliver is never written
+ * into `sends.jsonl` as though it had been. Same code, two callers — a second
+ * resolver that drifted from this one would reopen exactly the hazard #7
+ * closed.
  */
-export function createCmuxSend(run: CmuxRun = runCmux): CmuxSend {
+export function createCmuxResolve(run: CmuxRun = runCmux): CmuxResolve {
   const failed = (result: CmuxRunResult, what: string): string =>
     result.stderr.trim() || `cmux ${what} exited ${result.exitCode}`;
 
-  return async (request) => {
+  return async (target) => {
     const workspaces = await run(["list-workspaces"]);
     if (workspaces.exitCode !== 0) {
       return { ok: false, error: failed(workspaces, "list-workspaces") };
     }
-    if (!listedRefs(workspaces.stdout).has(request.workspace)) {
+    if (!listedRefs(workspaces.stdout).has(target.workspace)) {
       return {
         ok: false,
-        error: `cmux does not resolve ${request.workspace}; refusing to type into the focused workspace instead`,
+        error: `cmux does not resolve ${target.workspace}; refusing to type into the focused workspace instead`,
       };
     }
-    if (request.surface !== undefined) {
+    if (target.surface !== undefined) {
       const surfaces = await run([
         "list-pane-surfaces",
         "--workspace",
-        request.workspace,
+        target.workspace,
       ]);
       if (surfaces.exitCode !== 0) {
         return { ok: false, error: failed(surfaces, "list-pane-surfaces") };
       }
-      if (!listedRefs(surfaces.stdout).has(request.surface)) {
+      if (!listedRefs(surfaces.stdout).has(target.surface)) {
         return {
           ok: false,
-          error: `cmux does not resolve ${request.surface} in ${request.workspace}; refusing to type into the focused surface instead`,
+          error: `cmux does not resolve ${target.surface} in ${target.workspace}; refusing to type into the focused surface instead`,
         };
       }
     }
+    return { ok: true };
+  };
+}
+
+/** The resolver production uses; the guard #7 added, by itself. */
+export const resolveWithCmux: CmuxResolve = createCmuxResolve();
+
+export function createCmuxSend(run: CmuxRun = runCmux): CmuxSend {
+  const failed = (result: CmuxRunResult, what: string): string =>
+    result.stderr.trim() || `cmux ${what} exited ${result.exitCode}`;
+  const resolve = createCmuxResolve(run);
+
+  return async (request) => {
+    const resolved = await resolve(request);
+    if (!resolved.ok) return resolved;
 
     const target = request.surface
       ? ["--surface", request.surface]
@@ -170,7 +192,7 @@ export async function notifyMissionControl(
 
   const text = notificationText(event);
   const now = (options.now?.() ?? new Date()).toISOString();
-  await appendDurably(paths.sendsFile, {
+  await appendSendRow(paths.sendsFile, {
     ts: now,
     id: `argus-event:${event.id}`,
     sessionId: mission.sessionId,

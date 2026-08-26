@@ -16,6 +16,13 @@ export {
   type Via,
 } from "./classifier";
 export {
+  appendDurably,
+  appendSendRow,
+  appendSessionRow,
+  type SendRow,
+  type SessionRow,
+} from "./append";
+export {
   loadRegistry,
   parseSendsJsonl,
   parseSessionsJsonl,

@@ -1,0 +1,80 @@
+==============================================================================
+ARGUS REGISTRY-FIRST WORKER DEPLOYMENT PRIMITIVE — ticket #55
+==============================================================================
+Both halves drive `deployWorker` itself: production router, production spawner,
+production registry writer. Nothing below was hand-fed to the primitive except
+the ticket, the repo and the dispatch prompt.
+
+  claude 2.1.246          native install, ~/.local/bin/claude
+  codex-cli 0.149.1       scratch CODEX_HOME, NO auth (401 before any model call)
+  cmux 0.62.2             not in the path of either half — a workspace is optional
+
+command   ARGUS_LIVE_CLAUDE_SUBSCRIPTION=1 ARGUS_LIVE_CODEX_DEPLOY=1 \
+            bun test src/deploy/live.test.ts
+result    2 pass  0 fail  12 expect() calls  [45.10s]
+
+------------------------------------------------------------------------------
+1. claude — SPEC §5 rule 1, strictly: Argus names the session, then starts it
+------------------------------------------------------------------------------
+Subscription mode: real HOME, sandbox cwd, no token (SPEC §1 item 7). It spends
+one real subscription call.
+
+  preassigned session id   fc3c277c-48c8-4f0e-95db-93583529e3c3
+  branch                   argus/ticket-55
+  worktree                 …/argus-live-deploy-TwTu9W-worktrees/ticket-55
+  transcript session ids   ["fc3c277c-48c8-4f0e-95db-93583529e3c3"]
+
+  registry row, fsynced BEFORE the process existed:
+    {"agent":"claude",
+     "dispatchPrompt":"You are working ticket #55. Reply with exactly the word
+       ACKNOWLEDGED and nothing else. Do not run any commands and do not write
+       any files.",
+     "sessionId":"fc3c277c-48c8-4f0e-95db-93583529e3c3",
+     "ticket":"55",
+     "ts":"2026-08-26T05:25:33.105Z",
+     "worktree":"…/argus-live-deploy-TwTu9W-worktrees/ticket-55"}
+
+  classifier, off that row and the real transcript:
+    author hermes / via dispatch-prompt / ticket 55
+  assistant reply contained ACKNOWLEDGED, claude exited 0.
+
+The id in the row and the id in the transcript are the same string, and the row
+is older than the process. Before #55 the only way to get that row was to read
+the id back OUT of a finished transcript and append afterwards, which is the
+opposite order.
+
+------------------------------------------------------------------------------
+2. codex — the CLI names the session, so the row follows its announcement
+------------------------------------------------------------------------------
+Free: a scratch CODEX_HOME has no auth, so the run 401s before the model. What
+is under test happens entirely before that point.
+
+  announced session id     01a03c88-1d0e-76f0-b43c-f578c7c19088
+                           (from {"type":"thread.started","thread_id":…},
+                            the FIRST line of `codex exec --json` stdout)
+  registry row             {"agent":"codex", …,
+                            "sessionId":"01a03c88-1d0e-76f0-b43c-f578c7c19088",
+                            "ticket":"55",
+                            "ts":"2026-08-26T05:25:47.562Z", …}
+  rollout file             …/argus-codex-home-3bImJx/sessions/2026/08/26/
+                             rollout-2026-08-26T00-25-48-01a03c88-….jsonl
+
+  at the instant `deployWorker` returned (row already fsynced):
+    the rollout did NOT contain the dispatch prompt
+  after the session ran:
+    the rollout contains the dispatch prompt AND the same session id
+
+Measured CLI facts this route rests on (same scratch, no auth, no spend):
+  - `codex exec --json` prints `thread.started` before `turn.started`;
+  - the rollout's user-message record (ordinal 8) landed ~1.2s later;
+  - `codex exec --json -` reads stdin to EOF BEFORE creating a session — it
+    printed `No prompt provided via stdin` while a writer still held the pipe —
+    so a session id cannot be obtained before handing over the prompt.
+
+------------------------------------------------------------------------------
+3. What is NOT proven here
+------------------------------------------------------------------------------
+No frontier read, no claim, no concurrency cap (#56). No verify/merge/close and
+no ticket closure (#57). No cmux workspace was created in either half, so the
+`workspace: "auto"` discovery path and `sendToWorker`'s delivery leg are proven
+only against a scripted cmux, never against the real 0.62.2 app.
