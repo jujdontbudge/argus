@@ -233,6 +233,38 @@ export class ArchiverEye {
   }
 }
 
+/**
+ * The session ids this repo has archived at least one message for (#96).
+ *
+ * READ-ONLY on purpose: `argus status` must never create, migrate or lock the
+ * archive a live watcher owns. `null` means "cannot tell" — an archive that
+ * exists but will not open — and callers must treat that as no answer rather
+ * than as an empty archive, because an empty answer would flag every
+ * deployment in the repo as silent. A MISSING archive is a real answer: the
+ * archiver creates the file when it opens, so if it is alive and the file is
+ * absent, nothing has been archived.
+ */
+export async function readArchivedSessionIds(
+  repo: string,
+): Promise<Set<string> | null> {
+  const path = join(repo, ".argus", "archive.db");
+  if (!(await Bun.file(path).exists())) return new Set<string>();
+  let database: Database | undefined;
+  try {
+    database = new Database(path, { readonly: true, strict: true });
+    const rows = database
+      .query<{ session_id: string }, []>(
+        "SELECT DISTINCT session_id FROM archive_messages",
+      )
+      .all();
+    return new Set(rows.map(({ session_id }) => session_id));
+  } catch {
+    return null;
+  } finally {
+    database?.close(false);
+  }
+}
+
 /** Production composition for the passive archive eye. */
 export function openArchiver(repo: string): Promise<ArchiverEye> {
   return ArchiverEye.open({ repo });
