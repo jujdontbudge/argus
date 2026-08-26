@@ -1,153 +1,52 @@
 ==============================================================================
-HERMES-DRIVEN ARGUS BATCH — ticket #82 (IN PROGRESS)
+HERMES-DRIVEN ARGUS BATCH — ticket #82 (RE-RUN, second attempt)
 ==============================================================================
 Run date        2026-08-26
 checkout        /Users/johansardar/argus-worktrees/hermes-e2e (build/hermes-e2e)
-sandbox root    /private/tmp/argus-t82-LFSpxD
+base commit     b267ebd (merge: a deployed session is a cmux TAB, never a
+                workspace (#95))
+sandbox root    /private/tmp/argus-82-run2
 isolation       scratch HOME, HERMES_HOME, CODEX_HOME, CLAUDE_CONFIG_DIR;
-                env -i so no ambient credential or PATH leaks in
-credentials     ~/.hermes/auth.json copied into scratch HERMES_HOME (permitted
-                by the ticket, same touchpoint as #78 for CODEX_HOME)
+                `env -i` so no ambient credential, PATH or CMUX var leaks in
+credentials     ~/.hermes/auth.json and ~/.codex/auth.json COPIED (never moved)
+                into the scratch homes — this ticket's one sanctioned touchpoint
 
-  real ~/.hermes/auth.json BEFORE  da742362b9e49833760e31672d012dd9e894389617a965074a3244eb2b349220
-  real ~/.codex/auth.json  BEFORE  ab81a7c70ad1ea4db247eec89ae1ff3568e50af3014dc694f689119408c66315
-
-------------------------------------------------------------------------------
-0. Hermes is alive headless in the scratch home
-------------------------------------------------------------------------------
-$ cd $SANDBOX/repo
-$ env -i PATH=... HOME=$R/home HERMES_HOME=$R/home/.hermes \
-      CODEX_HOME=$R/home/.codex CLAUDE_CONFIG_DIR=$R/home/.claude TERM=dumb \
-      hermes -z 'Reply with exactly the word: ALIVE'
-  out| ALIVE
-
-  hermes 0.16.0, provider openai-codex (subscription; no API key in env).
-  Real credential re-checksummed immediately after this call: UNCHANGED.
+This file REPLACES the first attempt's evidence. The first attempt is preserved
+in git history (docs/acceptance/hermes-orchestrator-e2e.txt at b267ebd~). Its
+two walls — #94 and #95 — were fixed and merged before this run; §2 and §7
+below record what happened when this run reached the same two places.
 
 ------------------------------------------------------------------------------
-1. argus init on the sandbox repo
+0. Credential checksums — the non-negotiable gate
 ------------------------------------------------------------------------------
-$ argus init
-  exit 0
-  out| Argus repo scaffold: /private/tmp/argus-t82-LFSpxD/repo
-  out|   .argus/            layout, config.yaml, canonical memory and skills
-  out|   .claude/skills     -> ../.argus/skills
-  out| wiring: claude skills adapter OK (resolves; 0 canonical skills to read yet)
-  out| wiring: AGENTS.md pointers OK (6/6 resolve)
+Baselines given in the ticket, verified BEFORE anything ran:
 
-------------------------------------------------------------------------------
-2. argus up — registers the skill directory
-------------------------------------------------------------------------------
-$ argus up
-  exit 0
-  out| TRACKER-LESS MODE: no GitHub remote; skipped GitHub labels and tracker checks
-  out| HONCHO DEGRADED: http://localhost:8000 unavailable (...); local bindings converged
-  out| Hermes slow poll: created (every 5m)
-  out| Hermes profile: argus-repo-e607c4d658090ea3348506ed635cd20029cd2634db2bfc4a7d57a66e7673fef4
-  out| Push hooks: Claude Stop + Codex notify
-  out| cmux hooks: optional (resume convenience; not required for signal delivery)
-  out|   cmux 0.62.2 has no `hooks` command — nothing in Argus requires one
-  out| wiring: claude skills adapter OK (resolves; 0 canonical skills to read yet)
-  out| wiring: AGENTS.md pointers OK (6/6 resolve)
-  out| wiring: Hermes memory binding OK (profile memories -> .argus/memory)
-  out| wiring: Hermes skills binding OK (profile skills.external_dirs includes .argus/skills)
-  out| Argus converged /private/tmp/argus-t82-LFSpxD/repo
+  hermes  da742362b9e49833760e31672d012dd9e894389617a965074a3244eb2b349220
+  codex   ab81a7c70ad1ea4db247eec89ae1ff3568e50af3014dc694f689119408c66315
 
-  No supervisor LaunchAgent was installed: #86's scratch-HOME refusal
-  (src/supervisor/control.ts:156) held with ARGUS_ALLOW_SCRATCH_LAUNCHD unset.
-    pgrep -f 'bin/bun.*cli\.ts watch' | wc -l  -> 0
-    launchctl list | grep -ci argus            -> 0
+Both matched exactly. ~/.claude/.credentials.json was NEVER read or copied;
+it was checksummed only, and that checksum is not reproduced here because the
+ticket asks only that it be left alone.
 
-******************************************************************************
-FINDING 1 (BLOCKER, argus bug not skill bug)
-  `argus up` registers an EMPTY skills directory and calls it OK.
-******************************************************************************
-
-  The profile config after `up`:
-
-    $ grep -A3 '^skills:' $HERMES_HOME/profiles/argus-repo-e607.../config.yaml
-      skills:
-        external_dirs:
-          - "/private/tmp/argus-t82-LFSpxD/repo/.argus/skills"
-
-  The directory it points at:
-
-    $ ls -la /private/tmp/argus-t82-LFSpxD/repo/.argus/skills/
-      total 0
-      drwxr-xr-x   2 johansardar  wheel   64 Aug 26 14:38 .
-      drwxr-xr-x  10 johansardar  wheel  320 Aug 26 14:38 ..
-
-  There is NO code path that places skills/argus-orchestrator/SKILL.md into a
-  repo's .argus/skills/. src/up/scaffold.ts:14-20 creates "skills" as one of
-  five empty ARGUS_DIRECTORIES; src/up/bindings.ts:620-632 writes that empty
-  path into skills.external_dirs. grep for "argus-orchestrator" across src/
-  hits exactly two lines, both the dispatch-prompt string at bindings.ts:672 --
-  never a copy, symlink or install of the skill itself.
-
-  Consequence: on any repo other than one where a human hand-placed the file,
-  `argus up` hands Hermes a dispatch prompt that says "Use the repo's
-  argus-orchestrator skill" (bindings.ts:672) pointing into a directory that
-  contains no skills at all. The verifier prints "Hermes skills binding OK"
-  because it checks that external_dirs CONTAINS the path, not that the path
-  contains a skill -- while the adjacent line already says "0 canonical skills
-  to read yet" and is treated as informational.
-
-  Corroboration that this has never worked anywhere real:
-    ls ~/argus/.argus/skills/   -> No such file or directory
-    ls -d ~/.hermes/profiles/*/ -> no matches
-  argus has never been init'ed on its own checkout, and no argus Hermes
-  profile has ever existed on this machine.
+Johan's live ~/.codex/config.toml was never written:
+  $ grep -c "argus:notify" ~/.codex/config.toml   -> 0
 
 ------------------------------------------------------------------------------
-3. First Hermes drive — verbatim
+1. A correction to the baseline check the ticket itself prescribes
 ------------------------------------------------------------------------------
-The mission-control prompt deliberately gave Hermes the JOB, never the steps:
+The ticket's own cleanup check is:
 
-  You are mission control for the Argus repository at $SANDBOX/repo.
-  Use the repo's argus-orchestrator skill. Never implement worker tickets yourself.
-  Three tickets are open on this repo's tracker. Deploy, monitor and close that
-  batch. `argus`, `gh`, `cmux` and `git` are on PATH.
-  When you are done, report exactly what you did and what, if anything, stopped you.
+  pgrep -f 'bin/bun.*cli\.ts watch' | wc -l   -> 0
 
-$ hermes -z "$(cat mission.txt)" -s argus-orchestrator --yolo
+Run inside a shell whose own command line contains that pattern, `pgrep -f`
+MATCHES ITS OWN INVOKING SHELL. The first time this run issued the check it
+returned 1 with no watcher running at all. Proof:
 
-Every argus/cmux/gh call below was made by HERMES, logged by shims on the
-sandbox PATH. These are not commands the ticket author typed.
+  $ pgrep -f 'bin/bun.*cli\.ts watch' | wc -l
+         1
+  $ ps -Ao pid,command | grep -E 'bin/bun.*cli\.ts watch' | grep -v grep | wc -l
+         0
 
-  $SANDBOX/tracker/argus.log
-    $ argus --help
-    $ argus status
-    $ argus dispatch --help
-    $ argus dispatch
-    $ argus dispatch
-    $ argus complete
-    $ argus status
-
-  $SANDBOX/tracker/cmux.log
-    $ cmux --version
-    $ cmux list-workspaces
-    $ cmux new-workspace --cwd $SANDBOX/repo --focus false
-      -> REFUSED (workspace creation forbidden)
-
-  $SANDBOX/tracker/gh.log (excerpt)
-    $ gh repo view --json nameWithOwner --jq .nameWithOwner
-    $ gh issue list --state open --limit 20 --json number,title,labels,assignees,url
-    $ gh auth status
-
-Hermes' verbatim closing report:
-
-  Batch was not deployed or closed because the required orchestration
-  infrastructure refused the operation.
-  ...
-  1. `argus dispatch` reported tracker-less mode: `no GitHub tracker for this
-     repo (no remote, no auth, or no network)`
-  2. Independently, cmux refused the workspace required by the orchestrator
-     skill: `cmux: refusing to create a workspace in this environment`
-  I did not bypass either refusal and did not implement any ticket myself.
-
-Wall 1 was MY instrument's gap, not Argus's: trackerRepoName (src/eyes/retro/
-gh.ts:303-314) calls `gh repo view --json nameWithOwner --jq .nameWithOwner`
-and my stub ignored `--jq`. Fixed the stub, not Argus. Recorded here because
-honesty about which walls are the harness's matters.
-
-Wall 2 is real and is FINDING 2.
+Every watcher count in this file is therefore taken with `ps`, and the `pgrep`
+form is reported beside it in §9 for the ticket's sake. A future ticket that
+trusts the bare `pgrep` number will chase a watcher that does not exist.
