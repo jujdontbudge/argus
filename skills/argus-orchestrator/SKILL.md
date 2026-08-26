@@ -8,14 +8,35 @@ description: Orchestrate Argus ticket deployment, provenance registration, cmux 
 Act as the dispatcher. Never implement worker tickets. Follow `SPEC.md` §3, §5,
 and §7; use this procedure for the operational details.
 
+## Run every argus command from inside the repository
+
+`argus` takes no `--repo` flag. Every verb — `dispatch`, `complete`, `signals`,
+`status`, `grill` — finds its repository by walking up from the current working
+directory, and refuses outright when there is none:
+
+```
+argus dispatch: current directory is not inside a git repository
+```
+
+So `cd` to the repository first and stay there. Orchestrating "the repo at
+`<path>`" means running the commands *in* `<path>`.
+
+And `--help` works ONLY at the top level. `argus --help` lists the commands;
+`argus dispatch --help` does NOT print help — the flag is ignored and a real
+dispatch pass runs, claiming tickets and spawning paid agent sessions. Never
+probe a subcommand with `--help`.
+
 ## Preserve provenance before acting
 
 Treat `.argus/registry/` as the only provenance authority.
 
-1. Before starting any deployed session, append its session id, agent, ticket, full
-   dispatch prompt, and prefixed cmux workspace ref to
-   `.argus/registry/sessions.jsonl`. Do not start the session until the record is
-   durable.
+1. Every deployed session gets a `.argus/registry/sessions.jsonl` row — session
+   id, agent, ticket, full dispatch prompt, worktree, workspace and surface —
+   fsynced BEFORE the session starts. `argus dispatch` writes that row itself, so
+   do not write one by hand: you would double-log the session, and you could not
+   write it correctly anyway, because a Codex session's id is minted by Codex at
+   startup and announced on stdout. Your job is to dispatch through the command
+   that guarantees this order, never to reproduce it.
 2. Before every follow-up typed into any worker or Hermes session, append the send
    record to `.argus/registry/sends.jsonl`. Include the session id, agent, prefixed
    workspace/surface refs, timestamp, kind, exact logical text intended to land, and
@@ -45,14 +66,45 @@ allow consecutive sends to merge.
   transport encoding.
 
 If a non-command send does not land, surface an audit event and notify; never silently
-discard the unmatched registry entry.
+discard the unmatched registry entry — log a second row for the retry rather than
+reusing the first.
+
+There is no `argus resume`. A Codex worker dispatched with `codex exec` is a
+one-shot process, so once it exits its registry session has no live surface to
+send to, and following up means rebuilding the worker's environment by hand.
+When you do, carry `CODEX_HOME`, `HERMES_HOME` and the worktree path over
+deliberately: a resume launched under the wrong `CODEX_HOME` looks like a send
+that did not land, and you will debug the wrong layer.
 
 ## Keep cmux headless and attachable
 
-Create one workspace per deployed session. Name it `<repo>/<ticket-or-purpose>` and
-set `--cwd` to the repository or that ticket's worktree. Always use typed, prefixed
-refs such as `workspace:15` and `pane:38`. Pass `--focus false` on every programmatic
-action and never steal focus.
+**Never create a cmux workspace.** A deployed session is a TAB, not a workspace
+(#95, SPEC §7.2/§7.3). `argus dispatch` opens it for you with `cmux new-surface`
+in the workspace Argus is already running in — the one named by
+`CMUX_WORKSPACE_ID` — names it `argus #<ticket>`, records its surface id in the
+session's registry row, and closes it with `cmux close-surface` when the session
+is reaped. Argus creates ZERO workspaces, and neither do you: `cmux
+new-workspace` is not part of any Argus procedure. Outside cmux there is no
+`CMUX_WORKSPACE_ID`, and the deployment simply proceeds without a tab — a
+workspace is context, never a requirement.
+
+The addressable unit for a session is a SURFACE, not a pane. Typed prefixed refs
+(`workspace:1`, `surface:60`) and raw UUIDs both resolve — Argus uses UUIDs
+internally because `CMUX_WORKSPACE_ID` is one — but they are NOT equally safe.
+
+**Never pass a short ref to `close-surface`.** Short refs are positional and
+cmux REMAPS them as surfaces open and close, so the `surface:60` you read a
+moment ago can name a different tab by the time you close it — and closing it
+destroys someone else's session with no error. Hold the UUID from
+`cmux --id-format both tree --all --json`, re-resolve it immediately before the
+call, and close by UUID. Read-only verbs may use whatever ref is convenient;
+anything that destroys state uses a UUID.
+
+An unresolvable handle on cmux 0.62.2 does NOT error — it exits 0 and
+acts on the FOCUSED workspace, which is how a stray handle closes one of Johan's
+own tabs. `list-workspaces` sees only the current window and will miss the
+workspace Argus runs in; `tree --all` is the only whole-machine inventory. Never
+steal focus.
 
 Report worker state with `cmux set-status`, batch state with `cmux set-progress`, and
 blocking events with `cmux notify`. Open digests and ticket context beside mission
@@ -92,23 +144,35 @@ unregistered prompt lands and classifies as Johan.
 
 ## Dispatch the frontier
 
-Repeat this loop up to the concurrency cap in `.argus/config.yaml`; use `3` when the
-cap is absent.
+Run `argus dispatch` from inside the repository. One pass, and it is a command,
+not a procedure to improvise — the same rule the grill section states, for the
+same reason. In one fail-closed sequence it:
 
-1. Read GitHub for the current frontier: tickets that are open, unblocked, and
-   unclaimed.
-2. Claim one ticket by assigning it before deployment.
-3. Create a dedicated git worktree and a new cmux workspace rooted at that worktree.
-   Use one fresh worker session for exactly one ticket.
-4. Route `grilling`, `spec`, `review`, and `diagnosis` labels to Claude Code. Route all
-   other tickets to Codex by default. Let explicit `agent:claude-code` or
-   `agent:codex` labels override the default.
-5. Allocate the deployment session id, write the complete `sessions.jsonl` record,
-   then launch the routed agent and deliver the full dispatch prompt using the logged
-   send protocol.
-6. Monitor events and digests. On green—tests pass and review is clean—merge the
-   ticket branch from its worktree, close the ticket, and update the wayfinder map.
-   Own these GitHub state transitions; never assume the worker closed its ticket.
+1. reads the frontier from GitHub — tickets open, unblocked, unclaimed, and
+   without open sub-issues;
+2. recovers dead sessions first, freeing their slots and closing their tabs,
+   because a dead session's slot is capacity this pass may need;
+3. claims each ticket by assigning it, before any deployment;
+4. cuts a dedicated git worktree on the ticket's own branch;
+5. routes the agent — `grilling`, `spec`, `review` and `diagnosis` labels to
+   Claude Code, everything else to Codex by default, with an explicit
+   `agent:claude-code` or `agent:codex` label overriding;
+6. writes the complete `sessions.jsonl` record and fsyncs it, THEN spawns the
+   agent, THEN opens and names its tab;
+7. stops at the concurrency cap in `.argus/config.yaml` (`3` when absent),
+   accounted through durable slots.
+
+Do not hand-build this loop. You cannot reproduce its ordering guarantees from
+outside: the slot accounting is durable and racy to imitate, and a Codex
+session's id does not exist until Codex announces it on stdout, so the registry
+row you were about to write by hand cannot be written at the moment the
+provenance rule requires it. `argus dispatch` scans for that announcement and is
+the only thing that can.
+
+Read what it printed. A degraded pass exits non-zero and says why; the tickets
+it held back are named with the reason. Then monitor events and digests, and let
+`argus complete` own every GitHub state transition — never merge or close a
+ticket yourself, and never assume a worker closed its own.
 
 ## Close finished tickets
 
@@ -133,21 +197,40 @@ Never merge or close a ticket by hand to get around a refusal; fix what the gate
 
 `argus up` installs a repo-scoped Hermes cron job that runs `argus signals` every five
 minutes. The command emits only unseen terminal prompts and stays silent on an empty
-sweep. Do not create a second poll job or manually replay a signal: push and poll share
-the durable consumer cursor specifically to prevent double delivery.
+sweep. Running `argus signals` yourself is safe and often the right move when you
+want the current sweep now rather than in five minutes — push and poll share one
+durable consumer cursor, so a signal is delivered once no matter who asks. What
+you must not do is install a SECOND poll job, or re-inject a signal you have
+already consumed by hand; both defeat the cursor.
 
 ## Launch and observe Hermes
 
-Run Hermes for an Argus repository with a repo-scoped profile:
+`argus up` creates a repo-scoped Hermes profile INSIDE the Hermes home, at
+`$HERMES_HOME/profiles/argus-repo-<sha256-of-the-repo-path>`, and registers the
+repo's `.argus/skills` in that profile's `config.yaml`. The profile is a
+directory under the home — it is not itself a `HERMES_HOME`, and pointing
+`HERMES_HOME` at it makes Hermes look for `profiles/` inside the profile. Read
+the profile name from `$HERMES_HOME/profiles/` rather than guessing it; the
+digest is not reconstructable by eye.
+
+To drive a batch unattended, run Hermes headless with this skill selected:
 
 ```sh
-HERMES_HOME="$HOME/.hermes/profiles/argus-<slug>" hermes chat
+hermes -z "<the mission>" -s argus-orchestrator
 ```
 
 Do not switch the machine-wide active Hermes profile. Receive completion and blocked
 events as files under `.argus/events/`; notify Hermes with a one-line `cmux send` to
 its mission-control workspace through the same registry-first send protocol.
 
-Zoom into work in this order: `.argus/sessions/INDEX.md`, then the selected session
-digest, then `argus search "<query>"`. Keep routine monitoring at the lowest useful
-resolution.
+Zoom into work in this order: `argus status` for the eyes and any outstanding
+audits, then `.argus/sessions/INDEX.md`, then the selected session digest, then
+`argus search "<query>"`. Keep routine monitoring at the lowest useful resolution.
+
+Watch `.argus/events/` as well as the tickets. A `blocked-on-human` worker
+currently writes its reason ONLY to an event file — the ticket itself stays open,
+claimed and silent — so a tracker that looks quiet is not evidence that anything
+is well. If the same ticket blocks for the same reason on consecutive passes,
+stop redeploying it: the next `argus dispatch` will recover the dead session and
+deploy it again, and it will fail the same way, at the cost of a fresh agent
+session each pass. Answer the block instead, or say plainly that it needs Johan.
