@@ -192,7 +192,8 @@ The registry (`.argus/registry/`) is the single source of provenance truth:
      recorded `promptSource: "typed"` when the session was opened in a terminal
      and `"sdk"` when it was opened headlessly — and Argus's own dispatcher
      spawns every worker headlessly. The same injected `<task-notification>` is
-     stamped `"system"` on some CLI versions and `"sdk"` on others. So the
+     stamped `"system"` in a terminal session and `"sdk"` in an SDK-fronted
+     one — the same confusion, pointing the other way. So the
      eligibility question is only *did a prompt land here*: a record the CLI
      attributes to **itself** (`origin.kind` other than `human`, or
      `promptSource: "system"`) is not a prompt; any other record carrying a

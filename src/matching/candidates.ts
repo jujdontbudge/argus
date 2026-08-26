@@ -43,7 +43,10 @@ function claudeOriginKind(rec: Rec): string | null {
  *   path Argus takes on itself, and an allowlist of {typed, queued} lost the
  *   dispatch provenance of every one of them (#49's live drive found this);
  * - the SAME content — a `<task-notification>` the CLI injects as a user-role
- *   record — is stamped `system` on 612 records and `sdk` on 34.
+ *   record — is stamped `system` in a terminal session (612 records) and `sdk`
+ *   in an SDK-fronted one (34). The same confusion, pointing the other way:
+ *   read the door name as authorship and you are deaf in one direction and
+ *   poisoned in the other, from the same field.
  *
  * So the door name is not the axis. The rules below are, in order:
  *
