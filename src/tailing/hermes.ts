@@ -4,6 +4,7 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { repositoryFor } from "./codex";
 import type { SourceParser, TailEvent, TranscriptSource } from "./events";
 import type { ReadResult } from "./line-reader";
 
@@ -68,11 +69,13 @@ class HermesParser implements SourceParser {
     const events: TailEvent[] = [];
     if (!this.sessions.has(row.sessionId)) {
       this.sessions.add(row.sessionId);
+      const repo = row.cwd === null ? undefined : repositoryFor(row.cwd);
       events.push({
         type: "session-meta",
         sessionId: row.sessionId,
         agent: "hermes",
         ...(row.cwd !== null && { cwd: row.cwd }),
+        ...(repo !== undefined && { repo }),
         ...(row.parentSessionId !== null && { parentSessionId: row.parentSessionId }),
         ...(row.model !== null && { model: row.model }),
         ...(row.startedAt !== null && { ts: new Date(row.startedAt * 1000).toISOString() }),
