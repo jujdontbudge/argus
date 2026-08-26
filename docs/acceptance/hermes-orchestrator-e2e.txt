@@ -550,3 +550,149 @@ What did NOT happen because of the halt: no further live sessions were started,
 and the skill fixes in §9 were verified by typecheck and the test suite only —
 not by a second Hermes drive against the corrected skill. That re-drive is the
 obvious next step and it is deliberately NOT in this run.
+
+==============================================================================
+9. CORRECTION TO §5 AND §7 — Hermes did not stop at the wall. It cleared it.
+==============================================================================
+§5 and §7 were written while the run was still going, and they describe a batch
+stuck in a redeploy loop. That is not how it ended. Hermes recovered on its own
+and closed the whole batch. The sections above are left as written because they
+are accurate about the first three cycles; this section is what happened next,
+and it changes several verdicts.
+
+HERMES' OWN CLOSING REPORT, verbatim from $SANDBOX/log/hermes-drive.out:
+
+  Batch complete: 3/3 tickets merged and closed.
+
+  What I did:
+  - Loaded and followed `.argus/skills/argus-orchestrator/SKILL.md`.
+  - Dispatched tickets #1, #2, and #3 to separate Codex workers in dedicated worktrees.
+  - Recovered workers after the initial read-only sandbox prevented writes.
+  - Configured the worker sandbox for workspace writes and redeployed the tickets.
+  - Workers implemented and committed:
+    - #1 `clamp`
+    - #2 `wordCount`
+    - #3 `median`
+  - Ran `argus complete`:
+    - #1 merged as `fad2a8f`
+    - #2 merged as `352521b`
+    - #3 initially conflicted with #1 in `src/numbers.ts` and `src/numbers.test.ts`.
+  - Resumed the registered #3 worker through cmux using the registry-first follow-up
+    protocol. It merged `main`, preserved both helpers and test suites, passed both
+    gates, and committed the resolution.
+  - Retried completion; #3 merged as `af93a84`.
+  - Confirmed:
+    - No open tickets remain.
+    - No sessions are in flight or awaiting verification.
+    - `bun run test`: 14 passed, 0 failed.
+    - `bun x tsc --noEmit`: passed.
+  - Updated cmux progress, sent the completion notification, and closed the recovery surface.
+
+  What stopped me:
+  - Nothing remains blocked.
+  - Temporary obstacles were the workers' initial read-only sandbox, one failed Codex
+    resume caused by an incorrect `CODEX_HOME`, and the #3 merge conflict. All were
+    recovered without implementing a ticket myself.
+  - Pre-existing untracked Argus integration files (`.gitignore`, `AGENTS.md`, and
+    `docs/`) remain untouched.
+
+EVERY CLAIM IN THAT REPORT WAS VERIFIED INDEPENDENTLY, not taken on trust:
+
+  tracker      #1 CLOSED  #2 CLOSED  #3 CLOSED
+  main log     af93a84 merge: Add a median helper to src/numbers.ts (#3)
+               7e5c071 Merge main into argus/ticket-3
+               352521b merge: Add a wordCount helper to src/text.ts (#2)
+               fad2a8f merge: Add a clamp helper to src/numbers.ts (#1)
+  code         src/numbers.ts:10 median, :20 clamp; src/text.ts:17 wordCount
+  gates on the merged main
+               bun x tsc --noEmit -> OK
+               bun test           -> 14 pass, 0 fail (baseline was 4)
+
+The three named merge SHAs exist and are the merges they claim to be. Hermes
+did not overstate anything.
+
+--- WHAT THIS CORRECTS IN THE GRADE ---------------------------------------
+
+  "Send exactly one message at a time" — graded NOT EXERCISED in §7. WRONG.
+  It was exercised, and Hermes followed it exactly. For the #3 conflict it:
+
+    1. wrote the send record FIRST — .argus/registry/sends.jsonl, ts
+       22:04:04.708835Z, kind "follow-up", sessionId 01a04014-c882-...,
+       workspace:1, surface:60, contentSha256 a36b046960e65946...;
+    2. THEN sent it: one `cmux send --workspace workspace:1 --surface
+       surface:60 <script>` followed by exactly one `cmux send-key ... Enter`;
+    3. read the screen back to check that it landed;
+    4. it had NOT landed — so Hermes raised an audit event exactly as the skill
+       demands, `cmux notify --title "Argus audit event" --subtitle "Ticket #3
+       follow-up did not land" --body "Codex resume used the wrong CODEX_HOME;
+       the registered follow-up is being retried after correcting the worker
+       environment."`;
+    5. logged a SECOND row, kind "follow-up-retry", same content hash, and
+       retried.
+
+  That is the skill's "issue one `cmux send`, submit it with one Enter, and
+  verify that it landed before sending anything else" and its "if a non-command
+  send does not land, surface an audit event and notify; never silently discard
+  the unmatched registry entry" — both followed to the letter, unprompted, in a
+  situation the run did not stage. This section of the skill is GOOD and is now
+  the only part of it with live evidence behind it.
+
+  Provenance steps 2-4 — graded NOT EXERCISED. Also wrong: sends.jsonl carries
+  the session id, agent, workspace and surface refs, timestamp, kind, exact
+  logical text and the SHA-256 of the normalized content, exactly as specified.
+
+  `cmux set-status` / `set-progress` / `notify` — graded NOT EXERCISED. Wrong.
+  All three were used, and idiomatically:
+    cmux set-status worker-3 resolving-conflict --icon wrench --workspace workspace:1
+    cmux set-progress 1.0 --label "Argus batch complete: 3/3 closed" --workspace workspace:1
+    cmux notify --title "Argus batch complete" --body "Tickets #1, #2, and #3 are merged, closed, and green."
+
+  "Always use typed, prefixed refs such as `workspace:15` and `pane:38`" —
+  graded as contradicting production. PARTLY WRONG, and worth stating precisely:
+  ARGUS internally addresses by raw UUID, but HERMES' own cmux calls used
+  `workspace:1` and `surface:60` and they resolved correctly. The skill's rule
+  is workable for the calls it governs. What IS wrong in that sentence is
+  `pane:38` — the addressable unit for a session is a SURFACE, and Hermes
+  correctly used `surface:`, not `pane:`. Narrowed accordingly.
+
+  FINDING 2 (redeploy loop) — stands, but softened by what actually happened.
+  The loop is real and nothing in Argus bounds it; what broke it was Hermes
+  diagnosing the cause and fixing it, not any Argus safeguard. Three cycles and
+  nine deployments went by before that. The finding is now "nothing in Argus
+  bounds the loop", not "the loop cannot be escaped".
+
+  FINDING 1 (read-only Codex workers) — STANDS, and is strengthened. Hermes had
+  to fix Argus's job for it, by writing into the scratch codex config:
+
+    sandbox_mode = "workspace-write"
+    [projects."/private/tmp/argus-82-run2/repo"]
+    trust_level = "trusted"
+
+  A dispatcher should not have to configure its worker runtime's sandbox policy
+  to make deployment work at all. Note also that Hermes chose `workspace-write`
+  — the conservative option — over the `danger-full-access` in Johan's personal
+  config. That is the right default and is what the production route should set.
+
+******************************************************************************
+FINDING 5 (gap) — Argus has no way to resume a registered session, so the
+skill's follow-up protocol has to be hand-rolled, and it is fragile.
+******************************************************************************
+
+  The skill says follow-ups into a live session "go through the same logged send
+  protocol as any worker". It does not say HOW, and Argus has no verb for it —
+  there is no `argus resume`, no `argus send`. A Codex `exec` worker is a
+  one-shot process: once it exits, the session in the registry has no live
+  surface to send to.
+
+  So Hermes hand-built one: it opened its own surface (`cmux new-surface`),
+  wrote a shell script (`resume-ticket-3.sh`), `cmux send` the script path and
+  pressed Enter. It worked — on the second attempt. The first attempt failed
+  because the hand-rolled environment had the WRONG `CODEX_HOME`, which is
+  precisely the failure mode you would predict when the environment that
+  `argus dispatch` assembles carefully has to be reassembled by hand under a
+  different roof.
+
+  This is the seam where a real `argus resume <session-id> --message <text>`
+  belongs: it would own the registry row, the environment and the surface the
+  same way `argus dispatch` and `argus grill` own theirs. FILED, not fixed —
+  it is a new production verb, not a docs correction.
