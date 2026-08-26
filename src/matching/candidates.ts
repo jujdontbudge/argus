@@ -141,39 +141,89 @@ const CODEX_SYNTHETIC_PREFIXES = [
 const ENVELOPE_OPEN = /^<([a-z][a-z0-9_-]*)>$/;
 
 /** The opening tag of the envelope `text` starts with, or null. */
-function openingTag(text: string): string | null {
-  const breakAt = text.indexOf("\n");
+function openingTag(text: string, start: number): string | null {
+  const breakAt = text.indexOf("\n", start);
   if (breakAt === -1) return null;
-  const open = ENVELOPE_OPEN.exec(text.slice(0, breakAt).trimEnd());
+  const open = ENVELOPE_OPEN.exec(text.slice(start, breakAt).trimEnd());
   return open ? open[1]! : null;
 }
 
 export function syntheticEnvelopeTag(text: string): string | null {
-  const first = openingTag(text.trim());
-  return first !== null && consumesEntirely(text.trim()) ? first : null;
+  const start = skipWhitespace(text, 0);
+  const first = openingTag(text, start);
+  return first !== null && consumesEntirely(text, start) ? first : null;
 }
 
 /**
  * Does the text decompose, with nothing left over, into complete envelopes?
  *
- * A closing tag is only accepted as an envelope's end if what FOLLOWS it also
- * decomposes — which is what keeps a same-named nested tag from ending its
- * parent early, and what keeps trailing prose from being ignored.
+ * Each envelope is scanned once. A bare same-named opening tag increases its
+ * depth, so its closing tag cannot end the parent early. Once depth returns to
+ * zero, only whitespace or another complete envelope may follow; trailing prose
+ * therefore cannot be ignored.
  */
-function consumesEntirely(text: string): boolean {
-  const rest = text.trim();
-  if (rest.length === 0) return true;
-  const tag = openingTag(rest);
-  if (tag === null) return false;
-  const close = `</${tag}>`;
-  for (
-    let at = rest.indexOf(close);
-    at !== -1;
-    at = rest.indexOf(close, at + close.length)
-  ) {
-    if (consumesEntirely(rest.slice(at + close.length))) return true;
+function consumesEntirely(text: string, start: number): boolean {
+  let at = start;
+  while (at < text.length) {
+    const tag = openingTag(text, at);
+    if (tag === null) return false;
+    const lineEnd = text.indexOf("\n", at);
+    const envelopeEnd = matchingEnvelopeEnd(text, lineEnd + 1, tag);
+    if (envelopeEnd === null) return false;
+    at = skipWhitespace(text, envelopeEnd);
   }
-  return false;
+  return true;
+}
+
+function matchingEnvelopeEnd(
+  text: string,
+  start: number,
+  tag: string,
+): number | null {
+  let depth = 1;
+  let at = start;
+  while (at < text.length) {
+    const lessThan = text.indexOf("<", at);
+    if (lessThan === -1) return null;
+
+    const slash = text[lessThan + 1] === "/";
+    const nameStart = lessThan + (slash ? 2 : 1);
+    let nameEnd = nameStart;
+    while (
+      nameEnd < text.length &&
+      isEnvelopeNameCharacter(text.charCodeAt(nameEnd))
+    ) {
+      nameEnd += 1;
+    }
+
+    const isSameBareTag =
+      nameEnd - nameStart === tag.length &&
+      text.startsWith(tag, nameStart) &&
+      text[nameEnd] === ">";
+    if (isSameBareTag) {
+      depth += slash ? -1 : 1;
+      at = nameEnd + 1;
+      if (depth === 0) return at;
+    } else {
+      at = Math.max(nameEnd, lessThan + 1);
+    }
+  }
+  return null;
+}
+
+function isEnvelopeNameCharacter(code: number): boolean {
+  return (
+    (code >= 97 && code <= 122) ||
+    (code >= 48 && code <= 57) ||
+    code === 95 ||
+    code === 45
+  );
+}
+
+function skipWhitespace(text: string, start: number): number {
+  let at = start;
+  while (at < text.length && /\s/u.test(text[at]!)) at += 1;
+  return at;
 }
 
 export function codexCandidateText(record: unknown): string | null {
