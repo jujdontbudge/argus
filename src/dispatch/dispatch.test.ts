@@ -77,7 +77,12 @@ function witnessSpawn(
     const spawned = pid();
     witness.pids.push(spawned);
     return {
-      announcedSessionId: async () => null,
+      // codex's route is `announced` (routes.ts): it names its own session and
+      // `deployWorker` registers on that announcement. A witness that never
+      // announced would fail every codex dispatch at the `session-id` stage,
+      // which would look exactly like a routing bug and hide the real one.
+      announcedSessionId: async () =>
+        request.agent === "codex" ? `01a03c64-8acb-7c40-9cf5-000000000${witness.calls.length}` : null,
       exited: Promise.resolve({ exitCode: 0, stderr: "", stdout: "" }),
       kill: () => {
         throw new Error("the dispatcher must never kill a worker");
@@ -473,6 +478,144 @@ describe("dispatchFrontier (#56): recovery tells a DEAD session from a SLOW one"
       );
 
       expect(report.degraded).toEqual([]);
+    } finally {
+      await cleanup(repo);
+    }
+  }, GIT_BUDGET_MS);
+});
+
+/**
+ * Ticket #88 — WHICH agent a ticket reaches, asserted as a table.
+ *
+ * SPEC §2: "Routing is by ticket label. Hermes reads the label and picks the
+ * worker: `grilling`, `spec`, `review`, `diagnosis` → Claude Code;
+ * implementation tickets (default) → Codex; exceptions can be pinned
+ * per-ticket with an explicit `agent:claude-code` / `agent:codex` label."
+ *
+ * Nothing in this tree ever asked before this block existed: `readFrontier`
+ * fetched `labels` and `dispatchFrontier` dropped them on the floor
+ * (`const agent = options.agent ?? "claude"`), so every ticket went to Claude
+ * and a per-ticket pin was silently ignored. The tests that existed asserted
+ * that SOME agent was deployed, which a wholly wrong routing table passes.
+ *
+ * The four rows are asserted TOGETHER and in one set, because the interesting
+ * failure is a table that gets three right and one wrong: a per-row test that
+ * happens to cover the three implemented rows reads as green.
+ */
+describe("dispatchFrontier (#88): SPEC §2's routing table, per ticket", () => {
+  test("spec→claude, diagnosis→claude, unlabelled→codex, spec+agent:codex→codex", async () => {
+    const repo = await scratchRepo();
+    try {
+      await writeConfig(repo, "dispatch:\n  max_concurrency: 4\n");
+      const gh = createFakeGh({ login: LOGIN, repo: REPO });
+      gh.seed({ labels: ["spec"], number: 1, title: "A: write the spec" });
+      gh.seed({ labels: ["diagnosis"], number: 2, title: "B: diagnose it" });
+      gh.seed({ number: 3, title: "C: implement it" });
+      gh.seed({ labels: ["spec", "agent:codex"], number: 4, title: "D: pinned" });
+      const { spawn, witness } = witnessSpawn(repo, gh);
+
+      const report = await dispatchFrontier(options(repo, gh, spawn));
+
+      // The evidence artifact: the argv actually handed to the spawn seam, per
+      // ticket, in dispatch order.
+      const commands = witness.calls.map((call) => call.command.join(" "));
+      expect(witness.calls.map((call) => call.agent)).toEqual([
+        "claude",
+        "claude",
+        "codex",
+        "codex",
+      ]);
+      expect(commands.map((line) => line.split(" ")[0])).toEqual([
+        "claude",
+        "claude",
+        "codex",
+        "codex",
+      ]);
+      // And the report — what `argus dispatch` prints and #57 reads back.
+      expect(report.dispatched.map((entry) => [entry.ticket, entry.agent])).toEqual([
+        ["1", "claude"],
+        ["2", "claude"],
+        ["3", "codex"],
+        ["4", "codex"],
+      ]);
+      expect(report.degraded).toEqual([]);
+    } finally {
+      await cleanup(repo);
+    }
+  }, GIT_BUDGET_MS);
+
+  test("`agent:claude-code` is SPEC §2's spelling and pins an unlabelled ticket to claude", async () => {
+    const repo = await scratchRepo();
+    try {
+      const gh = createFakeGh({ login: LOGIN, repo: REPO });
+      gh.seed({ labels: ["agent:claude-code"], number: 7, title: "pinned to claude" });
+      const { spawn, witness } = witnessSpawn(repo, gh);
+
+      const report = await dispatchFrontier(options(repo, gh, spawn));
+
+      expect(witness.calls.map((call) => call.agent)).toEqual(["claude"]);
+      expect(report.dispatched.map((entry) => entry.agent)).toEqual(["claude"]);
+    } finally {
+      await cleanup(repo);
+    }
+  }, GIT_BUDGET_MS);
+
+  test("a CONFLICTING pin refuses the ticket: nothing spawned, nothing claimed, said out loud", async () => {
+    const repo = await scratchRepo();
+    try {
+      const gh = createFakeGh({ login: LOGIN, repo: REPO });
+      gh.seed({
+        labels: ["agent:claude-code", "agent:codex"],
+        number: 5,
+        title: "two pins",
+      });
+      gh.seed({ number: 6, title: "the next one still goes" });
+      const { spawn, witness } = witnessSpawn(repo, gh);
+
+      const report = await dispatchFrontier(options(repo, gh, spawn));
+
+      expect(report.dispatched.map((entry) => entry.ticket)).toEqual(["6"]);
+      expect(witness.calls).toHaveLength(1);
+      // The refused ticket is untouched on the tracker: a refusal must not
+      // claim a ticket it then does not work.
+      expect(gh.find("5")!.assignees).toEqual([]);
+      expect(report.skipped.map((entry) => entry.ticket)).toEqual(["5"]);
+      expect(report.degraded.join("\n")).toContain("#5");
+      expect(report.degraded.join("\n")).toContain("agent:codex");
+    } finally {
+      await cleanup(repo);
+    }
+  }, GIT_BUDGET_MS);
+
+  test("an UNKNOWN agent pin refuses rather than falling back to a default", async () => {
+    const repo = await scratchRepo();
+    try {
+      const gh = createFakeGh({ login: LOGIN, repo: REPO });
+      gh.seed({ labels: ["agent:gpt"], number: 8, title: "agent that does not exist" });
+      const { spawn, witness } = witnessSpawn(repo, gh);
+
+      const report = await dispatchFrontier(options(repo, gh, spawn));
+
+      expect(witness.calls).toHaveLength(0);
+      expect(report.dispatched).toEqual([]);
+      expect(gh.find("8")!.assignees).toEqual([]);
+      expect(report.skipped.map((entry) => entry.reason).join("")).toContain("agent:gpt");
+      expect(report.degraded.join("\n")).toContain("agent:gpt");
+    } finally {
+      await cleanup(repo);
+    }
+  }, GIT_BUDGET_MS);
+
+  test("`options.agent` still overrides the table for every ticket in the pass", async () => {
+    const repo = await scratchRepo();
+    try {
+      const gh = createFakeGh({ login: LOGIN, repo: REPO });
+      gh.seed({ number: 9, title: "an implementation ticket" });
+      const { spawn, witness } = witnessSpawn(repo, gh);
+
+      await dispatchFrontier(options(repo, gh, spawn, { agent: "claude" }));
+
+      expect(witness.calls.map((call) => call.agent)).toEqual(["claude"]);
     } finally {
       await cleanup(repo);
     }
