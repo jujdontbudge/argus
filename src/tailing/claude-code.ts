@@ -6,6 +6,7 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { claudeCandidateText } from "../matching/candidates";
+import { repositoryFor } from "./codex";
 import type { SourceParser, TailEvent, TranscriptSource } from "./events";
 
 /**
@@ -65,12 +66,14 @@ class ClaudeCodeParser implements SourceParser {
     const cwd = str(rec.cwd);
     if (sessionId && cwd !== undefined && !this.metaSeen.has(sessionId)) {
       this.metaSeen.add(sessionId);
+      const repo = repositoryFor(cwd);
       const version = str(rec.version);
       events.push({
         type: "session-meta",
         sessionId,
         agent: "claude-code",
         cwd,
+        ...(repo !== undefined && { repo }),
         ...(version !== undefined && { version }),
         ...(ts !== undefined && { ts }),
         file: this.file,
