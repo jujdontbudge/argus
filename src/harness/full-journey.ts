@@ -390,10 +390,9 @@ export function fullJourneyScenario(options: FullJourneyOptions): ScenarioHandle
     );
     // #75: production enumerates Claude's real project directories and admits
     // sessions by their resolved repository identity, just as it does Codex.
-    // Hold that source to every reply the agents actually spoke. The archived
-    // #74 run remains honest evidence of the old 1-of-2 result; this stronger
-    // assertion must pass on the next explicitly authorised live run rather
-    // than fabricating 2-of-2 by relocating a transcript.
+    // Hold that source to every reply the agents actually spoke. #83's first
+    // explicitly authorised rerun after that fix observed both legs here; the
+    // equality remains load-bearing so a later run cannot inherit that result.
     const visible = sentinelMessages(
       await new Tailer(
         await createRepoTranscriptSource(
@@ -686,7 +685,7 @@ export const FULL_JOURNEY_MANIFESTS: readonly LabeledScenarioManifest[] = [
         ],
         id: "13.1.batch-end-to-end",
         shortfall:
-          "a live session ran end to end and production's own watchers consumed it, but the batch's merge/close leg is not driven here — see 13.1.tickets-closed. #75 makes the next live run require every leg's words to reach the watchers, but #74's archived live evidence remains 1 of 2 until that opt-in journey is explicitly rerun; the historical shortfall is not claimed lifted by a structural regression test",
+          "both live agent legs ran end to end and production's own watchers consumed both (2 of 2 live sentinel replies were visible and archived in #83), but the batch's merge/close leg is not driven here — see 13.1.tickets-closed",
         spec: "run a ticket batch end to end",
       },
       {

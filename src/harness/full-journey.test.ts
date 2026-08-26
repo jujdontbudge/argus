@@ -171,6 +171,16 @@ describe("the FULL journey manifests", () => {
     }
   });
 
+  test("#83: the rerun resolves 1-of-2 without claiming the undriven merge/close leg", () => {
+    const batch = FULL_JOURNEY_MANIFESTS[0]?.requirements.find(
+      ({ id }) => id === "13.1.batch-end-to-end",
+    );
+
+    expect(batch?.shortfall).not.toContain("1 of 2");
+    expect(batch?.shortfall).toContain("both live agent legs");
+    expect(batch?.shortfall).toContain("merge/close leg is not driven");
+  });
+
   test("every slot reaches LIVE only on a report carrying live evidence", () => {
     const structural = gradeFullJourney({
       assertions: allAssertions,
