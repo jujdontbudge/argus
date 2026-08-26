@@ -37,6 +37,7 @@ import {
   type WorkerSpawn,
 } from "./spawn.ts";
 import { openWorkerTab } from "./tab.ts";
+import { trustDirectory } from "./trust.ts";
 import {
   branchForTicket,
   createWorktree,
@@ -133,6 +134,12 @@ export interface Deployment {
   surface?: string;
   /** Why there is no tab, when one was asked for and did not happen. */
   workspaceDegraded?: string;
+  /**
+   * Why the working directory could not be pre-trusted (#96). Best effort:
+   * the session still starts, and half 2's silent-deployment check is what
+   * notices if it lands on the trust dialog anyway.
+   */
+  trustDegraded?: string;
   worktree: string;
 }
 
@@ -178,6 +185,21 @@ export async function deployWorker(
   const surfaceRef =
     request.surfaceRef ?? (tab?.status === "opened" ? tab.surface : undefined);
 
+  // 2b. THE TRUST DIALOG (#96). Claude Code stops the FIRST session in any
+  //     directory it has not seen on "Is this a project you created or one
+  //     you trust?", with no transcript and nothing noticing. The config
+  //     answers it before the process exists; see ./trust.ts for what was
+  //     rejected and for why this does not go through the §5 rule 2 seam.
+  //     Best effort: the directory may already be trusted by an ancestor
+  //     entry, so a failure subtracts information from the row rather than
+  //     stopping the deployment.
+  const trust =
+    route.agent === "claude"
+      ? await trustDirectory(worktree.path, { env: options.env ?? Bun.env })
+      : null;
+  const trustDegraded =
+    trust?.status === "failed" ? { trustDegraded: trust.reason } : {};
+
   const env = subscriptionEnv(options.env ?? Bun.env);
   const ts = (options.now?.() ?? new Date()).toISOString();
   const row = (sessionId: string): SessionRow => ({
@@ -205,6 +227,7 @@ export async function deployWorker(
       ...(workspaceRef !== undefined && { workspace: workspaceRef }),
       ...(surfaceRef !== undefined && { surface: surfaceRef }),
       ...degraded,
+      ...trustDegraded,
     },
     status: "deployed",
   });
