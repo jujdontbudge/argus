@@ -45,7 +45,10 @@ describe("fake-Johan harness", () => {
       expect(dirname(sandbox.repo)).toBe(sandbox.root);
       expect(sandbox.up.exitCode).toBe(0);
       expect(sandbox.up.stderr).toContain("TRACKER-LESS MODE");
-      expect(sandbox.up.stdout).toContain("cmux hooks: pending #7 (soft check)");
+      expect(sandbox.up.stdout).toContain(
+      // #7: optional, never a convergence requirement (SPEC §3/§6).
+      "cmux hooks: optional (resume convenience; not required for signal delivery)",
+    );
       expect(await Bun.file(join(sandbox.repo, ".argus/config.yaml")).exists()).toBe(
         true,
       );
