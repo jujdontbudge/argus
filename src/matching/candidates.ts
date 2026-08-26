@@ -15,11 +15,61 @@ function asRecord(value: unknown): Rec | null {
 }
 
 /**
+ * The CLI's own statement of what produced a user-role record, when it makes
+ * one: `origin: { kind: "human" | "task-notification" | "peer" | … }`. Absent
+ * on older CLI versions, and absent on headless dispatch prompts as late as
+ * 2.1.246 — so absence is normal and must never be read as an accusation.
+ */
+function claudeOriginKind(rec: Rec): string | null {
+  const origin = asRecord(rec.origin);
+  return typeof origin?.kind === "string" ? origin.kind : null;
+}
+
+/**
  * Claude Code transcript line (§2.1, §2.3). Returns the message text if the
- * record is a candidate, else null. Candidates are real prompts
- * (`promptSource` "typed"/"queued") plus `<bash-input>` landings, whose
- * promptSource is absent; `<bash-stdout>`/`<bash-stderr>` records never
- * qualify.
+ * record is a candidate, else null.
+ *
+ * Candidacy asks ONE question — did a prompt land here at all? — and says
+ * nothing about who sent it. §5 makes the registry the single source of
+ * provenance truth: the dispatch-prompt hash and sends.jsonl are what
+ * establish "this was Hermes", and any other prompt in a session Hermes opened
+ * is Johan attaching. `promptSource` is evidence about the DOOR a prompt came
+ * through, and #50 measured that it cannot stand in for authorship in either
+ * direction:
+ *
+ * - the SAME logical event — Hermes dispatching a worker — is `typed` when the
+ *   session was opened in a terminal and `sdk` when it was opened headlessly.
+ *   Argus's own dispatcher spawns every worker headlessly, so `sdk` is the
+ *   path Argus takes on itself, and an allowlist of {typed, queued} lost the
+ *   dispatch provenance of every one of them (#49's live drive found this);
+ * - the SAME content — a `<task-notification>` the CLI injects as a user-role
+ *   record — is stamped `system` in a terminal session (612 records) and `sdk`
+ *   in an SDK-fronted one (34). The same confusion, pointing the other way:
+ *   read the door name as authorship and you are deaf in one direction and
+ *   poisoned in the other, from the same field.
+ *
+ * So the door name is not the axis. The rules below are, in order:
+ *
+ * 1. `origin.kind` present and not "human" → the CLI is telling us it produced
+ *    this record. Not a prompt. Unknown kinds default CLOSED, because adding
+ *    injection kinds is the thing CLIs actually do — codex-cli 0.149.1's
+ *    `<recommended_plugins>` (#36) is the same move under another name.
+ * 2. `promptSource: "system"` → the CLI's other marker for its own content.
+ * 3. any other present `promptSource` → a prompt landed. Unknown source names
+ *    default OPEN, because the cost of a name nobody taught this filter is
+ *    SILENT deafness to Johan — the §13.4 breach with no audit trail.
+ * 4. absent `promptSource` → unchanged (§2.3): `<bash-input>` landings only.
+ *    Absence is the shape slash-command expansions and `<bash-stdout>` take.
+ *
+ * Measured over 60 project slugs / 234 transcripts / 340,222 lines / 59,816
+ * `type: "user"` records on this machine: this admits 292 records the old
+ * allowlist dropped — 291 `sdk` (headless dispatches plus every word Johan
+ * types in the Claude desktop app, which fronts the SDK) and one
+ * `suggestion_accepted` — and drops NOTHING the old allowlist admitted.
+ *
+ * `queued` is not special-cased any more, but it is worth recording that it is
+ * NOT dead: #50's ticket reports it as never seen in 18,000 lines, which was
+ * the `*argus*` slugs only. Across all 60 slugs it appears 110 times.
  */
 export function claudeCandidateText(record: unknown): string | null {
   const rec = asRecord(record);
@@ -28,10 +78,11 @@ export function claudeCandidateText(record: unknown): string | null {
   const message = asRecord(rec.message);
   if (!message || typeof message.content !== "string") return null;
   const content = message.content;
+  const origin = claudeOriginKind(rec);
+  if (origin !== null && origin !== "human") return null;
   const source = rec.promptSource;
-  if (source === "typed" || source === "queued") return content;
-  if (content.startsWith("<bash-input>")) return content;
-  return null;
+  if (typeof source === "string") return source === "system" ? null : content;
+  return content.startsWith("<bash-input>") ? content : null;
 }
 
 /**

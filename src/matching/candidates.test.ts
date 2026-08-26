@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   claudeCandidateText,
   codexCandidateText,
@@ -83,6 +86,173 @@ describe("claudeCandidateText", () => {
   test("other promptSource-less plain records are not candidates", () => {
     const { promptSource: _drop, ...withoutSource } = claudeUser;
     expect(claudeCandidateText(withoutSource)).toBeNull();
+  });
+});
+
+/**
+ * Ticket #50 — the same records, but REAL ones.
+ *
+ * Everything above is hand-written, and hand-written input is what #36, #42
+ * and #49 each got caught by: a fixture carries the fields its author already
+ * knew about. The records below are verbatim lines from real transcripts
+ * (`tests/fixtures/claude-code-headless/README.md` names the file and line of
+ * each), so they carry the sixteen fields a real record has — including the
+ * two this ticket turns on, `promptSource` and `origin`.
+ *
+ * The population behind the numbers quoted here: 60 project slugs, 234
+ * transcripts, 340,222 lines, 59,816 `type: "user"` records on this machine,
+ * run through this function.
+ */
+const headlessFixtures = fileURLToPath(
+  new URL("../../tests/fixtures/claude-code-headless/", import.meta.url),
+);
+
+async function realRecords(file: string): Promise<Record<string, unknown>[]> {
+  const text = await readFile(join(headlessFixtures, file), "utf8");
+  return text
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+const content = (record: Record<string, unknown>): string =>
+  (record.message as { content: string }).content;
+
+describe("claudeCandidateText on REAL headless records (#50)", () => {
+  test("a real `claude -p` dispatch prompt is a candidate", async () => {
+    const [dispatch] = (await realRecords("argus-49-drive.jsonl")).filter(
+      (record) => record.type === "user",
+    );
+
+    // The shape first, so a CLI change that moves the goalposts fails HERE
+    // rather than silently making the assertion below vacuous.
+    expect({
+      promptSource: dispatch!.promptSource,
+      entrypoint: dispatch!.entrypoint,
+      origin: dispatch!.origin,
+    }).toEqual({ promptSource: "sdk", entrypoint: "sdk-cli", origin: undefined });
+
+    expect(claudeCandidateText(dispatch)).toBe(content(dispatch!));
+  });
+
+  // The sharpest half of #50: the SAME logical event — Hermes dispatching a
+  // worker — is `typed` when the session was opened in a terminal and `sdk`
+  // when it was opened headlessly. Argus's own dispatcher spawns every worker
+  // headlessly, so `sdk` is the path Argus takes on itself. How a session was
+  // opened is not provenance, and candidacy must not read it as if it were.
+  test("the same record differs only by how the session was opened", async () => {
+    const [dispatch] = (await realRecords("argus-49-drive.jsonl")).filter(
+      (record) => record.type === "user",
+    );
+    const typedInATerminal = { ...dispatch, promptSource: "typed" };
+
+    expect(claudeCandidateText(typedInATerminal)).toBe(
+      claudeCandidateText(dispatch),
+    );
+  });
+
+  // The poisoning direction, and the reason the fix is NOT "add sdk to the
+  // allowlist". This record is real, `sdk`-sourced, and sits at line 727 of a
+  // 792-line session: #42's envelope-plus-opening-run rule cannot see it.
+  // Measured: 34 of 34 sdk `<task-notification>` records arrive mid-session.
+  test("a real mid-session <task-notification> is refused", async () => {
+    const [notification] = (await realRecords("task-notification.jsonl")).filter(
+      (record) => record.type === "user",
+    );
+
+    expect({
+      promptSource: notification!.promptSource,
+      origin: notification!.origin,
+    }).toEqual({ promptSource: "sdk", origin: { kind: "task-notification" } });
+    expect(claudeCandidateText(notification)).toBeNull();
+  });
+
+  test("...and it is `origin` that refuses it, not the shape or the position", async () => {
+    const [notification] = (await realRecords("task-notification.jsonl")).filter(
+      (record) => record.type === "user",
+    );
+    const { origin: _drop, ...withoutOrigin } = notification!;
+
+    // Same bytes, same envelope shape, same mid-session position — the only
+    // thing removed is the CLI's own statement of what the record is. If that
+    // is what flips the verdict, `origin` is doing the work.
+    expect(claudeCandidateText(withoutOrigin)).toBe(content(notification!));
+    expect(syntheticEnvelopeTag(content(notification!))).toBe("task-notification");
+  });
+
+  // 162 real records on this machine: Johan typing into the Claude desktop
+  // app, which fronts the SDK. Dropping these is the deafness direction —
+  // USER.md never learns from a word he says in that app (§13.4 the other way
+  // round, and silent, which is worse).
+  test("a desktop prompt marked `origin: human` is a candidate", async () => {
+    const [dispatch] = (await realRecords("argus-49-drive.jsonl")).filter(
+      (record) => record.type === "user",
+    );
+    const desktop = {
+      ...dispatch,
+      entrypoint: "claude-desktop",
+      origin: { kind: "human" },
+      message: { role: "user", content: "confirm" },
+    };
+
+    expect(claudeCandidateText(desktop)).toBe("confirm");
+  });
+
+  // Observed once, verbatim: Johan accepting a suggestion, text "yes agreed".
+  // An allowlist is silent about what it has never heard of; this is what that
+  // silence costs, and it is why unknown SOURCE names default open.
+  test("a promptSource the filter has never seen is still heard", async () => {
+    const [dispatch] = (await realRecords("argus-49-drive.jsonl")).filter(
+      (record) => record.type === "user",
+    );
+
+    expect(
+      claudeCandidateText({
+        ...dispatch,
+        promptSource: "suggestion_accepted",
+        origin: { kind: "human" },
+        message: { role: "user", content: "yes agreed" },
+      }),
+    ).toBe("yes agreed");
+  });
+
+  // The other default, and it points the other way ON PURPOSE: an origin kind
+  // the CLI invents later is content the CLI is telling us it produced, so it
+  // is refused until someone looks. Adding injection kinds is the thing CLIs
+  // actually do (#36's `<recommended_plugins>` was exactly that).
+  test("an origin kind nobody has seen yet is refused", async () => {
+    const [dispatch] = (await realRecords("argus-49-drive.jsonl")).filter(
+      (record) => record.type === "user",
+    );
+
+    expect(
+      claudeCandidateText({ ...dispatch, origin: { kind: "hook-result" } }),
+    ).toBeNull();
+  });
+
+  test("promptSource `system` — the CLI's own marker — is still refused", async () => {
+    const [dispatch] = (await realRecords("argus-49-drive.jsonl")).filter(
+      (record) => record.type === "user",
+    );
+
+    // 612 records on this machine carry it; 612 of them are task-notifications
+    // and none is a prompt anybody sent.
+    expect(claudeCandidateText({ ...dispatch, promptSource: "system" })).toBeNull();
+  });
+
+  // #50's ticket says `queued` "never appears in 18,000 lines of real
+  // transcripts" and asks whether it is reachable. It is: #49 surveyed the
+  // `*argus*` slugs only. Across all 60 slugs on this machine `queued` appears
+  // 110 times in string-content non-meta user records. Reachable, exercised,
+  // and not to be removed.
+  test("`queued` is reachable in real data, not a dead branch", async () => {
+    const [dispatch] = (await realRecords("argus-49-drive.jsonl")).filter(
+      (record) => record.type === "user",
+    );
+
+    expect(claudeCandidateText({ ...dispatch, promptSource: "queued" })).toBe(
+      content(dispatch!),
+    );
   });
 });
 
