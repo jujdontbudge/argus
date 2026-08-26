@@ -189,7 +189,18 @@ describe("dispatchFrontier (#56): SPEC §7.3's cap is enforced where spawning ha
     const repo = await scratchRepo();
     try {
       const gh = createFakeGh({ login: LOGIN, repo: REPO });
-      gh.seed({ body: "Build it.", number: 56, title: "Ship the frontier" });
+      // Pinned to claude (#88) because the promise this test makes is the
+      // PREASSIGNED route's: only claude lets Argus name the session, so only
+      // there can the row precede the process. codex names its own session and
+      // its row follows the announcement — strictly weaker, and labelled so in
+      // `routes.ts`. Routing a codex ticket through here would silently turn
+      // this into a test of the weaker promise.
+      gh.seed({
+        body: "Build it.",
+        labels: ["agent:claude-code"],
+        number: 56,
+        title: "Ship the frontier",
+      });
       const { spawn, witness } = witnessSpawn(repo, gh);
 
       const report = await dispatchFrontier(options(repo, gh, spawn));
@@ -538,7 +549,11 @@ describe("dispatchFrontier (#88): SPEC §2's routing table, per ticket", () => {
         ["3", "codex"],
         ["4", "codex"],
       ]);
-      expect(report.degraded).toEqual([]);
+      // cmux is unavailable in a test run and degrades per ticket (#7); no
+      // ROUTING entry is allowed, which is what this test is about.
+      expect(
+        report.degraded.filter((entry) => !entry.includes("no cmux workspace")),
+      ).toEqual([]);
     } finally {
       await cleanup(repo);
     }

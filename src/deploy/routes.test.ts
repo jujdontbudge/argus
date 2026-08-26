@@ -30,6 +30,11 @@ describe("routes (#55): who names the session", () => {
       "11111111-2222-4333-8444-555555555555",
       "--model",
       "claude-opus-5",
+      // #88: a deployed worker runs at Johan's standing directive — Opus at
+      // max effort — and the flag is pinned here so a route that quietly
+      // dropped it fails a test instead of a ticket.
+      "--effort",
+      "max",
       "-p",
       "ticket #55",
     ]);
@@ -51,6 +56,11 @@ describe("routes (#55): who names the session", () => {
       "codex",
       "exec",
       "--json",
+      // #88 made codex the DEFAULT implementer (SPEC §2), so the effort it
+      // implements at stopped being hypothetical: SPEC §2 puts codex on
+      // "high reasoning effort" by name, and this is where that becomes argv.
+      "-c",
+      "model_reasoning_effort=high",
       "ticket #55",
     ]);
   });
