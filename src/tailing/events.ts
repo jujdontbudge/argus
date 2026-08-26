@@ -22,6 +22,8 @@ export interface MessageEvent {
   uuid?: string;
   /** Claude Code prompt source ("typed" | "queued") when present. */
   promptSource?: string;
+  /** Claude Code's `origin.kind` when the record carries one. */
+  origin?: string;
   /**
    * True when this record is eligible for provenance classification per the
    * matching library's candidate rules (research §2.1–§2.3). Non-candidates

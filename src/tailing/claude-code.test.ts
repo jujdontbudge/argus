@@ -127,6 +127,7 @@ describe("claude-code parser", () => {
         ts: "2026-08-24T17:49:59.470Z",
         uuid: "uuid-1",
         promptSource: "typed",
+        origin: "human",
         candidate: true,
         file: "/tmp/proj-slug/s-1.jsonl",
       },

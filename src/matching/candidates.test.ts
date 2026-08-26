@@ -87,6 +87,44 @@ describe("claudeCandidateText", () => {
     const { promptSource: _drop, ...withoutSource } = claudeUser;
     expect(claudeCandidateText(withoutSource)).toBeNull();
   });
+
+  test("#53 visibility leaves #50's candidacy verdict bytes unchanged", () => {
+    const content = "baseline candidacy probe";
+    const record = {
+      type: "user",
+      message: { role: "user", content },
+      isSidechain: false,
+    };
+    const corpus = [
+      { ...record, promptSource: "typed", origin: { kind: "human" } },
+      {
+        ...record,
+        promptSource: "suggestion_accepted",
+        origin: { kind: "human" },
+      },
+      { ...record, promptSource: "sdk", origin: { kind: "human_v2" } },
+      {
+        ...record,
+        promptSource: "sdk",
+        origin: { kind: "task-notification" },
+      },
+      { ...record, promptSource: "sdk" },
+      record,
+      {
+        ...record,
+        message: { role: "user", content: "<bash-input>echo probe</bash-input>" },
+      },
+      { ...record, promptSource: "system" },
+    ];
+    // Literal verdict bytes captured from base 974865c. Unknown origin stays
+    // CLOSED, unknown promptSource stays OPEN, and absence keeps #50's rules.
+    const beforeTicket53 = "[true,true,false,false,true,false,true,false]";
+    const afterTicket53 = JSON.stringify(
+      corpus.map((candidate) => claudeCandidateText(candidate) !== null),
+    );
+
+    expect(afterTicket53).toBe(beforeTicket53);
+  });
 });
 
 /**
