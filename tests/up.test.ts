@@ -388,7 +388,7 @@ if (args[0] === "label" && args[1] === "list") console.log(JSON.stringify([{ nam
     expect(result.stderr).toContain("skipped GitHub labels and tracker checks");
   });
 
-  test("enrolls the repo once in the configurable supervisor registry and reports soft cmux status", async () => {
+  test("enrolls the repo once in the configurable supervisor registry and reports cmux hooks as optional", async () => {
     const { env, repo } = await createScratchRepo();
 
     const first = await runUp(repo, env);
@@ -401,7 +401,10 @@ if (args[0] === "label" && args[1] === "list") console.log(JSON.stringify([{ nam
     const second = await runUp(repo, env);
 
     expect(first.exitCode).toBe(0);
-    expect(first.stdout).toContain("cmux hooks: pending #7 (soft check)");
+    expect(first.stdout).toContain(
+      // #7: optional, never a convergence requirement (SPEC §3/§6).
+      "cmux hooks: optional (resume convenience; not required for signal delivery)",
+    );
     expect(registryAfterFirst).toBe(`${repo}\n`);
     expect(second.exitCode).toBe(0);
     expect(await Bun.file(env.ARGUS_REPOS_FILE!).text()).toBe(registryAfterFirst);

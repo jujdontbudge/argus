@@ -116,9 +116,15 @@ API (`cmux new-workspace`, `send`, `send-key`, `read-screen`, `notify`, `set-sta
 - **Typing into workers:** Hermes uses `cmux send` / `cmux send-key`. **Every
   Hermes-authored send is logged to the provenance registry first** (§5). This is
   non-negotiable: unlogged sends would masquerade as Johan and poison USER.md.
-- **Resume hooks:** `cmux hooks setup` (Claude Code) and `cmux hooks setup codex` are
-  part of machine setup; cmux natively supports resume for Claude Code, Codex, and
-  Hermes.
+- **Resume hooks are OPTIONAL (amended by #7).** `cmux hooks setup` (Claude Code) and
+  `cmux hooks setup codex` are a resume *convenience*, never a dependency for signal
+  delivery. §6's push path is native to the agents and cmux-independent: `argus up`
+  installs a Claude Code `Stop` hook and a Codex `notify` command itself, and #7 proved
+  both live end to end — a real `claude` session and a real `codex` session, hooks
+  firing, events landing in `.argus/events/`, the digest watcher consuming them — with
+  no cmux in the path at all. On a machine with cmux ≥ 0.64.22 the `cmux hooks`
+  commands remain a supported optional extra; on 0.62.2 (this machine) they do not
+  exist, and nothing in Argus requires them. Setup must never block on them.
 - Automation rules from the cmux skill apply: prefixed refs always (`pane:38`),
   `--focus false` on programmatic actions, never steal focus.
 
@@ -294,9 +300,21 @@ edit; a missing one breaks the record.
 Push-first, poll as safety net:
 
 - **Push:** end-of-session and blocked-on-human hooks (Claude Code `Stop` hook; Codex
-  `notify` config — both native) write an event file into `.argus/events/` and ping
-  Hermes' gateway. The Digest watcher also maintains `status:` per session
+  `notify` config — **both native, and neither one cmux**) write an event file into
+  `.argus/events/` and ping Hermes' gateway. `argus up` installs both (`src/up/hooks.ts`).
+  The Digest watcher also maintains `status:` per session
   (`running | blocked | done | dead`).
+- **The event file is the signal; the ping is best-effort.** Delivery to mission control
+  goes through cmux, so it is the one part of §6 that cmux can break — and when it does,
+  the event stays durable and the failure is loud
+  (`ARGUS EVENT DELIVERY DEGRADED: <reason>; event <id> remains durable`), never silent.
+  A degraded ping is a slower Hermes, not a lost signal: the poll below still sees it.
+- **Never type into an unresolved handle (#7).** cmux 0.62.2 treats an unresolvable
+  `--workspace` / `--surface` as a request to act on the FOCUSED one and exits 0, so a
+  stale mission handle would type `[argus]` lines into whatever human or worker session
+  happened to be selected while reporting success. The send seam therefore resolves the
+  handle against cmux's own listing first and degrades rather than misdelivers
+  (`src/events/notify.ts`).
 - **Poll:** Hermes cron sweeps `INDEX.md` + `cmux read-screen` on a slow interval as
   backup. Polling alone burns Hermes turns; push alone dies silently; both together
   don't.
@@ -397,8 +415,9 @@ knowledge beyond the list of enabled repos. This is the single exception to
   memory into `.argus/memory/` as seed content, install the memory symlink + skills
   adapters + AGENTS.md pointer block, create tracker labels (`retro`, wayfinder set),
   verify the Matt Pocock tracker wiring (`setup-matt-pocock-skills`) and lay it down
-  if missing, register the repo with the supervisor, verify cmux hooks, and start
-  this repo's eyes.
+  if missing, register the repo with the supervisor, install the §6 push hooks (Claude
+  `Stop` + Codex `notify`), and start this repo's eyes. cmux hooks are reported as
+  optional and are never a convergence requirement (§3, #7).
 - `argus down | status` — stop/inspect this repo's eyes.
 - `argus search "<query>"` — FTS query over `archive.db`.
 
@@ -415,8 +434,9 @@ knowledge beyond the list of enabled repos. This is the single exception to
    tailing library needs a reliable cwd/repo extraction from rollout content.
 5. **Hermes `argus-orchestrator` skill** — teaches Hermes the deploy/registry/dispatch
    protocol (§3, §5, §7).
-6. **cmux hooks** — `cmux hooks setup` + `cmux hooks setup codex`; verify Hermes
-   resume support.
+6. **cmux hooks (OPTIONAL, #7)** — `cmux hooks setup` + `cmux hooks setup codex` on
+   cmux ≥ 0.64.22, for resume convenience only; verify Hermes resume support. Not a
+   dependency of §6 signal delivery, and absent on cmux 0.62.2 without consequence.
 7. **Watcher brains wiring** — `codex exec` invocation pattern, debounce cadence,
    model/effort knobs in `.argus/config.yaml`.
 8. **Hermes memory binding** — redirect Hermes' native memory flush to the active

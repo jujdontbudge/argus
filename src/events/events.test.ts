@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { hashText } from "../matching";
@@ -11,6 +11,7 @@ import {
   handleCodexNotify,
   notifyMissionControl,
   parseArgusEvent,
+  resolveArgusRepo,
   writeEvent,
   type CmuxSend,
 } from "./index.ts";
@@ -270,5 +271,43 @@ describe("native hook entrypoints", () => {
     ).toEqual({ status: "ignored", reason: "not-argus" });
     expect(sends).toBe(0);
     expect(await readdir(join(repo, ".argus", "events"))).toHaveLength(0);
+  });
+
+  /**
+   * Ticket #7, found by the live drive. A real `codex exec --cd <path>`
+   * reports that path VERBATIM in its notify payload, while a real Claude Stop
+   * hook reports the resolved one — and on macOS the harness sandbox lives
+   * under `/var`, a symlink to `/private/var`. The watcher resolves its own
+   * repo (`realpath`, `src/watch.ts`) and then drops any event whose `repo`
+   * does not match STRING-wise, so an agent started on the symlinked form
+   * wrote a perfectly good event that the digest silently ignored forever.
+   * The event's repo is therefore canonicalised where it is resolved.
+   */
+  test("resolves a symlinked cwd to the canonical repo the watcher watches", async () => {
+    const repo = await scratchRepo();
+    const canonical = await realpath(repo);
+    const link = join(await mkdtemp(join(tmpdir(), "argus-events-link-")), "repo");
+    scratchDirectories.push(dirname(link));
+    await symlink(repo, link);
+
+    expect(await resolveArgusRepo(link)).toBe(canonical);
+
+    const result = await handleClaudeStop(
+      {
+        hook_event_name: "Stop",
+        session_id: "claude-symlinked",
+        cwd: link,
+        last_assistant_message: "DONE",
+      },
+      { send: async () => ({ ok: true as const }) },
+    );
+    expect(result.status).toBe("emitted");
+    const written = await readdir(join(canonical, ".argus", "events"));
+    expect(written).toHaveLength(1);
+    expect(
+      parseArgusEvent(
+        await Bun.file(join(canonical, ".argus", "events", written[0]!)).text(),
+      )!.repo,
+    ).toBe(canonical);
   });
 });

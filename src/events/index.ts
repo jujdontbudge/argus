@@ -11,8 +11,11 @@ export {
   type HookRuntime,
 } from "./hooks.ts";
 export {
+  createCmuxSend,
   notifyMissionControl,
   sendWithCmux,
+  type CmuxRun,
+  type CmuxRunResult,
   type CmuxSend,
   type CmuxSendRequest,
   type CmuxSendResult,

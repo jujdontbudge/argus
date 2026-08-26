@@ -539,7 +539,10 @@ export async function convergeUp(cwd = process.cwd()): Promise<number> {
   console.log(`Hermes profile: ${bindings.profile}`);
   console.log("Push hooks: Claude Stop + Codex notify");
 
-  console.log("cmux hooks: pending #7 (soft check)");
+  // #7: cmux hooks are an OPTIONAL convenience (SPEC §3/§6). The push path
+  // above is the required one and is cmux-independent; it was proven live on
+  // a real Claude Stop hook and a real Codex notify with no cmux involved.
+  console.log("cmux hooks: optional (resume convenience; not required for signal delivery)");
   console.log(`Argus converged ${repo}`);
   return 0;
 }
