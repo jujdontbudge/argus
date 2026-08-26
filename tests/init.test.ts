@@ -221,7 +221,7 @@ describe("argus init", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain(
-      "wiring: claude skills adapter OK (1 canonical skill readable through .claude/skills)",
+      "wiring: claude skills adapter OK (2 canonical skills readable through .claude/skills)",
     );
     expect(result.stdout).toContain("wiring: AGENTS.md pointers OK (6/6 resolve)");
   });
