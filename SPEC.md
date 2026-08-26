@@ -46,6 +46,28 @@ in this repo.
 6. **Every session is attachable.** All deployed work runs in cmux workspaces a human
    can open and type into at any moment. Johan taking over mid-ticket is a first-class
    use case, not an exception.
+7. **Argus must never require Anthropic API access. Claude capability comes from
+   Johan's subscription via the `claude` CLI only.** (Johan directive, 2026-08-25 —
+   hard, permanent, architectural.) His plan does not permit API access, so any design
+   that needs an `ANTHROPIC_API_KEY`, an `ANTHROPIC_AUTH_TOKEN`, or an out-of-band
+   provisioned `CLAUDE_CODE_OAUTH_TOKEN` is, in his words, *"unusably useless"* — it
+   does not run on the only machine Argus runs on. This outranks the isolation
+   instinct that produced the token requirement in the first place.
+   - A missing token or key is **never** a reason anything reports NOT RUN. It selects
+     the subscription path; it does not block one.
+   - The stricter, token-based hermetic mode (§13) may exist as an **option** for a
+     machine that has one. It is never a **precondition**.
+   - Stripping `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` out of a spawned child's
+     environment is the *opposite* of depending on them, and stays: an ambient key
+     inherited from a shell would silently change which provider — and whose quota —
+     an agent runs against. Never *require* a key; never let one leak in either.
+   - This is stated here, in the standing constraints, and not as a footnote in §13,
+     because §13 is where it was violated: an escalation from repo-level isolation to
+     a process-level one made a credential mandatory that this machine cannot mint,
+     and the Claude half of the harness went unrun for it. A constraint written only
+     where it is currently relevant is a constraint the next design will not read.
+   - Codex/Hermes are unaffected: they run on the ChatGPT subscription via `codex`,
+     which is the same shape of dependency — a CLI the user is already logged into.
 
 ---
 
@@ -405,33 +427,82 @@ Codex, makes untracked implementation edits, and drops preference statements mid
 Every feature ships with its scenario; pass/fail is asserted by the harness, never
 eyeballed.
 
-**Test agents and isolation (Johan directive, amended 2026-08-25):** live testing of
-the system — the simulation driver, sessions under test and per-ticket live drives —
-uses **Codex sol high** (`codex -c model_reasoning_effort=high`, gpt-5.6-sol) in
-isolation. Its one permitted credential touchpoint is copying `auth.json` into the
-scratch `CODEX_HOME`.
+**Test agents and isolation (Johan directive, 2026-08-24; amended 2026-08-25).** The
+governing rule is the original one, and it is defined at the **repo** level: every
+agent that runs uses the throwaway sandbox repo and scratch tabs/worktrees only,
+never the production dispatcher, live worker sessions, real `~/argus` state, or a
+non-sandbox session. No test run touches a non-sandbox session.
 
-The Claude half is run with **Claude Opus 5** (`claude --model claude-opus-5`) only
-when the caller already has a separately provisioned `CLAUDE_CODE_OAUTH_TOKEN`.
-The harness injects that token into the Claude child environment only; it never
-persists it, reads a Keychain secret, copies `~/.claude/.credentials.json`, invokes
-`claude setup-token`, or points Claude at the real config. Anthropic documents this
-token as the supported subscription-auth mechanism for scripts and CI. The existing
-interactive subscription credential has no supported read-only export operation: on
-macOS it is Keychain-backed, and copying its rotating access/refresh credential into
-a second config risks revoking the credential used by live sessions. The automation
-token must instead be provisioned separately, out of band.
+Live testing — the simulation driver, sessions under test and per-ticket live drives
+— uses **Codex sol high** (`codex -c model_reasoning_effort=high`, gpt-5.6-sol) and
+**Claude Opus 5** (`claude --model claude-opus-5`). Codex's one permitted credential
+touchpoint is copying `auth.json` into the scratch `CODEX_HOME`.
 
-As of 2026-08-25 this machine has no pre-provisioned `CLAUDE_CODE_OAUTH_TOKEN`, so
-**Codex sol high is the only live test-agent policy enforceable here**. Claude cases
-must be reported **NOT RUN**, never rounded up from fixtures or Codex results. The
-residual risk is explicit: `src/tailing/claude-code.ts` has not met a real Opus 5
-transcript, so live-only synthetic user-role content or transcript-shape drift could
-still poison provenance classification.
+The Claude half runs in **one of two modes**, and per §1 the default one needs no
+credential at all.
 
-Every agent that does run uses the throwaway sandbox repo and scratch tabs/worktrees
-only, never the production dispatcher, live worker sessions, real `~/argus` state,
-or a non-sandbox session.
+**Subscription mode is the DEFAULT and the only REQUIRED live-Claude path**
+(`createSubscriptionAgentSpawner`; gate `ARGUS_LIVE_CLAUDE_SUBSCRIPTION=1`, and
+`ARGUS_LIVE_AGENTS=1` opens it too). It spawns a normal terminal Claude session:
+**real `HOME`, so subscription auth simply works, and no token and no API key at
+all**, with `cwd` set to the throwaway sandbox repo or one of its worktrees. Its
+transcript lands in `~/.claude/projects/<sandbox-slug>/` under its own slug, touching
+no other project's transcripts. It refuses a `cwd` outside the sandbox, and it strips
+`CLAUDE_CONFIG_DIR` and all three credential variables so nothing can silently change
+which provider — or whose quota — the session runs against.
+
+**Hermetic mode is OPTIONAL and stricter** (`createIsolatedAgentSpawner`, gate
+`ARGUS_LIVE_AGENTS`), for a machine whose owner *has* a separately provisioned
+`CLAUDE_CODE_OAUTH_TOKEN` and wants an OS-enforced boundary. The harness injects that
+token into the Claude child environment only; it never persists it, reads a Keychain
+secret, copies `~/.claude/.credentials.json`, invokes `claude setup-token`, or points
+Claude at the real config. It **refuses** any `HOME` or `CLAUDE_CONFIG_DIR` under the
+real home, and that refusal is raised *before* the untokened refusal, so provisioning
+a token can never become the way to silence a real-home mistake. Both refusals stay
+exactly as #41 and #43 wrote them: a caller who **named** the hermetic spawner asked
+for an OS boundary, and handing them a real-home session instead would be the
+differ-by-omission failure this section forbids.
+
+**Per §1, the absence of a token is never a blocking reason.** It selects subscription
+mode. No path in the harness may report the Claude half NOT RUN for a missing token or
+key; the only remaining blocking reason on the Claude side is a missing `claude` CLI.
+When the stricter mode is simply not selected, its drive is **SKIPPED** — nobody asked
+for it, and the Claude half is running in the other mode — never NOT RUN, which would
+report a gap that does not exist.
+
+**How the modes stay distinct, now that one gate opens both.** Not by environment
+variable — by name. `createSubscriptionAgentSpawner` is the only function in the tree
+that puts the real `HOME` into a child process, and it must be called by name, with a
+`SandboxScope`, to do so. No env var reaches the real home, and no spawner silently
+becomes the other one. The gate chooses which drive *registers*; a spawner cannot
+change what it *is*.
+
+**Why #41's credential hazard does not apply to subscription mode.** That risk was
+specific: a **copied** `.credentials.json` inside a scratch config is a second copy
+of a rotating credential, and letting it refresh can revoke the one Johan's live
+sessions are using. Nothing is copied here. A normal terminal session refreshes on
+**the same `~/.claude` path every one of Johan's live sessions already uses**, so
+there is no second copy and nothing to rotate out from under anyone. Copying that
+file remains forbidden in both modes.
+
+**Subscription mode's residual risk, stated plainly.** The blast radius is **not
+OS-enforced**. The session runs under the real `HOME` and can in principle read it;
+it spends Johan's own subscription quota; it appears in his session list; and it
+leaves slug directories under the real `~/.claude/projects/` that the harness
+deliberately does not clean up, because removing anything under the real home is the
+class of operation this section exists to prevent. What replaces the OS boundary is
+**scripted scope**: a sandbox `cwd`, a dispatch that asks only for benign scripted
+work with no tools, and `SandboxScope` — through which every destructive and
+harness-side operation runs, refusing by name any path outside the sandbox root
+(resolving symlinks first) and any process this harness did not itself spawn.
+Scenario 6's watcher kills adopt only watchers whose repo is the sandbox's, because
+the production dispatcher supervises the real `~/argus` on the same machine. That
+scoping is the safety property in this mode, so it is asserted directly in
+`src/harness/sandbox-scope.test.ts` rather than left as a convention.
+
+Whichever mode ran must be reported by name, on the gate banner, so a subscription
+call is never spent quietly. Claude cases are **NOT RUN** unless a live drive actually
+executed, never rounded up from fixtures or Codex results.
 
 Core scenario suite (each maps to an eye or a provenance edge):
 

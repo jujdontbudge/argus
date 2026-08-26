@@ -10,7 +10,7 @@ import {
   rm,
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Database } from "bun:sqlite";
 
@@ -28,6 +28,11 @@ import {
   type SupervisorStatus,
 } from "../supervisor/runtime.ts";
 import { claudeProjectDir } from "../tailing/claude-code.ts";
+import {
+  adoptSandboxWatchers,
+  isWithin,
+  SandboxScope,
+} from "./sandbox-scope.ts";
 
 export interface CommandResult {
   exitCode: number;
@@ -43,6 +48,14 @@ export interface Sandbox {
   id: string;
   repo: string;
   root: string;
+  /**
+   * Ticket #49 — the sandbox's own destructive-op guard.
+   *
+   * Subscription mode runs the session under the real HOME, so the scenarios'
+   * blast radius is no longer an OS boundary. Every wipe and every kill goes
+   * through here instead, and `sandbox-scope.test.ts` is what proves it.
+   */
+  scope: SandboxScope;
   teardown(): Promise<void>;
   up: CommandResult;
 }
@@ -183,6 +196,7 @@ export async function createSandbox(
   options: SandboxOptions,
 ): Promise<Sandbox> {
   const root = await mkdtemp(join(tmpdir(), "argus-harness-"));
+  const scope = new SandboxScope(root);
   const home = join(root, "home");
   const id = basename(root);
   const repo = join(root, `scratch-${id}`);
@@ -284,11 +298,12 @@ export async function createSandbox(
       id,
       repo,
       root,
-      teardown: () => rm(root, { force: true, recursive: true }),
+      scope,
+      teardown: () => scope.remove(root),
       up,
     };
   } catch (error) {
-    await rm(root, { force: true, recursive: true });
+    await scope.remove(root);
     throw error;
   }
 }
@@ -418,6 +433,16 @@ export const watcherDeathScenario: ScenarioHandler = async ({ assert, sandbox })
     statusPath,
   });
   const observedPids = new Set<number>();
+  /**
+   * #49: read the snapshot and adopt in one step, so no pid this scenario
+   * has seen is killable until it has been checked against the sandbox repo.
+   * The production dispatcher supervises the real `~/argus` on this machine.
+   */
+  const snapshot = async (): Promise<SupervisorStatus> => {
+    const status = await supervisorSnapshot(statusPath);
+    adoptSandboxWatchers(sandbox.scope, repo, status);
+    return status;
+  };
 
   try {
     await supervisor.reconcile();
@@ -430,7 +455,7 @@ export const watcherDeathScenario: ScenarioHandler = async ({ assert, sandbox })
         await Bun.sleep(20);
       }
     }
-    const initial = await supervisorSnapshot(statusPath);
+    const initial = await snapshot();
     for (const watcher of initial.watchers) observedPids.add(watcher.pid);
     assert(
       initial.watchers.length === EYE_NAMES.length &&
@@ -440,16 +465,16 @@ export const watcherDeathScenario: ScenarioHandler = async ({ assert, sandbox })
 
     let replacementArchiver: SupervisorStatus["watchers"][number] | undefined;
     for (const eye of EYE_NAMES) {
-      const before = (await supervisorSnapshot(statusPath)).watchers.find(
+      const before = (await snapshot()).watchers.find(
         (watcher) => watcher.eye === eye && watcher.repo === repo,
       );
       if (!before) throw new Error(`missing ${eye} watcher fixture`);
-      process.kill(before.pid, "SIGKILL");
+      sandbox.scope.kill(before.pid, "SIGKILL");
 
       let replacement: SupervisorStatus["watchers"][number] | undefined;
       for (let attempt = 0; attempt < 200; attempt += 1) {
         await Bun.sleep(5);
-        replacement = (await supervisorSnapshot(statusPath)).watchers.find(
+        replacement = (await snapshot()).watchers.find(
           (watcher) =>
             watcher.eye === eye &&
             watcher.repo === repo &&
@@ -524,7 +549,7 @@ export const watcherDeathScenario: ScenarioHandler = async ({ assert, sandbox })
   }
 
   assert(
-    (await supervisorSnapshot(statusPath)).watchers.length === 0 &&
+    (await snapshot()).watchers.length === 0 &&
       [...observedPids].every((pid) => !processIsAlive(pid)),
     "supervisor stopped every real eye command",
   );
@@ -550,14 +575,6 @@ export interface ScenarioReport {
 
 export interface ScenarioRunResult extends ScenarioReport {
   reportPath: string;
-}
-
-function isWithin(parent: string, child: string): boolean {
-  const pathFromParent = relative(resolve(parent), resolve(child));
-  return (
-    pathFromParent === "" ||
-    (!pathFromParent.startsWith("..") && !isAbsolute(pathFromParent))
-  );
 }
 
 function envPath(sandbox: Sandbox, name: string): string {
@@ -780,7 +797,7 @@ export const blastRadiusZeroScenario: ScenarioHandler = async ({
     const peerSupervisor = envPath(peer, "ARGUS_REPOS_FILE");
     const peerSupervisorBefore = await Bun.file(peerSupervisor).text();
 
-    await rm(join(sandbox.repo, ".argus"), { force: true, recursive: true });
+    await sandbox.scope.remove(join(sandbox.repo, ".argus"));
 
     assert(
       !(await exists(join(sandbox.repo, ".argus"))),
