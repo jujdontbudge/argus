@@ -1,0 +1,242 @@
+==============================================================================
+ARGUS LIVE WATCHER-BRAIN CORRECTNESS — ticket #91
+==============================================================================
+run on         2026-08-26, this machine
+gate           ARGUS_LIVE_WATCHER_BRAINS=1        gate state reached: RUN
+brain          codex-cli 0.149.1, `codex exec --ignore-user-config
+               -m luna -c model_reasoning_effort=low -s read-only --ephemeral`
+model/effort   luna @ low — DEFAULT_EYES_CONFIG, unchanged (#54 settled it)
+auth           ChatGPT subscription (~/.codex/auth.json); the brain seam
+               strips OPENAI_API_KEY before spawn, so no metered call is
+               reachable from here. auth.json checksum unchanged across the
+               run: 670a91106a15b04c48f5504375c448c3115ed3ade0aa3cef083a4fc603233e3a
+calls spent    5 real `codex exec` calls, $0 (subscription)
+
+WHAT WAS WRONG. The gate has run before (#77) and it proved a real brain
+returned something the code could PARSE. It did not prove the answer was
+RIGHT. A brain returning well-formed JSON saying the opposite of the truth
+passed. Three of the four judgment eyes were in that state:
+
+  reviewer   `expect(["user-preference","project-fact"]).toContain(kind)` —
+             both members of a two-member enum satisfy it. Not an assertion.
+  curator    the memory half asserted NOTHING, and its two planted facts were
+             two spellings of one proposition, so "merge the duplicate" and
+             "merge everything" were the same answer.
+  digest     no live test at all, though its `status:` is the SPEC §6
+             slow-poll signal (SPEC.md:307-308), not narrative decoration.
+  retro      already asserts drift true AND false. Untouched, by design.
+
+Every assertion below is a DISCRIMINATION: two inputs that must be classified
+differently, so an always-yes brain and an always-no brain both go red.
+
+------------------------------------------------------------------------------
+1. REVIEWER — the #71 confusion, measured
+------------------------------------------------------------------------------
+src/eyes/reviewer/live.test.ts, production prompt (`buildExtractionPrompt`).
+
+  input A (author=johan, uuid live-pref)
+    "please always write commit messages in present tense, I keep saying this"
+  input B (author=agent, uuid live-env)
+    "Checked on this machine: cmux must be at least 0.64.22, below that the
+     dispatcher loop dies with its terminal."
+
+  ASSERTION  every finding containing "0.64.22" has kind project-fact;
+             every finding containing "present tense" has kind
+             user-preference and cites live-pref.
+  WHY A WRONG ANSWER FAILS  the two must land in DIFFERENT kinds. A brain
+             that answers project-fact to everything fails on A; one that
+             answers user-preference to everything fails on B.
+
+  VERDICT RETURNED (verbatim):
+  {"findings":[{"kind":"user-preference","slug":"present-tense-commit-messages",
+   "title":"Present-tense commit messages","content":"Johan wants commit messages
+   written in the present tense.","sources":["live-pref"]},
+   {"kind":"project-fact","slug":"cmux-minimum-version","title":"cmux minimum
+   version","content":"cmux must be at least version 0.64.22; below that, the
+   dispatcher loop dies with its terminal.","sources":["live-env"]}]}
+  → PASS.
+
+------------------------------------------------------------------------------
+2. REVIEWER, skills writer — THE NEGATIVE CONTROL
+------------------------------------------------------------------------------
+Same file, production prompt (`buildProcedurePrompt`), input B ALONE.
+
+  ASSERTION  findings === []. Nothing at all.
+  WHY IT MATTERS  #54 measured this model class turning exactly this sentence
+             into a skill called `Upgrade cmux before acceptance testing`, on
+             every attempt. Without this control the suite only proves the
+             brain is agreeable — that it says something when asked. Here the
+             correct answer is silence, and silence is asserted exactly.
+
+  VERDICT RETURNED (verbatim):  {"findings":[]}
+  → PASS.
+
+------------------------------------------------------------------------------
+3. CURATOR, memory half — the over-merge #54 measured
+------------------------------------------------------------------------------
+src/eyes/curator/live.test.ts, production prompt (`buildCuratorPrompt`).
+
+  planted facts
+    metro-port     "Metro runs on 8082"                  ← duplicate pair
+    metro-8082     "Metro listens on port 8082"          ← duplicate pair
+    archive-fts5   "The archive is a SQLite FTS5 index"   ← control, distinct
+    launchd-login  "launchd starts the eyes on login"     ← control, distinct
+  planted orphan
+    ghost          kind index-without-file
+
+  ASSERTION  memory.merges contains a merge over the unordered pair
+             {metro-port, metro-8082}; AND neither archive-fts5 nor
+             launchd-login appears in merges (either side) or in
+             memory.prunings.
+  WHY A WRONG ANSWER FAILS  a brain that merges nothing fails the first; a
+             brain that merges everything — the dangerous answer, the one #54
+             measured, the one that destroys real content — fails the second.
+             The old fact set could not have caught it: both facts said the
+             same thing, so merging them both was correct.
+
+  VERDICT RETURNED, run 2 (verbatim, memory section):
+  "memory":{"merges":[{"from":"metro-8082","into":"metro-port","reason":"Both
+   facts state that Metro listens on port 8082; the earlier canonical fact
+   keeps the content."}],"prunings":[{"slug":"ghost","reason":"The index
+   references a fact file that does not exist, so it is an orphaned memory
+   entry rather than usable project knowledge."}]}
+  VERDICT RETURNED, run 1 (verbatim, memory section) — same judgment, same
+  direction, arrived at independently:
+  "memory":{"merges":[{"from":"metro-8082","into":"metro-port","reason":"Both
+   facts state that Metro runs or listens on port 8082; retain the earlier
+   fact key while consolidating the duplicate wording."}],"prunings":
+   [{"slug":"ghost","reason":"The index references a fact file that does not
+   exist, so the orphaned index entry should be removed."}]}
+  → PASS: pair merged, both controls untouched, in both runs.
+
+  THE ORPHAN, and a red test this run produced. The first live run FAILED
+  here. It asserted the brain should leave `ghost` alone, and luna filed it
+  under memory.prunings — twice, in two independent runs. On inspection that
+  assertion was wrong, not the brain: the prompt says "Report on the orphans"
+  and hands back a schema with NO orphan field, so `prunings` is the nearest
+  thing it has. The eye rejects the name (`unknown fact: ghost`, curator.ts
+  applyVerdict) and repairs the index itself in phase 6, so the answer costs
+  nothing. The assertion was replaced by the proposition that IS unambiguous —
+  a real fact must never be merged INTO the dangling slug — and the measured
+  behaviour was pinned deterministically instead, at the layer that owns it:
+    src/eyes/curator/curator.test.ts
+      "a proposed pruning of an index orphan is rejected, and the index still
+       converges" — asserts rejected == [{what: "memory pruning ghost",
+       reason: "unknown fact: ghost"}], archived.facts == [], and the ghost
+       index line gone.
+  The verdict above was NOT edited to look better than the run earned; both
+  runs are printed and both pruned `ghost`.
+
+------------------------------------------------------------------------------
+4. DIGEST — the SPEC §6 signal, first live test this eye has had
+------------------------------------------------------------------------------
+src/eyes/digest/live.test.ts (new), production prompt (`buildDigestPrompt`,
+exported by this ticket so the test sends the words the eye sends).
+
+  one batch, two sessions
+    sess-finished  "…all 14 tests passing… PR merged… branch deleted. There
+                    is nothing left to do on this ticket — I am finished."
+    sess-midrun    "I have converted 2 of the 7 call sites so far. Continuing
+                    now… nothing is blocking me and the work is in progress."
+
+  ASSERTION  sess-finished.status === "done" AND sess-midrun.status ===
+             "running", both narratives non-empty.
+  WHY A WRONG ANSWER FAILS  always-"done" fails the second, always-"running"
+             fails the first, always-"blocked" fails both — and neither block
+             addresses a question to a human, so blocked is wrong for both.
+             The status is what the §6 slow poll reads; getting it wrong
+             degrades signal delivery, not just prose.
+
+  VERDICT RETURNED (verbatim):
+  {"sessions":[{"sessionId":"sess-finished","narrative":"The retry loop was
+   implemented successfully, with all 14 tests passing. The pull request was
+   opened and merged, the branch was deleted, and the ticket is complete with
+   no remaining work.","summary":"Retry loop complete; PR merged and branch
+   deleted.","status":"done"},{"sessionId":"sess-midrun","narrative":"Two of
+   the seven call sites have been converted. Work is continuing through
+   `src/queue/worker.ts` and the remaining four call sites, with no blockers
+   reported.","summary":"2 of 7 call sites converted; migration is in
+   progress.","status":"running"}]}
+  → PASS.
+
+------------------------------------------------------------------------------
+NON-DETERMINISM: the tolerance, and why it is not a reroll
+------------------------------------------------------------------------------
+NO RETRIES. Not one assertion below has an N-of-M, a retry loop, or a
+tolerance band on the graded proposition. A live model is non-deterministic,
+so the answer is to grade only propositions whose truth value does not depend
+on wording:
+
+  exact        every enum the brain chooses: `kind` (project-fact /
+               user-preference), `status` (done / running), and the empty
+               findings array. Three-and-two-member enums have nothing to be
+               tolerant of.
+  set          the DIRECTION of a memory merge (metro-8082 → metro-port or
+               the reverse) is a genuine choice between two right answers, so
+               the assertion is on the unordered pair. That the two slugs
+               appear together in one merge is not tolerated at all.
+               Retro's existing test does the same for `#15` vs `15`.
+  substring    findings are located by a string the model was HANDED —
+               "0.64.22", "present tense" — because the slug is its to
+               choose. The anchor identifies WHICH finding; the assertion is
+               then on the `kind`, exactly. No assertion is on prose the model
+               composed, except that a narrative be non-empty.
+
+Two runs were spent on the curator file. The second was NOT a reroll of a
+failed judgment: the judgment passed both times, in the same direction. What
+changed between them was the TEST — one assertion was removed because it
+graded a defensible answer as wrong (see §3) — and the retained assertions
+were already satisfied by run 1's recorded verdict, printed above.
+
+------------------------------------------------------------------------------
+COVERAGE: which eyes, and which not
+------------------------------------------------------------------------------
+  reviewer   COVERED, both passes (extraction and skills writer).
+  curator    COVERED, memory half. Its SKILL half still asserts only the
+             negative it always did (the busy umbrella is not retired); this
+             ticket did not widen that.
+  digest     COVERED, status discrimination. Narrative QUALITY is not graded
+             and cannot honestly be: "does it read well" has no truth value.
+  retro      ALREADY COVERED before this ticket (drift true and false, parent
+             from a set) and deliberately NOT TOUCHED.
+  archiver   NOT COVERED, and not in scope: it has no brain. There is no
+             judgment to grade.
+  honcho     NOT COVERED here. Its live gate is ARGUS_LIVE_HONCHO, a
+             different gate and a different service.
+
+------------------------------------------------------------------------------
+GATES
+------------------------------------------------------------------------------
+  bun x tsc --noEmit            clean
+  bun test (default gate)       953 pass / 21 skip / 0 fail, 974 tests
+                                across 132 files (3353 expect() calls)
+  bun test (gate=1, 3 files)    run 1: 3 pass / 1 fail  (the §3 red above)
+                                run 2: 4 pass / 0 fail  (curator re-run only)
+
+------------------------------------------------------------------------------
+RESOURCE SAFETY
+------------------------------------------------------------------------------
+No watcher was started by this ticket. The lease was held and not drawn on:
+every test here drives the BRAIN SEAM directly — `createCodexBrain` against a
+`mkdtemp` sandbox as `-C` — with no eye, no supervisor and no launchd label
+involved, so there was no fleet to measure. Peak resident set observed for the
+`codex` processes during the live run: 322 MB total across all codex processes
+on the machine (sampled every 6s), falling back to a 152 MB floor that was
+present before the run and belongs to another session. No process this run did
+not spawn was signalled.
+
+  pgrep -f 'bin/bun.*cli.ts watch' | wc -l              0   (baseline 0)
+  launchctl list | grep -ci argus                       0   (baseline 0)
+  cmux --id-format both tree --all | grep -c "workspace " 8  (baseline 8, unchanged)
+  ls -d /private/tmp/argus-* 2>/dev/null                 none (test sandboxes
+                                                         are mkdtemp'd under
+                                                         $TMPDIR and removed
+                                                         in `finally`)
+
+REFUSED
+  - did not touch cmux at all (#90 is driving that door; #98 is open about a
+    vanished tab), beyond the read-only count above
+  - did not change the model or the effort (#54 settled luna@low)
+  - did not read or copy ~/.claude/.credentials.json; checksums only
+  - did not hand-edit a verdict; the red run is printed as it happened
+  - did not soften the reviewer or digest assertions after seeing the answers

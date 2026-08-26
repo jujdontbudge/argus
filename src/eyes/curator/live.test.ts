@@ -161,13 +161,19 @@ describe.skipIf(liveGate.status !== "run")(
           expect(prunedSlugs).not.toContain(slug);
         }
 
-        // 3. The orphan is the eye's to repair (phase 6, `repairMemoryIndex`)
-        //    and the schema has no field for it, so what the brain owes here
-        //    is restraint: `ghost` is an index line with no fact file behind
-        //    it, and merging or pruning it as though it were a fact would be
-        //    the brain acting outside its half of the contract.
+        // 3. The orphan. NOT asserted as restraint, and the first live run of
+        //    this test is why: luna returned
+        //    `prunings: [{slug: "ghost", reason: "the index references a fact
+        //    file that does not exist"}]`, which is a defensible reading of an
+        //    ask that says "report on the orphans" and hands back a schema
+        //    with no orphan field — `prunings` is the nearest thing it has.
+        //    The eye rejects that name as `unknown fact: ghost` and repairs
+        //    the index itself in phase 6, so the answer costs nothing;
+        //    curator.test.ts owns both halves of that mechanically. What IS
+        //    unambiguous is that a REAL fact must not be dragged into the
+        //    orphan: a merge either way round would be a decision about live
+        //    content taken on the strength of a dangling index line.
         expect(mergedSlugs).not.toContain("ghost");
-        expect(prunedSlugs).not.toContain("ghost");
       } finally {
         await rm(sandboxRepo, { force: true, recursive: true });
       }

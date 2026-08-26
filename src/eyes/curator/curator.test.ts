@@ -381,6 +381,56 @@ describe("the curator pass — the memory half", () => {
     });
   });
 
+  test("a proposed pruning of an index orphan is rejected, and the index still converges", async () => {
+    // The verdict body below is what the real luna brain returned on the #91
+    // live run, verbatim in shape: handed an `index-without-file` orphan and
+    // no schema field for it, it filed `ghost` under memory prunings. The eye
+    // must treat that as a name that does not exist — never as a fact to
+    // archive — and repair the index on its own account regardless.
+    await withWorld(async (world) => {
+      await plantFact(world, "metro-port", "Metro port", "Metro runs on 8082.");
+      await Bun.write(
+        join(world.memoryDir, "MEMORY.md"),
+        [
+          "# Memory index",
+          "",
+          "- [Metro port](metro-port.md) — Metro runs on 8082.",
+          "- [Ghost](ghost.md) — its file is gone",
+          "",
+        ].join("\n"),
+      );
+
+      const result = await pass(
+        world,
+        stubBrain(
+          JSON.stringify({
+            summary: "remove the orphaned index entry",
+            consolidations: [],
+            prunings: [],
+            memory: {
+              merges: [],
+              prunings: [
+                {
+                  slug: "ghost",
+                  reason: "the index references a fact file that does not exist",
+                },
+              ],
+            },
+          }),
+        ),
+      );
+
+      expect(result.report.llm.rejected).toEqual([
+        { what: "memory pruning ghost", reason: "unknown fact: ghost" },
+      ]);
+      expect(result.report.archived.facts).toEqual([]);
+      expect(await exists(join(world.memoryDir, "metro-port.md"))).toBe(true);
+      const index = await Bun.file(join(world.memoryDir, "MEMORY.md")).text();
+      expect(index).toContain("metro-port.md");
+      expect(index).not.toContain("ghost.md");
+    });
+  });
+
   test("a dry run reports orphans without repairing them", async () => {
     await withWorld(async (world) => {
       await plantFact(world, "unlisted", "Unlisted fact", "nobody indexed me");
