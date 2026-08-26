@@ -43,6 +43,7 @@ import {
   runGit,
   worktreeForTicket,
   type GitRun,
+  type WorktreeResult,
 } from "./worktree.ts";
 import type { CmuxRun } from "../events";
 
@@ -51,6 +52,18 @@ export interface DeployRequest {
   /** Git ref the worktree branches from. Defaults to the repo's HEAD. */
   base?: string;
   branch?: string;
+  /**
+   * Where the session works (#62).
+   *
+   * `"worktree"` (the default, and everything #56 dispatches) creates a fresh
+   * git worktree, because "parallel agents in one working tree race the index"
+   * (§7.3.3). `"repo"` runs in the repo's own checkout, which is what SPEC
+   * §7.2 asks for by name — "creates a cmux workspace in R" — and what a
+   * PLANNING session needs: a grill produces a spec and tickets, and on an
+   * unmerged worktree branch that output is stranded. A planning session does
+   * not touch the index, so it does not need the isolation the rule buys.
+   */
+  checkout?: "repo" | "worktree";
   /** The full prompt that opens the session — the registry's copy of it. */
   dispatchPrompt: string;
   /**
@@ -64,10 +77,31 @@ export interface DeployRequest {
   model?: string;
   /** The repo the registry belongs to — never the worktree. */
   repo: string;
-  ticket: string;
+  /**
+   * Optional, because §7.5 exempts planning and grilling sessions from "every
+   * implemented thing is a ticket". Required in `"worktree"` mode, where the
+   * branch and the worktree path are named after it.
+   */
+  ticket?: string;
   worktree?: string;
   /** `"auto"` tries cmux and degrades; `"none"` (default) never touches it. */
   workspace?: "auto" | "none";
+  /**
+   * A cmux workspace the CALLER already created and resolved (#62). The grill
+   * flow needs the ref before the row, because it launches the session by
+   * typing into that workspace — so it cannot let this primitive discover one
+   * on its own. Set it and `workspace` is not consulted; the ref is recorded
+   * in the row exactly as a self-created one would be.
+   */
+  workspaceRef?: string;
+  /**
+   * Override the route for this deployment (#62). The routes in
+   * `./routes.ts` are the AFK, headless shapes; §7.2's grill is the same
+   * agent and the same ordering with an interactive command line, and a route
+   * override keeps that one difference in one place instead of forking the
+   * primitive.
+   */
+  route?: AgentRoute;
 }
 
 export interface DeployWorkerOptions {
@@ -85,7 +119,7 @@ export interface Deployment {
   dispatchPrompt: string;
   process: WorkerProcess;
   sessionId: string;
-  ticket: string;
+  ticket?: string;
   /** The cmux workspace ref, when one was created AND resolved. */
   workspace?: string;
   /** Why there is no workspace, when one was asked for and did not happen. */
@@ -103,30 +137,30 @@ export async function deployWorker(
   request: DeployRequest,
   options: DeployWorkerOptions = {},
 ): Promise<DeployResult> {
-  const route = ROUTES[request.agent];
+  const route = request.route ?? ROUTES[request.agent];
   const git = options.git ?? runGit;
   const spawn = options.spawn ?? spawnWorker;
-  const branch = request.branch ?? branchForTicket(request.ticket);
-  const path = request.worktree ?? worktreeForTicket(request.repo, request.ticket);
 
-  // 1. The worktree. Parallel agents in one working tree race the index
-  //    (§7.3.3), and a deployment with nowhere to work is not a deployment.
-  const worktree = await createWorktree(
-    { branch, path, repo: request.repo, ...(request.base !== undefined && { base: request.base }) },
-    git,
-  );
+  // 1. The checkout. Parallel agents in one working tree race the index
+  //    (§7.3.3), and a deployment with nowhere to work is not a deployment —
+  //    so a worktree deployment that cannot get one never reaches the row.
+  //    A `"repo"` deployment (§7.2's grill) works in the repo itself and asks
+  //    git only which branch that is, so the row can still say.
+  const worktree = await resolveCheckout(request, git);
   if (worktree.status === "failed") {
     return { reason: worktree.reason, stage: "worktree", status: "failed" };
   }
 
-  // 2. The workspace, if asked for. Optional context (#7): it can only ever
-  //    subtract information from the row, never stop the deployment.
+  // 2. The workspace. Optional context (#7): it can only ever subtract
+  //    information from the row, never stop the deployment. A caller that
+  //    already holds a resolved ref passes it in rather than making a second.
   const workspace =
-    request.workspace === "auto"
+    request.workspaceRef === undefined && request.workspace === "auto"
       ? await createCmuxWorkspace({ cwd: worktree.path }, options.cmux)
       : null;
   const workspaceRef =
-    workspace?.status === "created" ? workspace.workspace : undefined;
+    request.workspaceRef ??
+    (workspace?.status === "created" ? workspace.workspace : undefined);
 
   const env = subscriptionEnv(options.env ?? Bun.env);
   const ts = (options.now?.() ?? new Date()).toISOString();
@@ -134,9 +168,9 @@ export async function deployWorker(
     agent: route.agent,
     dispatchPrompt: request.dispatchPrompt,
     sessionId,
-    ticket: request.ticket,
     ts,
     worktree: worktree.path,
+    ...(request.ticket !== undefined && { ticket: request.ticket }),
     ...(workspaceRef !== undefined && { workspace: workspaceRef }),
   });
   const { sessionsFile } = registryPaths(request.repo);
@@ -150,8 +184,8 @@ export async function deployWorker(
       dispatchPrompt: request.dispatchPrompt,
       process,
       sessionId,
-      ticket: request.ticket,
       worktree: worktree.path,
+      ...(request.ticket !== undefined && { ticket: request.ticket }),
       ...(workspaceRef !== undefined && { workspace: workspaceRef }),
       ...degraded,
     },
@@ -202,6 +236,56 @@ export async function deployWorker(
     return { reason: registryFailure(error), stage: "registry", status: "failed" };
   }
   return deployed(announced, process);
+}
+
+/**
+ * The checkout a deployment works in, and the one place the two modes differ.
+ *
+ * `"worktree"` is #55's original and unchanged behaviour. `"repo"` (#62) makes
+ * no worktree at all and asks git for the current branch instead, so the row
+ * still records WHERE the session works and on what — and so a directory that
+ * is not a git repository fails at this stage, before any row exists, exactly
+ * as a failed `git worktree add` does.
+ */
+async function resolveCheckout(
+  request: DeployRequest,
+  git: GitRun,
+): Promise<WorktreeResult> {
+  if (request.checkout === "repo") {
+    const head = await git(["rev-parse", "--abbrev-ref", "HEAD"], request.repo);
+    if (head.exitCode !== 0) {
+      return {
+        reason:
+          head.stderr.trim() ||
+          `git rev-parse exited ${head.exitCode} in ${request.repo}`,
+        status: "failed",
+      };
+    }
+    return {
+      branch: head.stdout.trim() || "HEAD",
+      path: request.repo,
+      status: "created",
+    };
+  }
+  if (request.ticket === undefined) {
+    return {
+      reason:
+        "a worktree deployment needs a ticket: the branch and the worktree path " +
+        'are named after it (pass checkout: "repo" for a ticketless planning session)',
+      status: "failed",
+    };
+  }
+  const branch = request.branch ?? branchForTicket(request.ticket);
+  const path = request.worktree ?? worktreeForTicket(request.repo, request.ticket);
+  return createWorktree(
+    {
+      branch,
+      path,
+      repo: request.repo,
+      ...(request.base !== undefined && { base: request.base }),
+    },
+    git,
+  );
 }
 
 function spawnRequest(

@@ -1,0 +1,368 @@
+import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { sendToWorker, type GitRun, type GitRunResult } from "../deploy";
+import type { CmuxRun, CmuxRunResult } from "../events";
+import { classifierFromRegistry, loadRegistry, registryPaths } from "../provenance";
+import type { MessageEvent } from "../tailing";
+import { startGrill } from "./index.ts";
+
+/**
+ * Ticket #62 — SPEC §7.2, Johan's planning entry point.
+ *
+ *   1. Johan tells Hermes "grill X for repo R."
+ *   2. Hermes registers the deployment, creates a cmux workspace in R, spawns
+ *      Claude Code with the grill skill, and notifies Johan to attach.
+ *   3. Johan answers in the terminal directly.
+ *
+ * Step 3 is what makes this different from every dispatch #55 and #56 built:
+ * the session is a TERMINAL Johan types into, so it cannot be a headless child
+ * of the CLI. It is launched by typing into a cmux workspace — and that puts
+ * the whole flow one quoting bug away from the §5 poisoning failure, because a
+ * prompt that lands in a shape the registry did not record hashes differently
+ * and classifies as JOHAN.
+ *
+ * So the tests below assert the two orderings and the one classification:
+ *
+ * - the deployment row is durable BEFORE a single key is typed (§5 rule 1),
+ *   observed from inside the delivery seam rather than after the fact;
+ * - a workspace cmux does not resolve is never typed into, and when the grill
+ *   cannot get one, NOTHING is written (#7's focused-workspace hazard, which
+ *   once put a stray line into Johan's live session);
+ * - the injected prompt classifies `hermes`/`dispatch-prompt`, and a line
+ *   Johan actually types into the same session still classifies as his.
+ *
+ * Every cmux seam here is the PRODUCTION one (`createCmuxSend` over the
+ * injected runner), so the resolve-guard under test is #7's, not a copy.
+ */
+const SESSION = "11111111-2222-4333-8444-555555555555";
+const TOPIC = "the retro eye's scope-drift question";
+
+const ok = (stdout = ""): CmuxRunResult => ({ exitCode: 0, stderr: "", stdout });
+const fail = (stderr: string): CmuxRunResult => ({ exitCode: 1, stderr, stdout: "" });
+
+/** A cmux 0.62.2 that hands out workspace:15 for the one create it is asked for. */
+function cmuxStub(
+  overrides: {
+    listings?: string[];
+    notify?: CmuxRunResult;
+    onSend?: () => Promise<void> | void;
+  } = {},
+): { calls: string[][]; run: CmuxRun } {
+  const listings = overrides.listings ?? [
+    "* workspace:14  argus\n",
+    "* workspace:14  argus\n  workspace:15  argus-grill\n",
+    "* workspace:14  argus\n  workspace:15  argus-grill\n",
+  ];
+  const calls: string[][] = [];
+  let listed = 0;
+  const run: CmuxRun = async (args) => {
+    calls.push([...args]);
+    switch (args[0]) {
+      case "list-workspaces": {
+        const stdout = listings[Math.min(listed, listings.length - 1)] ?? "";
+        listed += 1;
+        return ok(stdout);
+      }
+      case "new-workspace":
+        return ok("");
+      case "send":
+        await overrides.onSend?.();
+        return ok("");
+      case "send-key":
+        return ok("");
+      case "notify":
+        return overrides.notify ?? ok("");
+      default:
+        throw new Error(`unscripted cmux ${args.join(" ")}`);
+    }
+  };
+  return { calls, run };
+}
+
+/** A git that answers the one question a repo-checkout grill asks. */
+function gitStub(): { args: string[][]; run: GitRun } {
+  const args: string[][] = [];
+  const run: GitRun = async (a): Promise<GitRunResult> => {
+    args.push([...a]);
+    return { exitCode: 0, stderr: "", stdout: "main\n" };
+  };
+  return { args, run };
+}
+
+async function sandboxRepo(): Promise<string> {
+  return mkdtemp(join(tmpdir(), "argus-grill-"));
+}
+
+const landing = (text: string, ts: string): MessageEvent => ({
+  candidate: true,
+  file: "/transcript.jsonl",
+  promptSource: "typed",
+  role: "user",
+  sessionId: SESSION,
+  text,
+  ts,
+  type: "message",
+});
+
+describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () => {
+  test("the deployment row is durable before the launch line is typed", async () => {
+    const repo = await sandboxRepo();
+    try {
+      let registryAtSend = "";
+      const cmux = cmuxStub({
+        onSend: async () => {
+          const file = Bun.file(registryPaths(repo).sessionsFile);
+          registryAtSend = (await file.exists()) ? await file.text() : "";
+        },
+      });
+      const git = gitStub();
+      const result = await startGrill(
+        { repo, topic: TOPIC },
+        {
+          cmux: cmux.run,
+          git: git.run,
+          newSessionId: () => SESSION,
+          now: () => new Date("2026-08-26T09:00:00.000Z"),
+        },
+      );
+
+      expect(result.status).toBe("started");
+      if (result.status !== "started") return;
+      expect(result.workspace).toBe("workspace:15");
+      expect(result.sessionId).toBe(SESSION);
+
+      // THE ORDERING PROOF, taken by another reader at the instant the launch
+      // line went out. Swap register and type, and this is the empty string.
+      const row = JSON.parse(registryAtSend.trim()) as Record<string, unknown>;
+      expect(row.sessionId).toBe(SESSION);
+      expect(row.workspace).toBe("workspace:15");
+      expect(row.dispatchPrompt).toBe(result.prompt);
+      expect(row.agent).toBe("claude");
+      // §7.5: planning and grilling sessions are exempt from "every
+      // implemented thing is a ticket". A grill row that carried a ticket
+      // would make the Retro eye judge it against a scope it never had.
+      expect(row.ticket).toBeUndefined();
+
+      // §7.2 says "a cmux workspace in R" — the repo itself. A grill produces
+      // a spec and tickets, and on a worktree branch nobody merges that output
+      // is stranded, so no worktree is created.
+      expect(git.args.some((a) => a[0] === "worktree")).toBe(false);
+
+      const typed = cmux.calls.find((a) => a[0] === "send")?.at(-1) ?? "";
+      expect(typed).toContain("--session-id");
+      expect(typed).toContain(SESSION);
+      expect(typed.split("\n")).toHaveLength(1);
+    } finally {
+      await rm(repo, { force: true, recursive: true });
+    }
+  });
+
+  test("the injected prompt classifies hermes/dispatch-prompt, never johan", async () => {
+    const repo = await sandboxRepo();
+    try {
+      const cmux = cmuxStub();
+      const result = await startGrill(
+        { repo, topic: TOPIC },
+        {
+          cmux: cmux.run,
+          git: gitStub().run,
+          newSessionId: () => SESSION,
+          now: () => new Date("2026-08-26T09:00:00.000Z"),
+        },
+      );
+      expect(result.status).toBe("started");
+      if (result.status !== "started") return;
+
+      const { classifier } = classifierFromRegistry(
+        await loadRegistry(registryPaths(repo)),
+      );
+      const injected = classifier.handle(
+        landing(result.prompt, "2026-08-26T09:00:03.000Z"),
+      );
+      expect({
+        author: injected.record?.author,
+        via: injected.record?.via,
+      }).toEqual({ author: "hermes", via: "dispatch-prompt" });
+      expect(injected.record?.johanTouched).toBe(false);
+
+      // The control: the classifier is not simply calling everything Hermes.
+      // Johan answering in the terminal — §7.2 step 3 — is still Johan.
+      const answered = classifier.handle(
+        landing("no, keep the retro eye out of it", "2026-08-26T09:04:00.000Z"),
+      );
+      expect({
+        author: answered.record?.author,
+        via: answered.record?.via,
+      }).toEqual({ author: "johan", via: "takeover" });
+    } finally {
+      await rm(repo, { force: true, recursive: true });
+    }
+  });
+
+  test("a follow-up into the grill session classifies hermes/registry-send", async () => {
+    const repo = await sandboxRepo();
+    try {
+      const cmux = cmuxStub();
+      const started = await startGrill(
+        { repo, topic: TOPIC },
+        { cmux: cmux.run, git: gitStub().run, newSessionId: () => SESSION },
+      );
+      expect(started.status).toBe("started");
+
+      const nudge = "one more: what happens when two grills run in the same repo";
+      const sent = await sendToWorker(
+        { now: () => new Date("2026-08-26T10:00:00.000Z"), repo, sessionId: SESSION, text: nudge },
+        { resolve: async () => ({ ok: true }), send: async () => ({ ok: true }) },
+      );
+      expect(sent.status).toBe("sent");
+
+      const { classifier } = classifierFromRegistry(
+        await loadRegistry(registryPaths(repo)),
+      );
+      const record = classifier.handle(
+        landing(nudge, "2026-08-26T10:00:02.000Z"),
+      ).record;
+      expect({ author: record?.author, via: record?.via }).toEqual({
+        author: "hermes",
+        via: "registry-send",
+      });
+    } finally {
+      await rm(repo, { force: true, recursive: true });
+    }
+  });
+
+  test("the launch line is typed but NOT logged as a send", async () => {
+    const repo = await sandboxRepo();
+    try {
+      const cmux = cmuxStub();
+      await startGrill(
+        { repo, topic: TOPIC },
+        { cmux: cmux.run, git: gitStub().run, newSessionId: () => SESSION },
+      );
+      // It is a SHELL command line, not a prompt into a session. Logging it
+      // would put a Hermes attribution in the matcher's window that no
+      // transcript can ever match (`send-expired`), and if Johan later typed
+      // those same words they would stop being his — the exact phantom
+      // `sendToWorker` refuses to create.
+      expect((await loadRegistry(registryPaths(repo))).sends).toEqual([]);
+      expect(cmux.calls.filter((a) => a[0] === "send")).toHaveLength(1);
+      expect(cmux.calls.filter((a) => a[0] === "send-key")).toHaveLength(1);
+    } finally {
+      await rm(repo, { force: true, recursive: true });
+    }
+  });
+
+  test("a workspace cmux will not resolve is refused with nothing written", async () => {
+    const repo = await sandboxRepo();
+    try {
+      // 0.62.2's `new-workspace` prints no ref, so the ref is discovered from
+      // cmux's own listing. Here the listing does not grow: guessing would
+      // type the grill launch line into whatever Johan is looking at (#7).
+      const cmux = cmuxStub({
+        listings: ["* workspace:14  argus\n", "* workspace:14  argus\n"],
+      });
+      const result = await startGrill(
+        { repo, topic: TOPIC },
+        { cmux: cmux.run, git: gitStub().run, newSessionId: () => SESSION },
+      );
+      expect(result.status).toBe("refused");
+      expect(cmux.calls.some((a) => a[0] === "send")).toBe(false);
+      expect((await loadRegistry(registryPaths(repo))).sessions).toEqual([]);
+    } finally {
+      await rm(repo, { force: true, recursive: true });
+    }
+  });
+
+  test("a ref that stops resolving between create and launch types nothing", async () => {
+    const repo = await sandboxRepo();
+    try {
+      // Created and discovered, then gone by the time the guard re-asks.
+      const cmux = cmuxStub({
+        listings: [
+          "* workspace:14  argus\n",
+          "* workspace:14  argus\n  workspace:15  argus-grill\n",
+          "* workspace:14  argus\n",
+        ],
+      });
+      const result = await startGrill(
+        { repo, topic: TOPIC },
+        { cmux: cmux.run, git: gitStub().run, newSessionId: () => SESSION },
+      );
+      expect(result.status).toBe("failed");
+      if (result.status === "failed") {
+        expect(result.reason).toContain("does not resolve");
+        // Loud, not tidied away: the row was already durable, and #55's rule
+        // is that a row is never retracted. The classifier's own
+        // `dispatch-expired` audit is the answer to a prompt that never lands.
+        expect(result.sessionId).toBe(SESSION);
+      }
+      expect(cmux.calls.some((a) => a[0] === "send-key")).toBe(false);
+      expect((await loadRegistry(registryPaths(repo))).sessions).toHaveLength(1);
+    } finally {
+      await rm(repo, { force: true, recursive: true });
+    }
+  });
+
+  test("cmux hooks are never invoked; 0.62.2 has no installer and still grills", async () => {
+    const repo = await sandboxRepo();
+    try {
+      const cmux = cmuxStub();
+      const guarded: CmuxRun = async (args) => {
+        // This machine is permanently on 0.62.2, where `cmux hooks setup` does
+        // not exist. Anything that reached for it would not degrade — it would
+        // throw here, exactly as the real CLI would fail.
+        if (args[0] === "hooks") throw new Error("cmux 0.62.2 has no `hooks` command");
+        return cmux.run(args);
+      };
+      const result = await startGrill(
+        { repo, topic: TOPIC },
+        { cmux: guarded, git: gitStub().run, newSessionId: () => SESSION },
+      );
+      expect(result.status).toBe("started");
+      expect(cmux.calls.some((a) => a[0] === "hooks")).toBe(false);
+    } finally {
+      await rm(repo, { force: true, recursive: true });
+    }
+  });
+
+  test("a failed attach notification degrades loudly; the grill still ran", async () => {
+    const repo = await sandboxRepo();
+    try {
+      const cmux = cmuxStub({ notify: fail("notification centre is not available") });
+      const result = await startGrill(
+        { repo, topic: TOPIC },
+        { cmux: cmux.run, git: gitStub().run, newSessionId: () => SESSION },
+      );
+      expect(result.status).toBe("started");
+      if (result.status !== "started") return;
+      expect(result.notified).toBe(false);
+      expect(result.degraded.join(" ")).toContain("notification centre");
+      // The session is live and attachable whatever the notifier did, so the
+      // command still has to say where it is.
+      expect(result.attach).toContain("workspace:15");
+    } finally {
+      await rm(repo, { force: true, recursive: true });
+    }
+  });
+
+  test("the prompt carries the routed skill, the topic and the no-implementation rule", async () => {
+    const repo = await sandboxRepo();
+    try {
+      const result = await startGrill(
+        { repo, topic: TOPIC },
+        { cmux: cmuxStub().run, git: gitStub().run, newSessionId: () => SESSION },
+      );
+      expect(result.status).toBe("started");
+      if (result.status !== "started") return;
+      expect(result.skill).toBe("pocock-plus:grilling");
+      expect(result.prompt).toContain("pocock-plus:grilling");
+      expect(result.prompt).toContain(TOPIC);
+      expect(result.prompt).toMatch(/planning session/i);
+    } finally {
+      await rm(repo, { force: true, recursive: true });
+    }
+  });
+});

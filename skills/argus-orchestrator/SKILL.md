@@ -62,6 +62,34 @@ Expect Johan to attach to any worker at any time. Continue normally: unexpected 
 input is not a worker error. Registry matching classifies it, and the Retro watcher
 makes uncovered implementation safe as specified in §5 and §7.5.
 
+## Open a grill session when Johan asks to be grilled
+
+"Grill X for repo R" is SPEC §7.2, and it is a command, not a procedure to
+improvise: run `argus grill "<X>"` from repo R. Do not create the workspace,
+write the session row, or type the `claude` line yourself — the command does
+all three in the order §5 rule 1 requires, and doing it by hand is how an
+unregistered prompt lands and classifies as Johan.
+
+- Route by what Johan is asking for: `--mode grilling` (the default) to be
+  grilled, then `--mode spec`, `--mode tickets` for the rest of the §7.1 chain,
+  and `--mode review` / `--mode diagnosis` for those labels. Every mode routes
+  to Claude Code, per §1's table.
+- Use `--dry-run` first when the topic is ambiguous. It prints the routed skill
+  and the exact opening prompt and starts nothing.
+- The command prints the cmux workspace ref and sends Johan a `cmux notify`.
+  Tell him the ref as well: the notification is best-effort and a failed one
+  degrades rather than stopping the session.
+- A grill session has NO ticket, on purpose (§7.5 exempts planning). Do not
+  invent one for it, and do not put it on the dispatch frontier.
+- It runs in repo R's own checkout, not a worktree, so its spec and tickets are
+  not stranded on a branch nobody merges.
+- Follow-ups into a live grill go through the same logged send protocol as any
+  worker. Never type into a grill session outside the registry.
+- If the command refuses because cmux would not give it a resolved workspace,
+  that is not something to work around by launching `claude` yourself. §7.2 is
+  a session Johan attaches to, and a handle cmux does not resolve types into
+  whatever workspace is focused.
+
 ## Dispatch the frontier
 
 Repeat this loop up to the concurrency cap in `.argus/config.yaml`; use `3` when the

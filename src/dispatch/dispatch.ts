@@ -315,7 +315,10 @@ export async function dispatchFrontier(
       agent: worker.agent,
       branch: worker.branch,
       sessionId: worker.sessionId,
-      ticket: worker.ticket,
+      // Always present on this path: #56 dispatches a frontier TICKET, and
+      // `deployWorker` only makes it optional for §7.2's ticketless planning
+      // sessions, which never come through here.
+      ticket: worker.ticket ?? String(ticket.number),
       worktree: worker.worktree,
       ...(worker.workspace !== undefined && { workspace: worker.workspace }),
       ...(worker.workspaceDegraded !== undefined && {

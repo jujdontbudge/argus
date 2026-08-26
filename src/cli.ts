@@ -14,6 +14,7 @@ Commands:
   down     stop this repo's eyes
   status   inspect eyes and audits; acknowledge with --ack <audit-id>
   watch    run one eye
+  grill    open a registered, attachable planning session (SPEC §7.2)
   dispatch run one AFK ticket-dispatch pass (SPEC §7.3)
   complete verify, merge, close and map finished tickets (SPEC §7.3.4)
   signals  consume push events and run one slow-poll fallback sweep
@@ -21,6 +22,10 @@ Commands:
   install  install argus from this checkout
 
 Flags:
+  --mode     (grill) which planning skill to route to: grilling (default),
+             spec, tickets, review, diagnosis. All route to Claude Code.
+  --dry-run  (grill) print the routed skill and the exact opening prompt and
+             stop; no workspace, no registry row, no session.
   --commit   (init, up) commit the integration files Argus wrote —
              .gitignore, AGENTS.md and docs/agents — as they stand in the
              working tree, in one "chore: adopt Argus" commit. Without it
@@ -167,6 +172,112 @@ async function complete(): Promise<number> {
   return report.degraded.length > 0 ? 1 : 0;
 }
 
+/**
+ * `argus grill "<topic>"` — SPEC §7.2, Johan's planning entry point (#62).
+ *
+ * The one Argus command that opens a session FOR Johan rather than at an
+ * agent: a registered, attachable Claude session in a fresh cmux workspace on
+ * this repo, routed to a planning skill, announced with `cmux notify`.
+ *
+ * It refuses rather than degrades when cmux cannot give it a resolved
+ * workspace, because §7.2 step 3 is "Johan answers in the terminal directly"
+ * and a headless planning session has nobody to answer it. `--dry-run` is the
+ * way to see the routed skill and the exact opening prompt without spending a
+ * session on it.
+ */
+async function grill(args: string[]): Promise<number> {
+  const usage =
+    'Usage: argus grill "<topic>" [--mode <grilling|spec|tickets|review|diagnosis>]' +
+    " [--model <model>] [--dry-run]";
+  const { isGrillMode, resolveGrillSkill, grillPrompt, startGrill } = await import(
+    "./grill/index.ts"
+  );
+
+  let mode = "grilling";
+  let model: string | undefined;
+  let dryRun = false;
+  const topicParts: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]!;
+    if (argument === "--dry-run") {
+      dryRun = true;
+    } else if (argument === "--mode" || argument === "--model") {
+      const value = args[index + 1];
+      if (value === undefined || value.startsWith("--")) {
+        console.error(`argus grill: ${argument} needs a value\n${usage}`);
+        return 1;
+      }
+      if (argument === "--mode") mode = value;
+      else model = value;
+      index += 1;
+    } else if (argument.startsWith("--")) {
+      console.error(`argus grill: unknown argument '${argument}'\n${usage}`);
+      return 1;
+    } else {
+      topicParts.push(argument);
+    }
+  }
+
+  const topic = topicParts.join(" ").trim();
+  if (topic === "") {
+    console.error(usage);
+    return 1;
+  }
+  if (!isGrillMode(mode)) {
+    console.error(`argus grill: unknown mode '${mode}'\n${usage}`);
+    return 1;
+  }
+
+  const { gitRoot } = await import("./up/git.ts");
+  const repo = await gitRoot(process.cwd());
+  if (repo === null) {
+    console.error("argus grill: current directory is not inside a git repository");
+    return 1;
+  }
+
+  if (dryRun) {
+    const resolved = await resolveGrillSkill(repo, mode);
+    console.log(`repo:  ${repo}`);
+    console.log(`skill: ${resolved.skill} (${resolved.source})`);
+    console.log("prompt:");
+    console.log(grillPrompt({ resolved, topic }));
+    console.log("\nDry run: no cmux workspace, no registry row and no session.");
+    return 0;
+  }
+
+  const result = await startGrill({
+    mode,
+    repo,
+    topic,
+    ...(model !== undefined && { model }),
+  });
+
+  if (result.status === "refused") {
+    console.error(`argus grill: ${result.reason}`);
+    return 1;
+  }
+  if (result.status === "failed") {
+    // The row is durable and the session is not. Say both, because the
+    // classifier is about to raise `dispatch-expired` for this session id and
+    // that audit is unreadable without the name.
+    console.error(`argus grill: ${result.reason}`);
+    if (result.sessionId !== undefined) {
+      console.error(
+        `the deployment row for session ${result.sessionId} stays (a row is never retracted);` +
+          " expect a dispatch-expired audit for it",
+      );
+    }
+    return 1;
+  }
+
+  console.log(`session ${result.sessionId} (${result.skill}) in cmux ${result.workspace}`);
+  console.log(result.attach);
+  for (const reason of result.degraded) console.error(`DEGRADED: ${reason}`);
+  // A grill that started is a success even unannounced: Johan has the ref
+  // above, and the line the notifier failed to deliver is printed here.
+  return 0;
+}
+
 async function search(args: string[]): Promise<number> {
   const query = args.join(" ").trim();
   if (query.length === 0) {
@@ -296,6 +407,10 @@ export async function main(args: string[]): Promise<number> {
 
   if (args[0] === "complete") {
     return complete();
+  }
+
+  if (args[0] === "grill") {
+    return grill(args.slice(1));
   }
 
   if (args[0] === "search") {

@@ -272,3 +272,85 @@ describe("deployWorker (#55): the worktree is real (SPEC §7.3.2)", () => {
     }
   }, GIT_BUDGET_MS);
 });
+
+/**
+ * Ticket #62 extended `deployWorker` with a second checkout mode so §7.2's
+ * grill could compose on this primitive instead of spawning around it. The
+ * ordering is untouched; what these assert is that the new mode still FAILS
+ * CLOSED in the same direction — no checkout means no row, and no row means no
+ * process.
+ */
+describe("deployWorker checkout modes (#62)", () => {
+  test('checkout "repo" writes a ticketless row and makes no worktree', async () => {
+    const repo = await scratchRepo();
+    try {
+      const { spawn, witness } = witnessSpawn(repo);
+      const result = await deployWorker(
+        {
+          agent: "claude",
+          checkout: "repo",
+          dispatchPrompt: "grill me",
+          repo,
+          workspaceRef: "workspace:15",
+        },
+        { newSessionId: () => "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", spawn },
+      );
+      expect(result.status).toBe("deployed");
+      if (result.status !== "deployed") return;
+      expect(result.deployment.worktree).toBe(repo);
+      expect(result.deployment.ticket).toBeUndefined();
+      // §7.5 exempts planning and grilling, so a ticket field would be a
+      // scope the Retro eye would then judge the session against.
+      const row = JSON.parse(witness.sessionsAtSpawn[0]!.trim()) as Record<string, unknown>;
+      expect(row.ticket).toBeUndefined();
+      // A caller-supplied ref is recorded exactly as a self-created one is.
+      expect(row.workspace).toBe("workspace:15");
+      expect(result.deployment.workspace).toBe("workspace:15");
+    } finally {
+      await rm(repo, { force: true, recursive: true });
+    }
+  });
+
+  test("a worktree deployment without a ticket fails before any row exists", async () => {
+    const repo = await scratchRepo();
+    try {
+      const { spawn, witness } = witnessSpawn(repo);
+      const result = await deployWorker(
+        { agent: "claude", dispatchPrompt: "implement it", repo },
+        { spawn },
+      );
+      expect(result.status).toBe("failed");
+      if (result.status === "failed") {
+        expect(result.stage).toBe("worktree");
+        expect(result.reason).toContain("needs a ticket");
+      }
+      expect(witness.calls).toEqual([]);
+      expect(await Bun.file(registryPaths(repo).sessionsFile).exists()).toBe(false);
+    } finally {
+      await rm(repo, { force: true, recursive: true });
+    }
+  });
+
+  test('checkout "repo" outside a git repository never reaches the registry', async () => {
+    const notARepo = await mkdtemp(join(tmpdir(), "argus-deploy-bare-"));
+    try {
+      const { spawn, witness } = witnessSpawn(notARepo);
+      const result = await deployWorker(
+        {
+          agent: "claude",
+          checkout: "repo",
+          dispatchPrompt: "grill me",
+          repo: notARepo,
+          workspaceRef: "workspace:15",
+        },
+        { spawn },
+      );
+      expect(result.status).toBe("failed");
+      if (result.status === "failed") expect(result.stage).toBe("worktree");
+      expect(witness.calls).toEqual([]);
+      expect(await Bun.file(registryPaths(notARepo).sessionsFile).exists()).toBe(false);
+    } finally {
+      await rm(notARepo, { force: true, recursive: true });
+    }
+  });
+});
