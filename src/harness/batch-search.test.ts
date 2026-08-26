@@ -197,11 +197,28 @@ export function assertBatch(report: BatchSearchReport): void {
   const sessions = new Map(report.dispatched.map((entry) => [entry.sessionId, entry]));
   for (const [sessionId, entry] of sessions) {
     const rows = report.archived.filter((row) => row.sessionId === sessionId);
-    const prompts = rows.filter((row) => row.role === "user");
+    // The DISPATCH PROMPT specifically — matched by its own text, not by
+    // "whatever user-role row turned up". A codex session also carries a
+    // `<recommended_plugins>` preamble the CLI injects with role=user, and
+    // production grades that `system`/`non-candidate`. Asserting "every user
+    // row is hermes" would fail on the CLI's own furniture; asserting "some
+    // user row is hermes" would pass if the dispatch had been misfiled and
+    // something else happened to be right. So the prompt is located by
+    // content and then held to its classification.
+    const prompts = rows.filter(
+      (row) => row.role === "user" && row.content.includes(`ticket #${entry.ticket}`),
+    );
     expect(prompts.length).toBeGreaterThan(0);
     for (const prompt of prompts) {
       expect(prompt.provenance).toBe("hermes");
       expect(prompt.via).toBe("dispatch-prompt");
+      expect(prompt.agent).toBe(entry.agent);
+    }
+    // The property SPEC §14 bullet 2's USER.md clause actually rests on: in a
+    // batch with no human in it, NOTHING may be classified as Johan. A CLI
+    // preamble arriving as role=user is exactly the shape that could break it.
+    for (const row of rows) {
+      expect(row.provenance).not.toBe("johan");
     }
     const ticket = BATCH_TICKETS.find((candidate) => candidate.number === entry.ticket)!;
     const replies = rows.filter(

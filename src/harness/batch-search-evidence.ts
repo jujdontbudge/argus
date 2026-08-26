@@ -257,6 +257,20 @@ export function renderBatchEvidence(report: BatchSearchReport): string {
   out.push("");
   out.push(`  archive_messages rows: ${report.archived.length}`);
   out.push("");
+  out.push(
+    [
+      "  READ THE ROLE AND THE PROVENANCE SEPARATELY. Every codex session below",
+      "  carries a `<recommended_plugins>` turn that the codex CLI injects itself, with",
+      "  role=user. Nobody typed it. Production's classifier grades it",
+      "  provenance=system / via=non-candidate rather than a Johan takeover, which is",
+      "  the behaviour SPEC §14 bullet 2's USER.md clause rests on — a CLI preamble",
+      "  arriving as role=user is exactly the shape that could have made USER.md learn",
+      "  something no human said. Across all five sessions in this run, the number of",
+      "  rows classified provenance=johan is:",
+      `      ${report.archived.filter((row) => row.provenance === "johan").length}`,
+      "",
+    ].join("\n"),
+  );
   for (const entry of report.dispatched) {
     const ticket = BATCH_TICKETS.find((candidate) => candidate.number === entry.ticket)!;
     const rows = report.archived.filter((row) => row.sessionId === entry.sessionId);
