@@ -1016,4 +1016,39 @@ process.exit(42);
       await rm(world.root, { force: true, recursive: true });
     }
   }, 30_000);
+
+  test("a watcher logs and exits cleanly above its configured RSS ceiling", async () => {
+    const world = await watchWorld();
+    const child = Bun.spawn(
+      [process.execPath, cli, "watch", "archiver", "--repo", world.repo],
+      {
+        env: {
+          ...world.env,
+          ARGUS_WATCH_MAX_RSS_MB: "1",
+          ARGUS_WATCH_POLL_MS: "20",
+        },
+        stderr: "pipe",
+        stdout: "pipe",
+      },
+    );
+    try {
+      const exited = await Promise.race([
+        child.exited.then((exitCode) => ({ exitCode, timedOut: false })),
+        Bun.sleep(500).then(() => ({ exitCode: null, timedOut: true })),
+      ]);
+      if (exited.timedOut) child.kill("SIGTERM");
+      await child.exited;
+      const stderr = await new Response(child.stderr).text();
+
+      expect(exited.timedOut).toBe(false);
+      expect(exited.exitCode).toBe(0);
+      expect(stderr).toMatch(
+        /argus watch archiver: RSS ceiling exceeded \(\d+ MiB > 1 MiB\); exiting for supervised restart/,
+      );
+    } finally {
+      child.kill("SIGTERM");
+      await child.exited;
+      await rm(world.root, { force: true, recursive: true });
+    }
+  });
 });
