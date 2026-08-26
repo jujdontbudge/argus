@@ -13,6 +13,7 @@ import { disableRepo, readEnabledRepos } from "./registry.ts";
 import { EYE_NAMES, type EyeName, type SupervisorStatus } from "./runtime.ts";
 import {
   acknowledgeAudit,
+  importLegacyOriginAudits,
   readAudits,
   type DurableAudit,
 } from "../audits/store.ts";
@@ -251,6 +252,7 @@ export async function auditStatus(
   configuration = supervisorConfiguration(),
 ): Promise<DurableAudit[]> {
   const repos = await readEnabledRepos(configuration.job.registryPath);
+  await importLegacyOriginAudits(configuration.job.registryPath, repos);
   return (await Promise.all(repos.map(readAudits)))
     .flat()
     .filter(({ acknowledgedAt }) => acknowledgedAt === null)

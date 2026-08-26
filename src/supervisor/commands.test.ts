@@ -166,4 +166,26 @@ describe("argus status audit alarms", () => {
     expect(result.stdout).toContain(options.repo);
     expect(result.stdout).toContain(secondRepo);
   });
+
+  test("imports an existing global origin alarm without letting it go quiet", async () => {
+    const options = await scratch();
+    const legacyDirectory = `${options.registryPath}.audits/claude-origin-kind-refusals`;
+    await mkdir(legacyDirectory, { recursive: true });
+    await Bun.write(
+      join(legacyDirectory, "legacy-human-v2.json"),
+      `${JSON.stringify({
+        kind: "human_v2",
+        repo: options.repo,
+        sessionId: "legacy-origin-session",
+        ts: "2026-08-25T20:00:00.000Z",
+      })}\n`,
+    );
+
+    const result = await runStatus(options);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("claude-origin-kind-refused");
+    expect(result.stdout).toContain("legacy-origin-session");
+    expect(result.stdout).toContain(options.repo);
+  });
 });

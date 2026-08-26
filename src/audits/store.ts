@@ -20,7 +20,7 @@ export interface DurableAudit {
   firstSeenAt: string;
   id: string;
   repo: string;
-  sourceEye: EyeName;
+  sourceEye: EyeName | "legacy";
   type: AuditDetails["type"];
 }
 
@@ -71,7 +71,7 @@ function pathFor(repo: string, id: string): string {
 
 export async function recordAudits(
   repo: string,
-  sourceEye: EyeName,
+  sourceEye: DurableAudit["sourceEye"],
   audits: readonly AuditDetails[],
 ): Promise<void> {
   if (audits.length === 0) return;
@@ -104,6 +104,51 @@ export async function recordAudits(
       await rm(temporary, { force: true });
     }
   }
+}
+
+/**
+ * Import #53's pre-#61 machine-global origin markers without deleting them.
+ * Keeping the source markers makes this idempotent and lets a disabled repo be
+ * imported if it is enrolled again later.
+ */
+export async function importLegacyOriginAudits(
+  registryPath: string,
+  enabledRepos: readonly string[],
+): Promise<void> {
+  const legacyDirectory = `${registryPath}.audits/claude-origin-kind-refusals`;
+  const enabled = new Set(enabledRepos);
+  const names = await readdir(legacyDirectory).catch(() => [] as string[]);
+  await Promise.all(
+    names
+      .filter((name) => name.endsWith(".json"))
+      .map(async (name) => {
+        try {
+          const value = (await Bun.file(join(legacyDirectory, name)).json()) as Record<
+            string,
+            unknown
+          >;
+          if (
+            typeof value.kind !== "string" ||
+            typeof value.repo !== "string" ||
+            !enabled.has(value.repo) ||
+            typeof value.sessionId !== "string" ||
+            typeof value.ts !== "string"
+          ) {
+            return;
+          }
+          await recordAudits(value.repo, "legacy", [
+            {
+              type: "claude-origin-kind-refused",
+              kind: value.kind,
+              sessionId: value.sessionId,
+              ts: value.ts,
+            },
+          ]);
+        } catch {
+          // One damaged legacy marker must not hide the other active alarms.
+        }
+      }),
+  );
 }
 
 export async function readAudits(repo: string): Promise<DurableAudit[]> {
