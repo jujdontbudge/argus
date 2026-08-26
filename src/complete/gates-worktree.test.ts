@@ -77,6 +77,15 @@ test(
       );
       await writeFile(join(repo, "src", "answer.ts"), "export const answer: number = 42;\n");
       await writeFile(
+        join(repo, "src", "answer.test.js"),
+        [
+          'import { expect, test } from "bun:test";',
+          'import { answer } from "./answer.ts";',
+          'test("the fixture is runnable", () => expect(answer).toBe(42));',
+          "",
+        ].join("\n"),
+      );
+      await writeFile(
         join(repo, "vendor", "types-fixture", "package.json"),
         '{"name":"@types/fixture","version":"1.0.0","types":"index.d.ts"}\n',
       );
