@@ -233,14 +233,17 @@ export async function supervisorStatus(
         const health = running ? await readEyeHealth(repo, eye) : null;
         const currentHealth = health?.pid === watcher?.pid ? health : null;
         const degraded =
-          currentHealth?.lastError !== null && currentHealth !== null;
+          running &&
+          (currentHealth === null || currentHealth.lastError !== null);
         return {
           backlog: currentHealth?.backlog ?? null,
           eye,
           lastError:
-            currentHealth?.lastError === null || currentHealth === null
-              ? null
-              : `${currentHealth.lastError.at}: ${currentHealth.lastError.message}`,
+            running && currentHealth === null
+              ? "watcher has not reported health"
+              : currentHealth?.lastError === null || currentHealth === null
+                ? null
+                : `${currentHealth.lastError.at}: ${currentHealth.lastError.message}`,
           lastSuccess: currentHealth?.lastSuccess ?? null,
           pid: running ? watcher.pid : null,
           repo,
