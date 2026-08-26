@@ -11,6 +11,7 @@ import {
   rm,
   symlink,
 } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
 
 import { resolveArgusRepo } from "../events/hooks.ts";
@@ -201,6 +202,178 @@ function repoSlug(repo: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
+}
+
+function repoIdentity(canonicalRepo: string): string {
+  const digest = createHash("sha256").update(canonicalRepo).digest("hex");
+  const slug = repoSlug(canonicalRepo).slice(0, 80) || "repo";
+  return `argus-${slug}-${digest}`;
+}
+
+interface StoredRepoIdentity {
+  canonicalRepo: string;
+  identity: string;
+  profile: string;
+  version: 1;
+  workspace: string;
+}
+
+function storedRepoIdentity(value: unknown, path: string): StoredRepoIdentity {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    !("version" in value) ||
+    value.version !== 1 ||
+    !("canonicalRepo" in value) ||
+    typeof value.canonicalRepo !== "string" ||
+    !("identity" in value) ||
+    typeof value.identity !== "string" ||
+    !("workspace" in value) ||
+    typeof value.workspace !== "string" ||
+    value.workspace === "" ||
+    !("profile" in value) ||
+    typeof value.profile !== "string" ||
+    value.profile === ""
+  ) {
+    throw new Error(
+      `argus up: repo identity at ${path} is invalid; refusing to create a second binding`,
+    );
+  }
+  return value as StoredRepoIdentity;
+}
+
+async function configuredWorkspace(path: string): Promise<string | null> {
+  if (!(await exists(path))) return null;
+  const match = (await readFile(path, "utf8")).match(/^workspace:\s*(\S+)\s*$/m);
+  if (!match?.[1]) {
+    throw new Error(
+      `argus up: existing Honcho binding at ${path} has no workspace; refusing to create a second binding`,
+    );
+  }
+  return match[1];
+}
+
+type ProfileOwner =
+  | { status: "missing" }
+  | { status: "owned" }
+  | { status: "other"; target: string }
+  | { status: "ambiguous"; reason: string };
+
+async function profileOwner(
+  profile: string,
+  memoryDirectory: string,
+): Promise<ProfileOwner> {
+  if (!(await exists(profile))) return { status: "missing" };
+  const memories = join(profile, "memories");
+  if (!(await exists(memories))) {
+    return { reason: `${memories} is missing`, status: "ambiguous" };
+  }
+  const metadata = await lstat(memories);
+  if (!metadata.isSymbolicLink()) {
+    return {
+      reason: `${memories} is not a symbolic link`,
+      status: "ambiguous",
+    };
+  }
+  const target = resolve(dirname(memories), await readlink(memories));
+  const [canonicalTarget, canonicalMemory] = await Promise.all([
+    realpath(target),
+    realpath(memoryDirectory),
+  ]);
+  return canonicalTarget === canonicalMemory
+    ? { status: "owned" }
+    : { status: "other", target: canonicalTarget };
+}
+
+async function resolveRepoIdentity(
+  canonicalRepo: string,
+  hermesRoot: string,
+): Promise<StoredRepoIdentity> {
+  const argusDirectory = join(canonicalRepo, ".argus");
+  const identityPath = join(argusDirectory, "identity.json");
+  const identity = repoIdentity(canonicalRepo);
+  if (await exists(identityPath)) {
+    let stored: StoredRepoIdentity;
+    try {
+      stored = storedRepoIdentity(await Bun.file(identityPath).json(), identityPath);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new Error(
+          `argus up: repo identity at ${identityPath} is not valid JSON; refusing to create a second binding`,
+        );
+      }
+      throw error;
+    }
+    if (stored.canonicalRepo !== canonicalRepo || stored.identity !== identity) {
+      throw new Error(
+        `argus up: repo identity at ${identityPath} belongs to ${stored.canonicalRepo}; refusing to create a second binding`,
+      );
+    }
+    return stored;
+  }
+
+  const legacy = `argus-${repoSlug(canonicalRepo)}`;
+  const honchoPath = join(argusDirectory, "honcho.yaml");
+  const workspace = await configuredWorkspace(honchoPath);
+  const legacyProfile = join(hermesRoot, "profiles", legacy);
+  const owner = await profileOwner(
+    legacyProfile,
+    join(argusDirectory, "memory"),
+  );
+
+  if (workspace !== null && workspace !== legacy && workspace !== identity) {
+    throw new Error(
+      `argus up: existing Honcho workspace ${workspace} does not match this repo's identity; refusing to create a second binding`,
+    );
+  }
+
+  if (workspace === legacy) {
+    // Honcho workspaces cannot be renamed without abandoning their derived
+    // memory. The Hermes memory symlink is the ownership proof that lets us
+    // adopt both legacy names into the canonical identity record safely.
+    if (owner.status !== "owned") {
+      const detail =
+        owner.status === "other"
+          ? `its Hermes profile points to ${owner.target}`
+          : owner.status === "missing"
+            ? "its Hermes profile is missing"
+            : owner.reason;
+      throw new Error(
+        `argus up: cannot safely migrate legacy binding ${legacy}: ${detail}; refusing to create a second binding`,
+      );
+    }
+    return {
+      canonicalRepo,
+      identity,
+      profile: legacy,
+      version: 1,
+      workspace: legacy,
+    };
+  }
+
+  if (workspace === null && owner.status === "owned") {
+    return {
+      canonicalRepo,
+      identity,
+      profile: legacy,
+      version: 1,
+      workspace: legacy,
+    };
+  }
+  if (workspace === null && owner.status === "ambiguous") {
+    throw new Error(
+      `argus up: cannot safely migrate legacy binding ${legacy}: ${owner.reason}; refusing to create a second binding`,
+    );
+  }
+
+  return {
+    canonicalRepo,
+    identity,
+    profile: identity,
+    version: 1,
+    workspace: identity,
+  };
 }
 
 function honchoBinding(url: string, workspace: string): string {
@@ -516,25 +689,31 @@ async function ensureHermesSignalCron(
 export async function convergeAgentBindings(
   options: AgentBindingOptions,
 ): Promise<AgentBindingReport> {
-  const workspace = `argus-${repoSlug(options.repo)}`;
   const canonicalRepo =
     (await resolveArgusRepo(options.repo)) ?? (await realpath(options.repo));
-  await mkdir(join(options.repo, ".argus"), { recursive: true });
-  await Bun.write(
-    join(options.repo, ".argus", "honcho.yaml"),
-    honchoBinding(options.honchoUrl, workspace),
-  );
+  const argusDirectory = join(canonicalRepo, ".argus");
+  await mkdir(join(argusDirectory, "memory"), { recursive: true });
+  const binding = await resolveRepoIdentity(canonicalRepo, options.hermesRoot);
+  const { profile, workspace } = binding;
   await ensureHermesProfile(
     options.hermesRoot,
-    workspace,
-    join(options.repo, ".argus", "memory"),
+    profile,
+    join(argusDirectory, "memory"),
+  );
+  await Bun.write(
+    join(argusDirectory, "honcho.yaml"),
+    honchoBinding(options.honchoUrl, workspace),
+  );
+  await Bun.write(
+    join(argusDirectory, "identity.json"),
+    `${JSON.stringify(binding, null, 2)}\n`,
   );
 
   let cron: AgentBindingReport["cron"] = "not-configured";
   let cronError: string | null = null;
   if (options.argusCli !== undefined && options.bunExecutable !== undefined) {
     const result = await ensureHermesSignalCron(
-      join(options.hermesRoot, "profiles", workspace),
+      join(options.hermesRoot, "profiles", profile),
       canonicalRepo,
       options.argusCli,
       options.bunExecutable,
@@ -549,7 +728,7 @@ export async function convergeAgentBindings(
   try {
     honcho = await options.honcho.ensureWorkspace({
       id: workspace,
-      metadata: { repo: options.repo },
+      metadata: { repo: canonicalRepo },
     });
     for (const peer of PEERS) {
       await options.honcho.ensurePeer(workspace, peer);
@@ -559,5 +738,5 @@ export async function convergeAgentBindings(
     honchoError = error instanceof Error ? error.message : String(error);
   }
 
-  return { cron, cronError, honcho, honchoError, profile: workspace, workspace };
+  return { cron, cronError, honcho, honchoError, profile, workspace };
 }
