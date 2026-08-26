@@ -471,6 +471,13 @@ temporary directory cannot register a LaunchAgent unless the dedicated launchd
 test explicitly sets `ARGUS_ALLOW_SCRATCH_LAUNCHD=1`. Thus a sandbox `argus up`
 cannot leave a keepalive job in the user's GUI domain after its worker dies.
 
+**#81 workstream D soak acceptance:** after a warm-up sample, record every eye's
+RSS and PID at fixed intervals for multiple hours. RSS must have no sustained
+positive slope or unbounded high-water growth, every eye must stay below its hard
+ceiling, and the PID set plus supervisor restart log must show zero unplanned
+restarts. A ceiling-triggered restart fails the soak; it is a last-resort brake,
+not evidence that memory use is flat.
+
 ---
 
 ## 10. CLI
