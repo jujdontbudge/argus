@@ -350,3 +350,152 @@ FINDING 4 (argus bug) — `argus dispatch --help` is not help. It DISPATCHES.
   documented at top level only (`const HELP`, src/cli.ts:7-34); no subcommand
   accepts it. The same trap applies to `argus complete --help` and
   `argus signals --help`.
+
+==============================================================================
+7. THE GRADE — skills/argus-orchestrator/SKILL.md against what Hermes did
+==============================================================================
+Graded section by section, in the skill's own order. "Wrong" means the skill
+says something production contradicts. "Stale" means it was true once. "Not
+exercised" means this run cannot speak to it, and is stated rather than
+glossed — a section this run did not reach is not a section that passed.
+
+--- "Preserve provenance before acting" -------------------------- WRONG (1/4)
+
+  Step 1 tells Hermes: "Before starting any deployed session, append its
+  session id, agent, ticket, full dispatch prompt, and prefixed cmux workspace
+  ref to .argus/registry/sessions.jsonl. Do not start the session until the
+  record is durable."
+
+  Hermes did not do this, and was right not to. `argus dispatch` writes that
+  row itself, fsynced, before it spawns (src/deploy/deploy.ts, the documented
+  "worktree -> registry row (fsync) -> spawn" order). Had Hermes obeyed
+  literally, every deployment would carry TWO rows for one session.
+
+  Worse, the instruction is IMPOSSIBLE as written. It orders Hermes to write
+  the session id BEFORE starting the session — but a Codex session's id does
+  not exist until Codex mints it at runtime and announces it on stdout
+  (src/deploy/routes.ts:15-19, "codex-cli 0.149.1 does not [accept a fixed
+  id]"). The one field the rule is built around cannot be known at the moment
+  the rule demands it. Argus solves this by scanning stdout for the announcing
+  line; a human or Hermes following the skill cannot.
+
+  Steps 2-4 (sends.jsonl, NFC normalization, SHA-256 of normalized content)
+  NOT EXERCISED: Hermes sent no follow-ups into any worker this run.
+
+--- "Send exactly one message at a time" ---------------------- NOT EXERCISED
+
+  Hermes never issued a `cmux send`. Nothing here is confirmed or refuted.
+
+--- "Keep cmux headless and attachable" --------------------- WRONG, and it is
+                                                        the #95 regression
+
+  "Create one workspace per deployed session. Name it `<repo>/<ticket-or-
+  purpose>` and set `--cwd` to the repository or that ticket's worktree."
+
+  Production creates ZERO workspaces. It opens a TAB in the workspace Argus is
+  already running in and names it `argus #<ticket>`. #95 changed the code and
+  amended the SPEC; THIS SKILL WAS NOT UPDATED WITH THEM. It is the last place
+  in the repo still telling an agent to do the thing Directive 14 forbids —
+  and it is precisely the sentence that sent the FIRST #82 attempt into
+  `cmux new-workspace --cwd ... --focus false` and a refusal. The fix was
+  merged; the instruction that caused it was left standing.
+
+  Two smaller errors in the same paragraph, both measured against the call log:
+
+  - "Always use typed, prefixed refs such as `workspace:15` and `pane:38`."
+    Production uses raw UUIDs — `--workspace 2D3B8B38-C9FC-46F4-A512-
+    8F1157CE2E10`, `--surface E4E51E17-...` — because `CMUX_WORKSPACE_ID` is a
+    UUID and tab.ts validates it against `tree --all --json`. And the unit is
+    a SURFACE, not a `pane:`.
+  - "Pass `--focus false` on every programmatic action." Not one of the six
+    `new-surface` calls passed `--focus`. Production does not do what the
+    skill requires; one of the two is wrong and the skill does not win by
+    default.
+
+  `cmux set-status`, `set-progress`, `notify`, `markdown open`: NOT EXERCISED.
+
+--- "Open a grill session when Johan asks" -------------------- NOT EXERCISED
+
+  No grill in this batch. Noted because this is the section the rest of the
+  skill should imitate: it names a command, says what the command does in
+  order, and says plainly "do not do it by hand". That is the shape the
+  dispatch section lacks.
+
+--- "Dispatch the frontier" ---------------------- STALE: a manual procedure
+                                                   Argus absorbed into a command
+
+  Six numbered steps telling Hermes to read the frontier, claim a ticket,
+  create a worktree and workspace, route the agent, write the registry row,
+  then monitor and merge.
+
+  `argus dispatch` does steps 1-5 in one pass, atomically, with the fail-closed
+  ordering and the durable slot accounting that a hand-run loop cannot
+  reproduce. Hermes ignored the procedure and ran the command — the right call,
+  and the skill gets no credit for it, because the skill never mentions that
+  `argus dispatch` exists. A Hermes that followed this section faithfully would
+  have hand-built what one command does, and would have raced the slots.
+
+  Step 3 repeats the "new cmux workspace" error above.
+  Step 4 (routing: grilling/spec/review/diagnosis -> Claude Code, everything
+    else -> Codex, explicit `agent:` labels override) is CORRECT and matched
+    observed behaviour: three unlabelled tickets all routed to Codex.
+  Step 6 tells Hermes to merge and close on green — which is `argus complete`'s
+    job, described as a command in the very next section. The skill instructs
+    the same transition twice, once by hand and once by command.
+
+--- "Close finished tickets" -------------------- ACCURATE (the best section),
+                                                  one broken promise
+
+  "Run `argus complete` for the repository" is a command, not a procedure, and
+  Hermes ran it. Its refusal list was borne out exactly: `blocked-on-human`
+  never merged, the tickets stayed open and claimed, and the durable queue
+  under `.argus/dispatch/verify/` behaved as described.
+
+  The broken promise: refusals are said to leave "the reason commented on the
+  ticket". Six blocked sessions produced ZERO ticket comments (FINDING 3).
+
+  AMBIGUOUS: "Do not create a second poll job or manually replay a signal."
+  Hermes ran `argus signals` by hand twice. Is a direct invocation a "manual
+  replay"? It is in fact safe — push and poll share the durable cursor, which
+  is the same sentence's own justification — but the wording gives a reader no
+  way to decide, and the safe reading and the forbidden reading look alike.
+
+--- "Launch and observe Hermes" --------------- WRONG: the one shell command
+                                                this skill contains is broken
+
+  The skill says:
+
+    HERMES_HOME="$HOME/.hermes/profiles/argus-<slug>" hermes chat
+
+  `argus up` actually created:
+
+    $HERMES_HOME/profiles/argus-repo-ce1c31548b672468042fc3066a3356a3f0776c98f1c98619c140a87e77a02b13
+
+  Two independent errors:
+  1. The profile is named `argus-repo-<64-hex sha256>` (src/up/bindings.ts:210,
+     `argus-${slug}-${digest}`), not `argus-<slug>`.
+  2. HERMES_HOME must stay the HOME. The profile is a directory INSIDE
+     `$HERMES_HOME/profiles/`. Setting HERMES_HOME to the profile directory
+     makes Hermes look for `profiles/` inside the profile — the command as
+     written cannot open the profile it names.
+
+  Also `hermes chat` is interactive. The only form that can drive a batch
+  unattended is the one this run used, `hermes -z "<mission>" -s
+  argus-orchestrator`, and the skill does not mention it.
+
+--- MISSING ENTIRELY: where to run argus from ------------------------- GAP
+
+  Every argus verb infers its repository from the current working directory.
+  None takes `--repo`. The skill never says so, and Hermes's first real
+  dispatch attempt failed on exactly that:
+
+    argus dispatch: current directory is not inside a git repository
+
+  A dispatcher told to orchestrate "the repository at <path>" has no
+  instruction anywhere in this skill telling it to cd there first.
+
+--- MISSING: `argus status` ------------------------------------------ GAP
+
+  Hermes reached for `argus status` three times, unprompted — it is the
+  obvious monitoring verb. The skill's monitoring advice is entirely about
+  digests, events and `argus search`, and never mentions `argus status`.
