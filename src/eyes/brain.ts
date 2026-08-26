@@ -39,6 +39,7 @@ export interface Brain {
 export interface SpawnRequest {
   argv: readonly string[];
   cwd: string;
+  env: Readonly<Record<string, string | undefined>>;
   stdin: string;
 }
 
@@ -56,6 +57,8 @@ export interface CodexBrainOptions {
   /** Injectable process runner; the default runs the real codex CLI. */
   spawn?: SpawnFn;
   binary?: string;
+  /** Process environment; provider credentials are stripped before spawn. */
+  env?: Readonly<Record<string, string | undefined>>;
 }
 
 /**
@@ -107,12 +110,9 @@ export function parseCodexOutput(stdout: string): BrainOutcome {
 }
 
 const defaultSpawn: SpawnFn = async (request) => {
-  const env = { ...process.env };
-  delete env.ANTHROPIC_API_KEY;
-  delete env.ANTHROPIC_AUTH_TOKEN;
   const child = Bun.spawn([...request.argv], {
     cwd: request.cwd,
-    env,
+    env: request.env,
     stdin: new TextEncoder().encode(request.stdin),
     stderr: "pipe",
     stdout: "pipe",
@@ -129,6 +129,14 @@ const defaultSpawn: SpawnFn = async (request) => {
 export function createCodexBrain(options: CodexBrainOptions): Brain {
   const spawn = options.spawn ?? defaultSpawn;
   const binary = options.binary ?? "codex";
+  const env = { ...(options.env ?? process.env) };
+  // SPEC §1 items 7 and 8: watcher inference spends the ChatGPT
+  // subscription through `codex exec`. An inherited provider credential must
+  // never silently turn the exact same command into metered API access.
+  delete env.OPENAI_API_KEY;
+  delete env.ANTHROPIC_API_KEY;
+  delete env.ANTHROPIC_AUTH_TOKEN;
+  delete env.CLAUDE_CODE_OAUTH_TOKEN;
   return {
     async evaluate(request) {
       const schemaDirectory = await mkdtemp(join(tmpdir(), "argus-brain-"));
@@ -160,6 +168,7 @@ export function createCodexBrain(options: CodexBrainOptions): Brain {
               "-",
             ],
             cwd: request.cwd,
+            env,
             stdin: request.prompt,
           });
         } catch (error) {

@@ -52,6 +52,7 @@ import { registerProvenanceScenarios } from "../provenance/scenarios.ts";
 import { registerCodexScenarios } from "../tailing/codex-scenarios.ts";
 import { registerHermesScenarios } from "../tailing/hermes-scenarios.ts";
 import { registerWatchScenarios } from "../watch/scenarios.ts";
+import type { Brain } from "../eyes/brain.ts";
 import {
   createScenarioRegistry,
   fakeJohanBindingScenario,
@@ -65,18 +66,44 @@ export {
   type InitUpScenarioId,
 } from "./init-up-scenarios.ts";
 
+/** Existing production `Brain` seam, threaded only for the opt-in #77 run. */
+export interface ScenarioBrainOverrides {
+  completion?: Brain;
+  curator?: Brain;
+  digest?: Brain;
+  retro?: Brain;
+  reviewer?: Brain;
+}
+
+export interface AllScenarioOptions {
+  brains?: ScenarioBrainOverrides;
+}
+
 /** Compose every ticket's §13 halves onto an existing registry. */
-export function registerAllScenarios(registry: ScenarioRegistry): void {
+export function registerAllScenarios(
+  registry: ScenarioRegistry,
+  options: AllScenarioOptions = {},
+): void {
+  const brains = options.brains ?? {};
   // Overwriters first, innermost half outward: #25 → #30 → #31 → #34.
   registerProvenanceScenarios(registry);
-  registerReviewerScenarios(registry);
-  registerDigestScenarios(registry);
-  registerEventScenarios(registry);
+  registerReviewerScenarios(registry, undefined, brains.reviewer);
+  registerDigestScenarios(registry, undefined, {
+    ...(brains.digest !== undefined && { digest: brains.digest }),
+    ...(brains.reviewer !== undefined && { reviewer: brains.reviewer }),
+  });
+  registerEventScenarios(registry, undefined, brains.digest);
 
   // Then the extenders, which chain onto whatever is registered.
-  registerCompletionScenarios(registry);
-  registerCuratorScenarios(registry);
-  registerRetroScenarios(registry);
+  registerCompletionScenarios(registry, brains.completion);
+  registerCuratorScenarios(registry, undefined, {
+    ...(brains.curator !== undefined && { curator: brains.curator }),
+    ...(brains.reviewer !== undefined && { reviewer: brains.reviewer }),
+  });
+  registerRetroScenarios(registry, undefined, undefined, {
+    ...(brains.digest !== undefined && { digest: brains.digest }),
+    ...(brains.retro !== undefined && { retro: brains.retro }),
+  });
   registerArchiverScenarios(registry);
   registerHermesScenarios(registry);
   registerCodexScenarios(registry);
@@ -96,8 +123,10 @@ export function registerAllScenarios(registry: ScenarioRegistry): void {
 }
 
 /** A registry with all ten SPEC §13 scenarios implemented. */
-export function createFullScenarioRegistry(): ScenarioRegistry {
+export function createFullScenarioRegistry(
+  options: AllScenarioOptions = {},
+): ScenarioRegistry {
   const registry = createScenarioRegistry();
-  registerAllScenarios(registry);
+  registerAllScenarios(registry, options);
   return registry;
 }

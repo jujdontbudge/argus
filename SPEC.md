@@ -557,6 +557,18 @@ live evidence and grade LIVE, which is the overclaim these verdicts exist to
 delete, so a requirement a live drive cannot honestly reach stays UNCOVERED or
 PARTIAL and prints why.
 
+**What the real-brain gate renders (ticket #77).** The eight core slots that
+declare a `brain` double have additive `*-real-brain` renderings behind
+`ARGUS_LIVE_WATCHER_BRAINS=1`: **1, 2, 3, 6, 7, 8, 9 and 10**. They rerun the
+same slot handlers and assertions, sequentially, with production's existing
+`createCodexBrain` path at ADR-0002's settled `gpt-5.6-luna` / low defaults.
+Only slots 1, 2, 3, 7 and 8 ask a judgment question and spend calls; slots 6,
+9 and 10 retire the blanket declaration without inventing a call they do not
+need. All eight remain **STRUCTURAL**: no live agent was spawned, every other
+declared double stays declared, and the run records no live-agent evidence.
+The default core renderings remain unchanged because their fixture brains
+remain what runs in a default `bun test`.
+
 **Test agents and isolation (Johan directive, 2026-08-24; amended 2026-08-25).** The
 governing rule is the original one, and it is defined at the **repo** level: every
 agent that runs uses the throwaway sandbox repo and scratch tabs/worktrees only,

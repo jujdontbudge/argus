@@ -63,6 +63,10 @@ describe("createCodexBrain — the exact researched invocation", () => {
   test("spawns the lean luna argv with prompt on stdin and the schema in a temp file", async () => {
     const requests: Array<SpawnRequest & { schemaOnDisk: unknown }> = [];
     const brain = createCodexBrain({
+      env: {
+        HOME: "/subscription-home",
+        OPENAI_API_KEY: "must-not-reach-codex",
+      },
       model: "gpt-5.6-luna",
       reasoningEffort: "low",
       spawn: async (request) => {
@@ -85,6 +89,8 @@ describe("createCodexBrain — the exact researched invocation", () => {
     expect(requests.length).toBe(1);
     const request = requests[0]!;
     expect(request.stdin).toBe("classify this batch");
+    expect(request.env.HOME).toBe("/subscription-home");
+    expect(request.env.OPENAI_API_KEY).toBeUndefined();
     expect(request.schemaOnDisk).toEqual({
       type: "object",
       properties: { findings: {} },

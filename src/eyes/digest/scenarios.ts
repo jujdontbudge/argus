@@ -26,6 +26,11 @@ import { autonomousBatchScenario, reviewerTakeoverScenario } from "../reviewer/s
 import { DigestEye } from "./digest";
 import type { BrainStatus } from "./schema";
 
+export interface DigestScenarioBrains {
+  digest?: Brain;
+  reviewer?: Brain;
+}
+
 /** ADR-0002 digest cadence: 30s quiet / 120s max. */
 const CADENCE = { quietWindowSeconds: 30, maxWaitSeconds: 120 };
 
@@ -136,21 +141,24 @@ const sessionsPath = (sandbox: Sandbox, name: string): string =>
 /** §13 scenario 1 — autonomous batch: reviewer half + the digest half (slot 1). */
 export function digestAutonomousBatchScenario(
   driver: ProvenanceScenarioDriver = createFixtureProvenanceDriver(),
+  brains: DigestScenarioBrains = {},
 ): ScenarioHandler {
-  const reviewerHalf = autonomousBatchScenario(driver);
+  const reviewerHalf = autonomousBatchScenario(driver, brains.reviewer);
   return async (context) => {
     await reviewerHalf(context);
     const { assert, sandbox } = context;
 
     // The digest half: the deployed batch session (sess-batch, ticket 7)
     // must end up with a running digest and its one INDEX.md line.
-    await runDigestOnce(sandbox, driver);
+    await runDigestOnce(sandbox, driver, brains.digest);
 
     const digest = await Bun.file(sessionsPath(sandbox, "7-sess-batch.md")).text();
     assert(
       digest.includes("status: running") &&
         digest.includes("johan_touched: false") &&
-        digest.includes("status check — keep going"),
+        (brains.digest === undefined
+          ? digest.includes("status check — keep going")
+          : /status check/i.test(digest) && /(continue|progress)/i.test(digest)),
       "the session's digest was written with narrative",
     );
     const index = await Bun.file(sessionsPath(sandbox, "INDEX.md")).text();
@@ -167,13 +175,14 @@ export function digestAutonomousBatchScenario(
 /** §13 scenario 2 — takeover: earlier halves + the digest half (slot 2). */
 export function digestTakeoverScenario(
   driver: ProvenanceScenarioDriver = createFixtureProvenanceDriver(),
+  brains: DigestScenarioBrains = {},
 ): ScenarioHandler {
-  const earlierHalves = reviewerTakeoverScenario(driver);
+  const earlierHalves = reviewerTakeoverScenario(driver, brains.reviewer);
   return async (context) => {
     await earlierHalves(context);
     const { assert, sandbox } = context;
 
-    await runDigestOnce(sandbox, driver);
+    await runDigestOnce(sandbox, driver, brains.digest);
 
     const digest = await Bun.file(
       sessionsPath(sandbox, "42-sess-takeover.md"),
@@ -183,7 +192,9 @@ export function digestTakeoverScenario(
       "the digest frontmatter carries johan_touched: true",
     );
     assert(
-      digest.includes("stop — ship the auth fix first, then come back"),
+      brains.digest === undefined
+        ? digest.includes("stop — ship the auth fix first, then come back")
+        : /auth fix/i.test(digest) && /(before|first|priorit)/i.test(digest),
       "the takeover directive is in the digest narrative",
     );
     const index = await Bun.file(sessionsPath(sandbox, "INDEX.md")).text();
@@ -198,6 +209,7 @@ export function digestTakeoverScenario(
 /** §13 scenario 7 — signal paths: the slow-poll fallback (slot 7). */
 export function signalPathsScenario(
   driver: ProvenanceScenarioDriver = createFixtureProvenanceDriver(),
+  brain?: Brain,
 ): ScenarioHandler {
   return async ({ assert, sandbox }) => {
     const finisher = await driver.deploy({
@@ -230,7 +242,7 @@ export function signalPathsScenario(
     }
     assert(eventFiles.length === 0, "no push event files exist — hooks are disabled");
 
-    const { dueAfterMs } = await runDigestOnce(sandbox, driver);
+    const { dueAfterMs } = await runDigestOnce(sandbox, driver, brain);
     assert(
       dueAfterMs !== null && dueAfterMs <= CADENCE.maxWaitSeconds * 1_000,
       "the pending batch was due within the digest cadence (the poll interval bound)",
@@ -263,8 +275,9 @@ export function signalPathsScenario(
 export function registerDigestScenarios(
   registry: ScenarioRegistry,
   driver: ProvenanceScenarioDriver = createFixtureProvenanceDriver(),
+  brains: DigestScenarioBrains = {},
 ): void {
-  registry.register(1, digestAutonomousBatchScenario(driver));
-  registry.register(2, digestTakeoverScenario(driver));
-  registry.register(7, signalPathsScenario(driver));
+  registry.register(1, digestAutonomousBatchScenario(driver, brains));
+  registry.register(2, digestTakeoverScenario(driver, brains));
+  registry.register(7, signalPathsScenario(driver, brains.digest));
 }

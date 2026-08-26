@@ -2,6 +2,7 @@ import { appendFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { signalPathsScenario } from "../eyes/digest/scenarios.ts";
+import type { Brain } from "../eyes/brain.ts";
 import type { ScenarioHandler, ScenarioRegistry } from "../harness/index.ts";
 import {
   createFixtureProvenanceDriver,
@@ -16,8 +17,9 @@ import { parseArgusEvent } from "./schema.ts";
 /** §13 scenario 7 — retain the digest poll half, then add the push half. */
 export function eventSignalPathsScenario(
   driver: ProvenanceScenarioDriver = createFixtureProvenanceDriver(),
+  brain?: Brain,
 ): ScenarioHandler {
-  const digestHalf = signalPathsScenario(driver);
+  const digestHalf = signalPathsScenario(driver, brain);
   return async (context) => {
     await digestHalf(context);
     const { assert, sandbox } = context;
@@ -132,6 +134,7 @@ export function eventSignalPathsScenario(
 export function registerEventScenarios(
   registry: ScenarioRegistry,
   driver: ProvenanceScenarioDriver = createFixtureProvenanceDriver(),
+  brain?: Brain,
 ): void {
-  registry.register(7, eventSignalPathsScenario(driver));
+  registry.register(7, eventSignalPathsScenario(driver, brain));
 }

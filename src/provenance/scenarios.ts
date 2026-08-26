@@ -208,6 +208,8 @@ async function classifyAll(
 const DISPATCH_PROMPT =
   "You are a BUILD worker for ticket #42: implement the widget frobnicator, then stop.";
 
+const TAKEOVER_DIRECTIVE = "stop — ship the auth fix first, then come back";
+
 /**
  * What an agent CLI injects into its own rollout as a user-role item. The tag
  * is deliberately one no Argus source mentions: scenario 4 must catch the NEXT
@@ -221,6 +223,7 @@ const AGENT_PREAMBLE =
 /** §13 scenario 2 — fake-Johan takeover (slot 2). */
 export function takeoverScenario(
   driver: ProvenanceScenarioDriver = createFixtureProvenanceDriver(),
+  directive: string = TAKEOVER_DIRECTIVE,
 ): ScenarioHandler {
   return async ({ assert, sandbox }) => {
     const session = await driver.deploy({
@@ -231,7 +234,7 @@ export function takeoverScenario(
       dispatchPrompt: DISPATCH_PROMPT,
     });
     await session.hermesSend("how far along are you?");
-    await session.johanTypes("stop — ship the auth fix first, then come back");
+    await session.johanTypes(directive);
 
     const { classifier, records, audits } = await classifyAll(driver, sandbox);
     const johanRecords = records.filter(({ author }) => author === "johan");
@@ -246,7 +249,7 @@ export function takeoverScenario(
     );
     assert(
       johanRecords.length === 1 &&
-        johanRecords[0]!.text === "stop — ship the auth fix first, then come back" &&
+        johanRecords[0]!.text === directive &&
         johanRecords[0]!.via === "takeover",
       "Johan's mid-session directive classifies Johan-authored via takeover",
     );

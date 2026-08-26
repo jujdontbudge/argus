@@ -27,6 +27,7 @@ import { deployWorker, worktreeForTicket } from "../deploy";
 import type { WorkerProcess } from "../deploy";
 import { writeEvent } from "../events";
 import { createFakeGh } from "../eyes/retro/fake-gh";
+import type { Brain } from "../eyes/brain";
 import type { ScenarioHandler, ScenarioRegistry } from "../harness/index.ts";
 
 const TICKET = "7";
@@ -69,7 +70,7 @@ const finishedWorker = (): WorkerProcess => ({
  * production completion pass verifies, merges, closes and maps it — with no
  * human anywhere in the sequence.
  */
-export function batchClosureScenario(): ScenarioHandler {
+export function batchClosureScenario(brain?: Brain): ScenarioHandler {
   return async ({ assert, assertSandboxed, sandbox }) => {
     const repo = sandbox.repo;
     const base = await git(["rev-parse", "--abbrev-ref", "HEAD"], repo);
@@ -114,10 +115,13 @@ export function batchClosureScenario(): ScenarioHandler {
 
     const report = await completeReadyTickets({
       base,
+      ...(brain !== undefined && { brain }),
       gates: [{ command: ["git", "rev-parse", "HEAD"], name: "gate" }],
       gh: gh.run,
       repo,
-      reviewer: async () => ({ concerns: [], status: "clean", summary: "clean" }),
+      ...(brain === undefined && {
+        reviewer: async () => ({ concerns: [], status: "clean" as const, summary: "clean" }),
+      }),
     });
 
     const outcome = report.completed.find((entry) => entry.ticket === TICKET);
@@ -157,9 +161,12 @@ export function batchClosureScenario(): ScenarioHandler {
  * instead of chaining onto it is the exact lossy-registration bug that test
  * exists to catch.
  */
-export function registerCompletionScenarios(registry: ScenarioRegistry): void {
+export function registerCompletionScenarios(
+  registry: ScenarioRegistry,
+  brain?: Brain,
+): void {
   const existing = registry.get(1);
-  const closure = batchClosureScenario();
+  const closure = batchClosureScenario(brain);
   registry.register(1, async (context) => {
     if (existing !== undefined) await existing(context);
     await closure(context);
