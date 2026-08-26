@@ -437,15 +437,28 @@ knowledge beyond the list of enabled repos. This is the single exception to
 `argus` (installed from this repo; implementation and packaging rationale:
 [ADR-0001](docs/adr/0001-implementation-stack-bun-typescript.md)):
 
-- `argus up` — idempotently scaffold `.argus/` in the current repo, gitignore it,
-  create the repo's Honcho workspace, migrate any existing Claude Code built-in
-  memory into `.argus/memory/` as seed content, install the memory symlink + skills
-  adapters + AGENTS.md pointer block, create tracker labels (`retro`, wayfinder set),
-  verify the Matt Pocock tracker wiring (`setup-matt-pocock-skills`) and lay it down
-  if missing, register the repo with the supervisor, install the §6 push hooks (Claude
-  `Stop` + Codex `notify`), install the repo-scoped Hermes slow-poll cron, and start
-  this repo's eyes. cmux hooks are reported as optional and are never a convergence
-  requirement (§3, #7).
+- `argus init` — the REPO-LOCAL half of setup, and nothing else: idempotently
+  scaffold `.argus/`, gitignore it, seed the canonical `.argus/memory/USER.md` +
+  `MEMORY.md` pair that everything else points at, migrate any existing Claude Code
+  built-in memory in as seed content, install the memory symlink + skills adapters +
+  AGENTS.md pointer block, and lay down the Matt Pocock tracker docs if missing. It
+  contacts no network and writes nothing outside the repo — no `~/.codex`, no
+  `~/.hermes`, no supervisor registry, no launchd, no started process — so it is safe
+  on a repo you are only considering adopting. It finishes by VERIFYING the wiring it
+  wrote (every AGENTS.md pointer resolves; a canonical skill reads back through
+  `.claude/skills`) rather than asserting it in prose.
+- `argus up` — `argus init` followed by machine convergence: create the repo's Honcho
+  workspace, create tracker labels (`retro`, wayfinder set), register the repo with
+  the supervisor, install the §6 push hooks (Claude `Stop` + Codex `notify`), install
+  the repo-scoped Hermes slow-poll cron, verify the Hermes memory binding points at
+  this repo's pair (§8.1), and start this repo's eyes. cmux hooks are reported as an
+  optional capability — the installed version's actual support, never a pending item
+  — and are never a convergence requirement (§3, §11.6, #7).
+- **Neither command commits on your behalf by default.** Both write `.gitignore`,
+  `AGENTS.md` and `docs/agents/`; both then print exactly which of those are not yet
+  in git and the `git add`/`git commit` to run. `--commit` opts in, and commits that
+  whole set — as it stands in the working tree — in one `chore: adopt Argus` commit.
+  A partial commit made without asking is the one behaviour explicitly ruled out.
 - `argus down | status` — stop/inspect this repo's eyes.
 - `argus signals [--repo <path>]` — consume unseen durable events and run one bounded
   INDEX/digest/read-screen fallback sweep; normally invoked by the installed Hermes

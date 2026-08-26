@@ -40,6 +40,7 @@ describe("argus CLI", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
     for (const command of [
+      "init",
       "up",
       "down",
       "status",

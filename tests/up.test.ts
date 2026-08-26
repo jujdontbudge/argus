@@ -149,7 +149,7 @@ describe("argus up", () => {
     }
   });
 
-  test("scaffolds the per-repo Argus layout and commits its ignore entry", async () => {
+  test("scaffolds the per-repo Argus layout and ignores Argus state", async () => {
     const { env, repo } = await createScratchRepo();
 
     const result = await runUp(repo, env);
@@ -180,16 +180,88 @@ describe("argus up", () => {
     // SPEC §7.3.3's cap is a knob a human is meant to find and raise (#56).
     expect(scaffolded).toContain("# dispatch:");
     expect(scaffolded).toContain("#   max_concurrency: 3");
-    expect(await Bun.file(join(repo, ".gitignore")).text()).toBe(".argus/\n");
+    // Everything Argus generates that must not be committed, including the
+    // machine-local Claude hook settings `up` writes (#67).
+    expect(await Bun.file(join(repo, ".gitignore")).text()).toBe(
+      ".argus/\n.claude/skills\n.claude/settings.local.json\n",
+    );
+    // #67: the working-tree entry is what makes git ignore `.argus/`. Argus
+    // does not commit on a user's behalf; it says what to commit.
     expect(
-      (
-        await run(
-          ["git", "show", "HEAD:.gitignore"],
-          repo,
-          env,
-        )
-      ).stdout,
-    ).toContain(".argus/\n");
+      (await run(["git", "show", "HEAD:.gitignore"], repo, env)).exitCode,
+    ).not.toBe(0);
+    expect(result.stdout).toContain("Committed nothing");
+  });
+
+  test("commits the integration files only when explicitly asked", async () => {
+    const { env, repo } = await createScratchRepo();
+
+    const first = await run([process.execPath, cli, "up", "--commit"], repo, env);
+
+    expect(first.exitCode).toBe(0);
+    expect(first.stdout).toContain("Committed .gitignore, AGENTS.md, docs/agents");
+    const tracked = (
+      await run(["git", "ls-tree", "-r", "--name-only", "HEAD"], repo, env)
+    ).stdout;
+    expect(tracked).toContain(".gitignore");
+    expect(tracked).toContain("AGENTS.md");
+    expect(tracked).toContain("docs/agents/domain.md");
+    const headAfterFirst = (await run(["git", "rev-parse", "HEAD"], repo, env))
+      .stdout;
+
+    const second = await run([process.execPath, cli, "up", "--commit"], repo, env);
+
+    expect(second.exitCode).toBe(0);
+    expect((await run(["git", "rev-parse", "HEAD"], repo, env)).stdout).toBe(
+      headAfterFirst,
+    );
+    expect(second.stdout).toContain("Integration files: already committed");
+  });
+
+  test("seeds the memory pair it points at and leaves edited memory alone", async () => {
+    const { env, repo } = await createScratchRepo();
+
+    expect((await runUp(repo, env)).exitCode).toBe(0);
+
+    const memoryDir = join(repo, ".argus/memory");
+    expect((await Bun.file(join(memoryDir, "USER.md")).text()).startsWith(
+      "# USER.md\n",
+    )).toBe(true);
+    expect(
+      (await Bun.file(join(memoryDir, "MEMORY.md")).text()).startsWith(
+        "# Memory index\n",
+      ),
+    ).toBe(true);
+
+    const edited = "# Memory index\n\n- [Metro](metro.md) — runs on 8082\n";
+    await Bun.write(join(memoryDir, "MEMORY.md"), edited);
+
+    expect((await runUp(repo, env)).exitCode).toBe(0);
+
+    expect(await Bun.file(join(memoryDir, "MEMORY.md")).text()).toBe(edited);
+  });
+
+  test("verifies the wiring it wrote and reports cmux capability honestly", async () => {
+    const { env, repo } = await createScratchRepo();
+    await mkdir(join(repo, ".argus/skills/example"), { recursive: true });
+    await Bun.write(join(repo, ".argus/skills/example/SKILL.md"), "# Example\n");
+
+    const result = await runUp(repo, {
+      ...env,
+      // cmux is optional; an absent binary must never make convergence fail.
+      PATH: "/usr/bin:/bin",
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "wiring: claude skills adapter OK (1 canonical skill readable through .claude/skills)",
+    );
+    expect(result.stdout).toContain("wiring: AGENTS.md pointers OK (6/6 resolve)");
+    expect(result.stdout).toContain(
+      "wiring: Hermes memory binding OK (profile memories -> .argus/memory)",
+    );
+    expect(result.stdout).toContain("cmux hooks: optional");
+    expect(result.stdout).toContain("cmux not installed");
   });
 
   test("moves Claude project memory into Argus and symlinks it back", async () => {
@@ -412,6 +484,7 @@ if (args[0] === "label" && args[1] === "list") console.log(JSON.stringify([{ nam
       // #7: optional, never a convergence requirement (SPEC §3/§6).
       "cmux hooks: optional (resume convenience; not required for signal delivery)",
     );
+    expect(first.stdout).toContain("Argus converged");
     expect(registryAfterFirst).toBe(`${repo}\n`);
     expect(second.exitCode).toBe(0);
     expect(await Bun.file(env.ARGUS_REPOS_FILE!).text()).toBe(registryAfterFirst);
@@ -487,15 +560,15 @@ if (args[0] === "label" && args[1] === "list") console.log(JSON.stringify([{ nam
     expect(await Bun.file(supervisor).exists()).toBe(false);
   });
 
-  test("commits a pre-existing uncommitted Argus ignore entry", async () => {
+  test("preserves a user's existing ignore file when adding the Argus entry", async () => {
     const { env, repo } = await createScratchRepo();
-    await Bun.write(join(repo, ".gitignore"), ".argus/\n");
+    await Bun.write(join(repo, ".gitignore"), "node_modules/\n");
 
     expect((await runUp(repo, env)).exitCode).toBe(0);
 
-    expect(
-      (await run(["git", "show", "HEAD:.gitignore"], repo, env)).stdout,
-    ).toBe(".argus/\n");
+    expect(await Bun.file(join(repo, ".gitignore")).text()).toBe(
+      "node_modules/\n.argus/\n.claude/skills\n.claude/settings.local.json\n",
+    );
   });
 
   test("degrades to tracker-less mode when gh is unavailable", async () => {

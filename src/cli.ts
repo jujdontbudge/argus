@@ -9,7 +9,8 @@ const HELP = `Argus — orchestration and self-learning toolkit
 Usage: argus <command>
 
 Commands:
-  up       converge and start this repo's eyes
+  init     scaffold this repo for Argus (repo-local only; no machine wiring)
+  up       init, converge machine wiring, and start this repo's eyes
   down     stop this repo's eyes
   status   inspect eyes and audits; acknowledge with --ack <audit-id>
   watch    run one eye
@@ -18,6 +19,12 @@ Commands:
   signals  consume push events and run one slow-poll fallback sweep
   search   search the transcript archive
   install  install argus from this checkout
+
+Flags:
+  --commit   (init, up) commit the integration files Argus wrote —
+             .gitignore, AGENTS.md and docs/agents — as they stand in the
+             working tree, in one "chore: adopt Argus" commit. Without it
+             Argus commits nothing and prints the command instead.
 `;
 
 export const MINIMUM_BUN_VERSION = "1.3.12";
@@ -246,9 +253,26 @@ export async function main(args: string[]): Promise<number> {
     return 0;
   }
 
-  if (args[0] === "up") {
-    const { convergeUp } = await import("./up.ts");
-    return convergeUp();
+  if (args[0] === "init" || args[0] === "up") {
+    const command = args[0];
+    const flags = args.slice(1);
+    const unknown = flags.find((flag) => flag !== "--commit");
+    if (unknown !== undefined) {
+      console.error(`argus ${command}: unknown argument '${unknown}'`);
+      return 1;
+    }
+    const options = { commit: flags.includes("--commit") };
+    const { convergeUp, initRepo } = await import("./up.ts");
+    try {
+      return command === "init"
+        ? await initRepo(process.cwd(), options)
+        : await convergeUp(process.cwd(), options);
+    } catch (error) {
+      // A converger that cannot converge says why and fails; it never leaves
+      // a raw rejection for the user to decode (ADR-0001).
+      console.error(error instanceof Error ? error.message : String(error));
+      return 1;
+    }
   }
 
   if (args[0] === "down") {
