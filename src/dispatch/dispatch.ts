@@ -189,6 +189,7 @@ export async function dispatchFrontier(
     cwd: repo,
     gh,
     git,
+    ...(options.cmux !== undefined && { cmux: options.cmux }),
     login,
     repo,
     slots,

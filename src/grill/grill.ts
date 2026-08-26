@@ -4,8 +4,10 @@
  * §7.2 in order, and this function is that order:
  *
  *   1. Johan tells Hermes "grill X for repo R."
- *   2. Hermes REGISTERS THE DEPLOYMENT, creates a cmux workspace in R, spawns
- *      Claude Code with the grill skill, and NOTIFIES JOHAN TO ATTACH.
+ *   2. Hermes REGISTERS THE DEPLOYMENT, opens a cmux TAB in R's existing
+ *      workspace, spawns Claude Code with the grill skill, and NOTIFIES JOHAN
+ *      TO ATTACH. (#95 amended §7.2 from "creates a cmux workspace"; see
+ *      `../deploy/tab.ts` for why the SPEC changed rather than the directive.)
  *   3. Johan answers in the terminal directly.
  *
  * AUDIT.md §4 item 9 is why this exists: "§7.2 and v1's planning entry point
@@ -18,7 +20,7 @@
  * typing into a cmux workspace rather than forked as a child of this process
  * (`./launch.ts` has the whole argument); it runs in the repo's own checkout
  * rather than a worktree, because a spec stranded on an unmerged branch is not
- * a spec (§7.2's "a cmux workspace in R"); and it carries no ticket, because
+ * a spec (§7.2's "in R"); and it carries no ticket, because
  * §7.5 exempts planning and grilling.
  *
  * NOT different, and deliberately so:
@@ -34,13 +36,14 @@
  *   0.62.2 an unresolvable handle exits 0 and acts on the FOCUSED workspace —
  *   the failure that once put a stray line into Johan's live session — and a
  *   grill launch line is a shell command, so it would have RUN there.
- * - **No cmux workspace, no grill.** Refused, before anything is written. §7.2
+ * - **No cmux tab, no grill.** Refused, before anything is written. §7.2
  *   step 3 is the point of the flow, and a headless fallback would be a
  *   planning session with nobody able to answer it. This is not the
  *   cmux-hooks dependency §3 forbids: `cmux hooks setup` is a RESUME
  *   convenience that does not exist on 0.62.2 and is never invoked here or
- *   anywhere below here. `new-workspace`, `send`, `send-key` and `notify` all
- *   ship in 0.62.2 and are all this flow uses.
+ *   anywhere below here. `new-surface`, `close-surface`, `tree`, `send`,
+ *   `send-key` and `notify` all ship in 0.62.2 and are all this flow uses.
+ *   `new-workspace` ships too, and #95 forbids it (R6).
  *
  * THE ONE THING THAT CANNOT HAPPEN. An Argus-injected prompt must never
  * classify as Johan — that is scenario 4's poisoning path with Argus itself as
@@ -52,8 +55,8 @@
  * types into the same session as the control.
  */
 import {
-  createCmuxWorkspace,
   deployWorker,
+  openWorkerTab,
   type GitRun,
 } from "../deploy";
 import { runCmux, type CmuxRun } from "../events";
@@ -124,15 +127,21 @@ export async function startGrill(
   // the `dispatch-expired` audit it is about to produce.
   const sessionId = (options.newSessionId ?? crypto.randomUUID.bind(crypto))();
 
-  // 1. The workspace FIRST, and refused if it does not resolve — before any
-  //    row exists. §7.2 has no headless shape to degrade into, and #7's hazard
-  //    means an unresolved ref is not a weaker grill, it is a shell command in
-  //    whichever session Johan happens to be looking at.
-  const workspace = await createCmuxWorkspace({ cwd: request.repo }, cmux);
+  // 1. The TAB FIRST, and refused if it does not resolve — before any row
+  //    exists. §7.2 has no headless shape to degrade into, and #7's hazard
+  //    means an unresolved handle is not a weaker grill, it is a shell command
+  //    in whichever session Johan happens to be looking at.
+  //
+  //    #95: a tab in the workspace Argus is already running in for R, never a
+  //    new workspace. `checkout: "repo"` below is what still makes it "in R".
+  const workspace = await openWorkerTab(
+    { title: "argus grill", ...(options.env !== undefined && { env: options.env }) },
+    cmux,
+  );
   if (workspace.status === "degraded") {
     return {
       reason:
-        `no cmux workspace for the grill (${workspace.reason}); §7.2 is a session ` +
+        `no cmux tab for the grill (${workspace.reason}); §7.2 is a session ` +
         "Johan attaches to, so there is nothing to degrade into and nothing was registered",
       status: "refused",
     };
@@ -147,13 +156,18 @@ export async function startGrill(
       dispatchPrompt: prompt,
       repo: request.repo,
       route: CLAUDE_GRILL_ROUTE,
+      surfaceRef: workspace.surface,
       workspaceRef: workspace.workspace,
       ...(request.executable !== undefined && { executable: request.executable }),
       ...(request.model !== undefined && { model: request.model }),
     },
     {
       cmux,
-      spawn: createCmuxLaunch({ cmux, workspace: workspace.workspace }),
+      spawn: createCmuxLaunch({
+        cmux,
+        surface: workspace.surface,
+        workspace: workspace.workspace,
+      }),
       ...(options.env !== undefined && { env: options.env }),
       ...(options.git !== undefined && { git: options.git }),
       newSessionId: () => sessionId,
@@ -162,9 +176,10 @@ export async function startGrill(
   );
 
   if (deployment.status === "failed") {
-    // The workspace stays. Argus created it, so Argus could close it — but a
-    // shell Johan may already be looking at is not something to close on a
-    // failure path, and the ref is more useful in the error than gone.
+    // The tab stays. Argus opened it, so Argus could close it — but a shell
+    // Johan may already be looking at is not something to close on a failure
+    // path, and the handle is more useful in the error than gone. Nothing was
+    // created that Johan has to clean up: the WORKSPACE is his and untouched.
     return {
       reason: `${deployment.reason} (stage: ${deployment.stage}); cmux ${workspace.workspace} was left in place`,
       status: "failed",
@@ -176,7 +191,7 @@ export async function startGrill(
     };
   }
 
-  const attach = attachLine(request, resolved.skill, workspace.workspace);
+  const attach = attachLine(request, resolved.skill, workspace.surface);
 
   // 3. "…and notifies Johan to attach." Best-effort by construction: the
   //    session is already live and attachable, so a notifier that fails
@@ -201,13 +216,19 @@ export async function startGrill(
   };
 }
 
-function attachLine(
-  request: GrillRequest,
-  skill: string,
-  workspace: string,
-): string {
+/**
+ * #95: this names the TAB, not the workspace.
+ *
+ * Before #95 the grill got a workspace of its own, so naming the workspace
+ * told Johan exactly where the session was. Its tab now sits in the workspace
+ * he already has open, beside the dispatcher and every other worker — so
+ * "attach to <workspace>" would point him at a workspace he is very possibly
+ * already looking at and leave him hunting for which tab. The surface is the
+ * only handle that identifies the session now.
+ */
+function attachLine(request: GrillRequest, skill: string, surface: string): string {
   return (
-    `Grill ready in cmux ${workspace} (${skill}): ${collapse(request.topic)} — ` +
+    `Grill ready in cmux ${surface} (${skill}): ${collapse(request.topic)} — ` +
     `attach and answer in the terminal`
   );
 }

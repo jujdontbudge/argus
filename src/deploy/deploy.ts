@@ -36,7 +36,7 @@ import {
   type WorkerProcess,
   type WorkerSpawn,
 } from "./spawn.ts";
-import { createCmuxWorkspace } from "./workspace.ts";
+import { openWorkerTab } from "./tab.ts";
 import {
   branchForTicket,
   createWorktree,
@@ -87,13 +87,20 @@ export interface DeployRequest {
   /** `"auto"` tries cmux and degrades; `"none"` (default) never touches it. */
   workspace?: "auto" | "none";
   /**
-   * A cmux workspace the CALLER already created and resolved (#62). The grill
-   * flow needs the ref before the row, because it launches the session by
-   * typing into that workspace — so it cannot let this primitive discover one
-   * on its own. Set it and `workspace` is not consulted; the ref is recorded
-   * in the row exactly as a self-created one would be.
+   * A cmux workspace the CALLER already resolved (#62, amended by #95). The
+   * grill flow needs the handle before the row, because it launches the
+   * session by typing into that tab — so it cannot let this primitive open one
+   * on its own. Set it and `workspace` is not consulted; the handle is
+   * recorded in the row exactly as a self-opened one would be.
    */
   workspaceRef?: string;
+  /**
+   * The surface (tab) inside `workspaceRef`, when the caller opened it (#95).
+   * Recorded so teardown has something to close: a workspace ref alone is not
+   * enough, and `close-surface` without a resolved surface closes whatever
+   * Johan is looking at.
+   */
+  surfaceRef?: string;
   /**
    * Override the route for this deployment (#62). The routes in
    * `./routes.ts` are the AFK, headless shapes; §7.2's grill is the same
@@ -120,9 +127,11 @@ export interface Deployment {
   process: WorkerProcess;
   sessionId: string;
   ticket?: string;
-  /** The cmux workspace ref, when one was created AND resolved. */
+  /** The cmux workspace the worker's tab lives in, when it resolved (#95). */
   workspace?: string;
-  /** Why there is no workspace, when one was asked for and did not happen. */
+  /** The worker's own tab inside it. What teardown closes (#95). */
+  surface?: string;
+  /** Why there is no tab, when one was asked for and did not happen. */
   workspaceDegraded?: string;
   worktree: string;
 }
@@ -151,16 +160,23 @@ export async function deployWorker(
     return { reason: worktree.reason, stage: "worktree", status: "failed" };
   }
 
-  // 2. The workspace. Optional context (#7): it can only ever subtract
-  //    information from the row, never stop the deployment. A caller that
-  //    already holds a resolved ref passes it in rather than making a second.
-  const workspace =
+  // 2. The TAB (#95). Optional context (#7): it can only ever subtract
+  //    information from the row, never stop the deployment. What changed in
+  //    #95 is WHERE it goes — a surface in the workspace Argus is already
+  //    running in, never a workspace of its own. A caller that already holds a
+  //    resolved tab (the grill, §7.2) passes it in rather than opening a
+  //    second one.
+  const tab =
     request.workspaceRef === undefined && request.workspace === "auto"
-      ? await createCmuxWorkspace({ cwd: worktree.path }, options.cmux)
+      ? await openWorkerTab(
+          { env: options.env ?? Bun.env, ...(request.ticket !== undefined && { title: `argus #${request.ticket}` }) },
+          options.cmux,
+        )
       : null;
   const workspaceRef =
-    request.workspaceRef ??
-    (workspace?.status === "created" ? workspace.workspace : undefined);
+    request.workspaceRef ?? (tab?.status === "opened" ? tab.workspace : undefined);
+  const surfaceRef =
+    request.surfaceRef ?? (tab?.status === "opened" ? tab.surface : undefined);
 
   const env = subscriptionEnv(options.env ?? Bun.env);
   const ts = (options.now?.() ?? new Date()).toISOString();
@@ -172,10 +188,10 @@ export async function deployWorker(
     worktree: worktree.path,
     ...(request.ticket !== undefined && { ticket: request.ticket }),
     ...(workspaceRef !== undefined && { workspace: workspaceRef }),
+    ...(surfaceRef !== undefined && { surface: surfaceRef }),
   });
   const { sessionsFile } = registryPaths(request.repo);
-  const degraded =
-    workspace?.status === "degraded" ? { workspaceDegraded: workspace.reason } : {};
+  const degraded = tab?.status === "degraded" ? { workspaceDegraded: tab.reason } : {};
 
   const deployed = (sessionId: string, process: WorkerProcess): DeployResult => ({
     deployment: {
@@ -187,6 +203,7 @@ export async function deployWorker(
       worktree: worktree.path,
       ...(request.ticket !== undefined && { ticket: request.ticket }),
       ...(workspaceRef !== undefined && { workspace: workspaceRef }),
+      ...(surfaceRef !== undefined && { surface: surfaceRef }),
       ...degraded,
     },
     status: "deployed",
