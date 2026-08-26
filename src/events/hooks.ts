@@ -1,4 +1,4 @@
-import { lstat } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import { dirname, join, parse } from "node:path";
 
 import type { EventAgent, EventKind } from "./schema.ts";
@@ -83,9 +83,26 @@ async function gitCommonRepo(cwd: string): Promise<string | null> {
   }
 }
 
+/**
+ * Canonical, always. #7's live drive found why: a real `codex exec --cd <path>`
+ * reports that path verbatim, a real Claude `Stop` hook reports the resolved
+ * one, and on macOS `/var` is a symlink to `/private/var`. `src/watch.ts`
+ * resolves its own repo with `realpath` and then drops any event whose `repo`
+ * differs STRING-wise, so an agent started on the symlinked form wrote a valid
+ * event that the digest ignored forever. Resolving here makes every event
+ * carry the one path form every consumer compares against.
+ */
+async function canonical(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch {
+    return path;
+  }
+}
+
 /** Finds direct repos, nested cwds, and linked worktrees' canonical repo state. */
 export async function resolveArgusRepo(cwd: string): Promise<string | null> {
-  let current = cwd;
+  let current = await canonical(cwd);
   const root = parse(current).root;
   while (true) {
     if (await exists(join(current, ".argus"))) return current;
@@ -93,7 +110,9 @@ export async function resolveArgusRepo(cwd: string): Promise<string | null> {
     current = dirname(current);
   }
   const common = await gitCommonRepo(cwd);
-  return common !== null && (await exists(join(common, ".argus"))) ? common : null;
+  return common !== null && (await exists(join(common, ".argus")))
+    ? await canonical(common)
+    : null;
 }
 
 async function handle(
