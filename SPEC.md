@@ -557,6 +557,31 @@ live evidence and grade LIVE, which is the overclaim these verdicts exist to
 delete, so a requirement a live drive cannot honestly reach stays UNCOVERED or
 PARTIAL and prints why.
 
+**What a live drive retires FROM A SLOT (ticket #78).** LIVE is one axis; the
+DOUBLES a slot ran on are another, and #78 moved the second. Behind its own gate
+(`ARGUS_LIVE_SLOTS=1`) slots **4** and **5** run their own bodies, their own
+assertions and their own manifests with a real CLI on the other end of every
+message — codex for 4, Claude for 5 — through `ProvenanceScenarioDriver`, the
+seam #25 shipped for exactly this. Those slots' `agent` double is retired: a
+live session took the dispatch and every nudge as its own turns and wrote its
+own transcript. They stay **STRUCTURAL**, because `cmux` and `hermes` are
+untouched by a live agent — the registry rows are still appended by the harness
+and no `cmux send` carried anything. A double comes off only on a report
+carrying live evidence, so the default run of every slot keeps every double it
+declares. The other eight slots are NOT live-drivable and the reason is in
+`live-slots.ts`: 1, 2, 3, 7 and 9 chain halves that script what the ASSISTANT
+says, which no live agent can be made to do without a prompt nobody logged —
+which is a Johan takeover, and would break the slots it was meant to serve.
+
+**What driving a slot live actually found.** Two production defects, both of
+the class §13 exists to catch, neither reachable from a fixture: a Hermes
+bang-send lands VERBATIM in a headless session (bash mode is a TUI feature)
+where only the interactive `<bash-input>` form was derived; and codex-cli now
+packs `<recommended_plugins>` and `<environment_context>` into ONE user-role
+item, which the single-envelope synthetic-preamble filter missed. Each would
+have made a message the CLI or Hermes produced read as a Johan takeover, i.e.
+put it in `USER.md` and flip `johan_touched`. Both are fixed.
+
 **Test agents and isolation (Johan directive, 2026-08-24; amended 2026-08-25).** The
 governing rule is the original one, and it is defined at the **repo** level: every
 agent that runs uses the throwaway sandbox repo and scratch tabs/worktrees only,

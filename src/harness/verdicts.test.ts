@@ -181,3 +181,89 @@ test("the rendered table names the verdict, the counts and every gap", () => {
   expect(rendered).toContain("nothing asserts it");
   expect(rendered).toContain("1 of 1 scenarios are STRUCTURAL; 0 of 1 are LIVE.");
 });
+
+/**
+ * Ticket #78 — retiring a double, and the rules that keep it honest.
+ *
+ * The same property #63 built for LIVE, one level down: a double comes off a
+ * slot only when the report carries evidence an agent actually ran, so the
+ * default fixture run of every slot keeps every double it has always had and
+ * no edit to a manifest can change that.
+ */
+describe("a live drive retiring a slot's double", () => {
+  const drivable = (): ScenarioManifest => ({
+    doubles: ["agent", "cmux", "hermes"],
+    number: 4,
+    requirements: [
+      {
+        assertions: ["a"],
+        id: "13.4.fixture-only",
+        liveShortfall: "",
+        shortfall: "asserted on a fixture transcript",
+        spec: "quoted",
+      },
+      {
+        assertions: ["b"],
+        id: "13.4.unchanged",
+        shortfall: "still true either way",
+        spec: "quoted",
+      },
+    ],
+    retiredByLiveDrive: ["agent"],
+    title: "drivable",
+  });
+  const bothPass: Array<[string, boolean]> = [
+    ["a", true],
+    ["b", true],
+  ];
+
+  test("with no evidence the manifest's claim changes nothing at all", () => {
+    const grade = gradeScenario(drivable(), report(bothPass));
+
+    expect(grade.doubles).toEqual(["agent", "cmux", "hermes"]);
+    expect(grade.verdict).toBe("STRUCTURAL");
+    // The live shortfall is not read either: both requirements stay PARTIAL.
+    expect(grade.counts).toMatchObject({ covered: 0, live: 0, partial: 2 });
+    expect(grade.requirements[0]!.shortfall).toBe("asserted on a fixture transcript");
+  });
+
+  test("with evidence the named double comes off — and only the named one", () => {
+    const grade = gradeScenario(drivable(), report(bothPass, ["codex: exit 0"]));
+
+    expect(grade.doubles).toEqual(["cmux", "hermes"]);
+    // Retiring `agent` does NOT buy LIVE. Two doubles remain, so the verdict
+    // is unchanged, which is the whole reason this is a separate axis from
+    // `verdictFor` rather than a second way of spelling it.
+    expect(grade.verdict).toBe("STRUCTURAL");
+    expect(grade.counts).toMatchObject({ covered: 1, partial: 1 });
+    expect(grade.requirements[1]!.shortfall).toBe("still true either way");
+  });
+
+  test("a slot that declares no retirement is untouched by evidence", () => {
+    const plain = manifest(
+      [{ assertions: ["a"], id: "13.1.x", shortfall: "s", spec: "q" }],
+      ["agent", "brain"],
+    );
+
+    expect(gradeScenario(plain, report([["a", true]], ["x"])).doubles).toEqual([
+      "agent",
+      "brain",
+    ]);
+  });
+
+  test("retiring every double DOES reach LIVE, on evidence alone", () => {
+    // The rule is one rule, not two: `verdictFor` reads the doubles that
+    // survived, so a slot whose last double a live drive retires is LIVE for
+    // the same reason #74's journeys are — evidence, never declaration.
+    const all: ScenarioManifest = {
+      ...drivable(),
+      doubles: ["agent"],
+      retiredByLiveDrive: ["agent"],
+    };
+
+    expect(gradeScenario(all, report(bothPass)).verdict).toBe("STRUCTURAL");
+    expect(gradeScenario(all, report(bothPass, ["codex: exit 0"])).verdict).toBe(
+      "LIVE",
+    );
+  });
+});

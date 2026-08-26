@@ -48,7 +48,10 @@ import { registerDigestScenarios } from "../eyes/digest/scenarios.ts";
 import { registerHonchoScenarios } from "../eyes/honcho/scenarios.ts";
 import { registerRetroScenarios } from "../eyes/retro/scenarios.ts";
 import { registerReviewerScenarios } from "../eyes/reviewer/scenarios.ts";
-import { registerProvenanceScenarios } from "../provenance/scenarios.ts";
+import {
+  registerProvenanceScenarios,
+  type ProvenanceScenarioDriver,
+} from "../provenance/scenarios.ts";
 import { registerCodexScenarios } from "../tailing/codex-scenarios.ts";
 import { registerHermesScenarios } from "../tailing/hermes-scenarios.ts";
 import { registerWatchScenarios } from "../watch/scenarios.ts";
@@ -65,12 +68,25 @@ export {
   type InitUpScenarioId,
 } from "./init-up-scenarios.ts";
 
-/** Compose every ticket's §13 halves onto an existing registry. */
-export function registerAllScenarios(registry: ScenarioRegistry): void {
+/**
+ * Compose every ticket's §13 halves onto an existing registry.
+ *
+ * ADDITIVE #78: the `driver` parameter. `ProvenanceScenarioDriver` is #25's
+ * seam — "how messages got into the session" — and the three registrars below
+ * that take one have always defaulted to the fixture. Threading it through
+ * here is what lets `ARGUS_LIVE_SLOTS=1` compose the SAME ten slots with a
+ * live driver instead, so a slot's `agent` double is retired by the slot's own
+ * body running against a real CLI rather than by a second copy of the slot.
+ * Omitted, every caller gets exactly what it got before: the fixture.
+ */
+export function registerAllScenarios(
+  registry: ScenarioRegistry,
+  driver?: ProvenanceScenarioDriver,
+): void {
   // Overwriters first, innermost half outward: #25 → #30 → #31 → #34.
-  registerProvenanceScenarios(registry);
-  registerReviewerScenarios(registry);
-  registerDigestScenarios(registry);
+  registerProvenanceScenarios(registry, driver);
+  registerReviewerScenarios(registry, driver);
+  registerDigestScenarios(registry, driver);
   registerEventScenarios(registry);
 
   // Then the extenders, which chain onto whatever is registered.
@@ -96,8 +112,10 @@ export function registerAllScenarios(registry: ScenarioRegistry): void {
 }
 
 /** A registry with all ten SPEC §13 scenarios implemented. */
-export function createFullScenarioRegistry(): ScenarioRegistry {
+export function createFullScenarioRegistry(
+  driver?: ProvenanceScenarioDriver,
+): ScenarioRegistry {
   const registry = createScenarioRegistry();
-  registerAllScenarios(registry);
+  registerAllScenarios(registry, driver);
   return registry;
 }
