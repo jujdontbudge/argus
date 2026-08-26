@@ -254,3 +254,99 @@ FINDING 1 (BLOCKER, argus bug, NOT a skill bug and NOT a harness artifact)
   choice between granting workspace-write and granting full access is a policy
   call about what an unattended worker may touch. That belongs to Johan and to
   its own ticket, not to an acceptance run. FILED, not fixed.
+
+------------------------------------------------------------------------------
+6. Did the new tab path behave? YES — open and close, both live
+------------------------------------------------------------------------------
+#95's `src/deploy/tab.ts` ran live for the first time here, and it did exactly
+what it says.
+
+  workspaces before the drive   8
+  workspaces at every check     8
+  workspaces after the drive    8      <- NEVER moved
+  surfaces before the drive    25
+
+Per deployed worker Argus issued, in this order:
+
+  cmux --id-format both tree --all --json          (resolve + membership check)
+  cmux new-surface --type terminal --workspace 2D3B8B38-...-8F1157CE2E10
+  cmux --id-format both tree --all --json          (re-resolve the new surface)
+  cmux rename-tab --workspace 2D3B8B38-... --surface E4E51E17-... argus #1
+
+and on reap:
+
+  cmux close-surface --surface E4E51E17-... --workspace 2D3B8B38-...
+
+The tab is opened in the workspace Argus was already running in — the
+`CMUX_WORKSPACE_ID` this run passed in deliberately, because without it
+tab.ts degrades to "no tab" and the path would not have been exercised at all.
+Every handle is re-resolved against `tree --all --json` before any mutating
+verb, which is the guard tab.ts's docblock promises.
+
+The surface UUID is recorded in the registry row beside the session id, so a
+tab is traceable back to its ticket:
+
+  {"agent":"codex","sessionId":"01a04011-df0d-7482-a912-ad02592f50d4",
+   "ticket":"1","worktree":".../repo-worktrees/ticket-1",
+   "workspace":"2D3B8B38-C9FC-46F4-A512-8F1157CE2E10",
+   "surface":"E4E51E17-5D62-4496-B0F8-B4A43C40FE70", ...}
+
+Tabs are closed by the NEXT dispatch's recovery pass, not by the dying worker
+itself — a crashed worker's tab therefore lingers until something else runs.
+That is a design consequence worth knowing, not a defect: it is what makes the
+crash path recoverable at all. In this run every tab opened was eventually
+closed, and the workspace count never moved off 8.
+
+******************************************************************************
+FINDING 2 (argus bug) — a blocked ticket redeploys forever, uncounted.
+******************************************************************************
+
+  Each cycle: dispatch → all three workers block in ~40s → `argus complete`
+  correctly refuses → the next `argus dispatch` recovery reaps the dead
+  sessions and REDEPLOYS the same three tickets, which block for the same
+  reason. Nothing counts attempts and nothing quarantines a ticket that has
+  now failed identically N times. Three cycles ran here; the loop's only
+  natural bound was Hermes eventually deciding to stop.
+
+  Each cycle costs three real subscription Codex sessions. An unattended
+  dispatcher on a repo whose workers cannot write would spend a subscription
+  in a loop that cannot make progress.
+
+******************************************************************************
+FINDING 3 (argus bug) — `blocked-on-human` leaves NO trace on the ticket.
+******************************************************************************
+
+  After six blocked sessions across three cycles, the tracker says:
+
+    #1 OPEN assignees=['argus-dispatcher'] comments=0
+    #2 OPEN assignees=['argus-dispatcher'] comments=0
+    #3 OPEN assignees=['argus-dispatcher'] comments=0
+
+  Zero comments. The skill promises the opposite for the refusal cases it
+  enumerates — "leaves the ticket open and claimed, WITH THE REASON COMMENTED
+  ON THE TICKET" — and for a red gate that is true. For `blocked-on-human` the
+  reason exists only as a JSON file under `.argus/events/`. A human reading
+  the tracker sees three claimed, open, silent tickets and no way to learn
+  that six sessions died on a sandbox policy.
+
+******************************************************************************
+FINDING 4 (argus bug) — `argus dispatch --help` is not help. It DISPATCHES.
+******************************************************************************
+
+  Hermes's second-ever argus call was `argus dispatch --help`, the obvious way
+  to learn a subcommand. `src/cli.ts:405` is:
+
+    if (args[0] === "dispatch") return dispatch();
+
+  `dispatch()` takes no parameters and never inspects `args`. So `--help` is
+  silently discarded and a REAL dispatch pass runs — claiming tickets, cutting
+  worktrees, spawning paid agent sessions. Hermes was saved only by being in
+  the wrong directory at that moment:
+
+    $ argus dispatch --help          (from outside the repo)
+      argus dispatch: current directory is not inside a git repository
+
+  Inside the repo the same keystrokes deploy the frontier. `--help` is
+  documented at top level only (`const HELP`, src/cli.ts:7-34); no subcommand
+  accepts it. The same trap applies to `argus complete --help` and
+  `argus signals --help`.
