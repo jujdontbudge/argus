@@ -543,6 +543,20 @@ driver against real agents and then runs production's own watcher processes over
 what they wrote. It has its own gate — `ARGUS_LIVE_AGENTS` does not open it,
 because it costs far more — and the same three statuses as every other live half.
 
+**What the journey renders LIVE (ticket #74).** One drive, two subscription
+calls, three separately graded slots: **1** (a live session ran end to end and
+production's archiver stored its words), **4** (USER.md read back byte-for-byte
+across a live session, where the fixture slot only infers it untouched) and
+**6** (the real archiver killed while a LIVE agent's transcript is in front of
+it, and the supervisor's replacement held to an exact count taken from
+production's own repo-scoped transcript source — none lost, none duplicated).
+The core ten still grade STRUCTURAL, because they still run on doubles; the
+live renderings are additional, never a re-grade of a fixture slot. Nothing
+below is reached by a fake spawner: adding one would let a fixture run record
+live evidence and grade LIVE, which is the overclaim these verdicts exist to
+delete, so a requirement a live drive cannot honestly reach stays UNCOVERED or
+PARTIAL and prints why.
+
 **Test agents and isolation (Johan directive, 2026-08-24; amended 2026-08-25).** The
 governing rule is the original one, and it is defined at the **repo** level: every
 agent that runs uses the throwaway sandbox repo and scratch tabs/worktrees only,
