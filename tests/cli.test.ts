@@ -39,8 +39,32 @@ describe("argus CLI", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
-    for (const command of ["up", "down", "status", "watch", "search", "install"]) {
+    for (const command of [
+      "up",
+      "down",
+      "status",
+      "watch",
+      "dispatch",
+      "search",
+      "install",
+    ]) {
       expect(result.stdout).toContain(command);
+    }
+  });
+
+  test("dispatch outside a git repository refuses rather than guessing a repo", async () => {
+    // Deliberately the ONLY `argus dispatch` case here: every other path
+    // reaches real `gh` and spawns real agents, which SPEC §13 forbids a test
+    // run from doing. The dispatcher itself is covered through its own
+    // production entry point in src/dispatch/dispatch.test.ts.
+    const outside = await mkdtemp(join(tmpdir(), "argus-not-a-repo-"));
+    try {
+      const result = await runCli(["dispatch"], [], {}, cli, outside);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("not inside a git repository");
+    } finally {
+      await rm(outside, { force: true, recursive: true });
     }
   });
 

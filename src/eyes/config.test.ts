@@ -34,6 +34,7 @@ describe("eyes config (ADR-0002 values, defaults in code)", () => {
           staleAfterDays: 30,
           archiveAfterDays: 90,
         },
+        dispatch: { maxConcurrency: 3 },
       });
     });
   });
@@ -123,6 +124,53 @@ describe("the curator block (ticket #35)", () => {
       const { curator } = await loadEyesConfig(repo);
       expect(curator.enabled).toBe(true);
       expect(curator.archiveAfterDays).toBe(90);
+    });
+  });
+});
+
+describe("dispatch concurrency (SPEC §7.3.3: cap 3, a config knob) — #56", () => {
+  test("the default is SPEC's 3, not the brain's 2 — they are different budgets", async () => {
+    await withRepo(async (repo) => {
+      const config = await loadEyesConfig(repo);
+      expect(config.dispatch.maxConcurrency).toBe(3);
+      expect(config.brain.maxConcurrency).toBe(2);
+    });
+  });
+
+  test("dispatch.max_concurrency is read from .argus/config.yaml", async () => {
+    await withRepo(async (repo) => {
+      await mkdir(join(repo, ".argus"), { recursive: true });
+      await Bun.write(
+        join(repo, ".argus/config.yaml"),
+        "dispatch:\n  max_concurrency: 5\n",
+      );
+      const config = await loadEyesConfig(repo);
+      expect(config.dispatch.maxConcurrency).toBe(5);
+      expect(config.brain.maxConcurrency).toBe(2);
+    });
+  });
+
+  test("raising dispatch concurrency does not raise the brain budget, or the reverse", async () => {
+    await withRepo(async (repo) => {
+      await mkdir(join(repo, ".argus"), { recursive: true });
+      await Bun.write(
+        join(repo, ".argus/config.yaml"),
+        "brain:\n  max_concurrency: 8\ndispatch:\n  max_concurrency: 1\n",
+      );
+      const config = await loadEyesConfig(repo);
+      expect(config.dispatch.maxConcurrency).toBe(1);
+      expect(config.brain.maxConcurrency).toBe(8);
+    });
+  });
+
+  test("a nonsense cap falls back to 3 rather than taking dispatch down", async () => {
+    await withRepo(async (repo) => {
+      await mkdir(join(repo, ".argus"), { recursive: true });
+      await Bun.write(
+        join(repo, ".argus/config.yaml"),
+        "dispatch:\n  max_concurrency: banana\n",
+      );
+      expect((await loadEyesConfig(repo)).dispatch.maxConcurrency).toBe(3);
     });
   });
 });

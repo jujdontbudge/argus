@@ -170,9 +170,11 @@ describe("argus up", () => {
         true,
       );
     }
-    expect(await Bun.file(join(repo, ".argus/config.yaml")).text()).toContain(
-      "# brain:",
-    );
+    const scaffolded = await Bun.file(join(repo, ".argus/config.yaml")).text();
+    expect(scaffolded).toContain("# brain:");
+    // SPEC §7.3.3's cap is a knob a human is meant to find and raise (#56).
+    expect(scaffolded).toContain("# dispatch:");
+    expect(scaffolded).toContain("#   max_concurrency: 3");
     expect(await Bun.file(join(repo, ".gitignore")).text()).toBe(".argus/\n");
     expect(
       (
