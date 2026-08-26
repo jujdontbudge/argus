@@ -193,6 +193,32 @@ describe("argus up", () => {
     expect(result.stdout).toContain("Committed nothing");
   });
 
+  test("installs the orchestrator skill at the path configured for Hermes", async () => {
+    const { env, repo } = await createScratchRepo("Hermes Orchestrator Skill");
+
+    const result = await runUp(repo, env);
+
+    expect(result.exitCode).toBe(0);
+    const profile = result.stdout.match(/^Hermes profile: (\S+)$/m)?.[1];
+    expect(profile).toBeDefined();
+    const config = await Bun.file(
+      join(env.HERMES_HOME!, "profiles", profile!, "config.yaml"),
+    ).text();
+    const configuredDirectory = config.match(
+      /external_dirs:\n\s+- ("(?:[^"\\]|\\.)*")/,
+    )?.[1];
+    expect(configuredDirectory).toBeDefined();
+
+    const skill = await Bun.file(
+      join(
+        JSON.parse(configuredDirectory!),
+        "argus-orchestrator",
+        "SKILL.md",
+      ),
+    ).text();
+    expect(skill).toContain("name: argus-orchestrator");
+  });
+
   test("commits the integration files only when explicitly asked", async () => {
     const { env, repo } = await createScratchRepo();
 
