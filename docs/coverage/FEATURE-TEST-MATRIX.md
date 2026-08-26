@@ -283,10 +283,16 @@ Known gaps, stated so they stop being silent ones.
 
 **Needs Johan.**
 
-1. **A real grill.** #89 simulates the *machinery* with a scripted stand-in, but §14
-   bullet 1's actual claim is that Johan's own answers become USER.md facts. Only
-   Johan typing can produce a genuinely Johan-authored message; a fake-Johan send is
-   registry-logged by construction, which is the opposite of what the bullet tests.
+1. **A real grill.** #89 has now DRIVEN the machinery live — a real subscription
+   Claude session through `startGrill`, the five real watchers over it, four of the
+   five §14 stores filled with no manual capture (`docs/acceptance/grill-live.txt`).
+   The fifth is this gap. §14 bullet 1's actual claim is "Johan-authored preferences
+   in USER.md", and only Johan typing can produce a genuinely Johan-authored message;
+   the stand-in answer is registry-logged by construction, so it classifies
+   hermes-authored, which is the opposite of what the bullet tests. What the drive
+   asserts instead is that USER.md stays **byte-identical** — the Reviewer's
+   provenance gate holding, not the bullet being met. Closing this needs Johan at the
+   keyboard for one round; nothing else can.
 2. **Attachability (F6, F79).** `13.2.driver-attaches` is UNCOVERED because attaching
    is a person opening a terminal. The harness can write a message that *classifies*
    as a takeover; it cannot prove a human could have.

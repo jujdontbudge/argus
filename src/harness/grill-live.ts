@@ -146,6 +146,10 @@ export interface StoreSnapshot {
   archiveAssistant: number;
   /** peer_id → message count on the repo's Honcho workspace. */
   honchoByPeer: Record<string, number>;
+  /** The digest bodies themselves — the evidence, not just the filenames. */
+  digestBodies: Record<string, string>;
+  /** Each per-fact file's contents, same reason. */
+  factBodies: Record<string, string>;
 }
 
 export interface GrillLiveReport {
@@ -274,17 +278,29 @@ export async function snapshotStores(
   const user = await sha256(join(memoryDirectory, "USER.md"));
   const memoryFiles = await listFiles(memoryDirectory);
   const archive = archiveCounts(join(repo, ".argus", "archive.db"));
+  const digestNames = (await listFiles(sessionsDirectory)).filter(
+    (name) => name.endsWith(".md") && name !== "INDEX.md",
+  );
+  const factNames = memoryFiles.filter(
+    (name) => name.endsWith(".md") && name !== "MEMORY.md" && name !== "USER.md",
+  );
+  const digestBodies: Record<string, string> = {};
+  for (const name of digestNames) {
+    digestBodies[name] = await text(join(sessionsDirectory, name));
+  }
+  const factBodies: Record<string, string> = {};
+  for (const name of factNames) {
+    factBodies[name] = await text(join(memoryDirectory, name));
+  }
   return {
+    digestBodies,
+    factBodies,
     archiveAssistant: archive.assistant,
     archiveTotal: archive.total,
-    digestFiles: (await listFiles(sessionsDirectory)).filter(
-      (name) => name.endsWith(".md") && name !== "INDEX.md",
-    ),
+    digestFiles: digestNames,
     honchoByPeer: await honchoPeerCounts(honchoApiKey, honchoWorkspace),
     indexText: await text(join(sessionsDirectory, "INDEX.md")),
-    memoryFactFiles: memoryFiles.filter(
-      (name) => name.endsWith(".md") && name !== "MEMORY.md" && name !== "USER.md",
-    ),
+    memoryFactFiles: factNames,
     memoryIndex: await text(join(memoryDirectory, "MEMORY.md")),
     userBytes: user.bytes,
     userSha: user.sha,
@@ -506,7 +522,18 @@ export async function runGrillLive(
       restartDelayMilliseconds: 50,
       spawn: createSandboxWatcherSpawner(
         [process.execPath, fileURLToPath(new URL("../cli.ts", import.meta.url))],
-        sandbox,
+        // Everything scratch EXCEPT where Claude transcripts live. #49's
+        // subscription mode runs the session under the real HOME by
+        // necessity — that is where the credential is — so its transcript
+        // lands in the real `~/.claude/projects`, while the sandbox points
+        // CLAUDE_CONFIG_DIR at an empty scratch directory. A watcher reading
+        // the scratch one finds nothing and reports an empty archive, which
+        // reads exactly like an eye that failed. The read is repo-scoped
+        // (`sessionsForRepo`), so only the sandbox session's transcript is
+        // consumed, and nothing is ever written there.
+        {
+          env: { ...sandbox.env, CLAUDE_CONFIG_DIR: join(homedir(), ".claude") },
+        },
       ),
       statusPath,
     });
@@ -553,11 +580,32 @@ export async function runGrillLive(
     // then does with the keystrokes. A driver that took `started` at its word
     // would go on to grade five empty stores as an eye problem.
     let transcriptPath: string | null = null;
-    for (let attempt = 0; attempt < 60; attempt += 1) {
+    let trusted = false;
+    for (let attempt = 0; attempt < 90; attempt += 1) {
       await Bun.sleep(2000);
       await sampleFleet();
       transcriptPath = await findTranscript(repo, started.sessionId);
       if (transcriptPath !== null) break;
+      if (report.surface === null) continue;
+      const screen = await cmux([
+        "read-screen",
+        "--surface",
+        report.surface,
+        "--lines",
+        "40",
+      ]);
+      // Claude Code's first-run trust dialog. A grill into a repo `claude` has
+      // never seen stops here, and NOTHING in the flow notices: the launch
+      // line ran, `startGrill` returned `started`, and the session is sitting
+      // on a modal with no transcript. Answering it is what Johan would do on
+      // attaching, and it is not a §5 rule 2 send — a menu selection lands in
+      // a TUI, not in a transcript, so there is nothing for it to be
+      // misattributed as. Recorded as a finding either way.
+      if (!trusted && /trust this folder/i.test(screen.stdout)) {
+        notes.push("FINDING: the session blocked on Claude Code's trust-folder dialog");
+        await cmux(["send-key", "--surface", report.surface, "--", "enter"]);
+        trusted = true;
+      }
     }
     if (transcriptPath === null) {
       notes.push(
