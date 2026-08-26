@@ -78,4 +78,52 @@ describe("launchLine (#62): subscription mode survives Johan's own shell", () =>
     const [, out] = await Promise.all([child.exited, new Response(child.stdout).text()]);
     expect(out).not.toContain("sk-should-not-survive");
   });
+
+  /**
+   * #89. The live drive's actual failure: `startGrill` reported `started`, a
+   * real Claude session ran, and every one of the five §14 stores stayed empty
+   * — because the session ran in the host workspace's directory instead of the
+   * repo the deployment named. `WorkerSpawnRequest.cwd` carried the right
+   * answer the whole time and this route dropped it.
+   */
+  test("the deployment's cwd reaches the shell, through a real shell", async () => {
+    const line = launchLine("claude", ["claude", "hello"], "/tmp");
+
+    expect(line.split("\n")).toHaveLength(1);
+    expect(line.startsWith("cd ")).toBe(true);
+
+    // `pwd` through zsh, because "the line contains the path" and "the command
+    // runs there" are different claims — the same distinction the credential
+    // assertion above draws.
+    const child = Bun.spawn(
+      // A function replacement: in a string one, `$'` is the "text after the
+      // match" pattern and would silently rebuild the line.
+      ["/bin/zsh", "-c", line.replace(/\$'claude'.*/, () => "$'pwd'")],
+      { env: { ...Bun.env }, stderr: "pipe", stdout: "pipe" },
+    );
+    const [, out] = await Promise.all([child.exited, new Response(child.stdout).text()]);
+    // The logical path: `cd` exports PWD and `pwd` reports it, which is
+    // exactly what the session inherits.
+    expect(out.trim()).toBe("/tmp");
+  });
+
+  /** `&&`, so a failed `cd` cannot fall through into the wrong directory. */
+  test("a cd that fails does not start the session anyway", async () => {
+    const line = launchLine("claude", ["claude", "hello"], "/no/such/directory");
+    const child = Bun.spawn(
+      ["/bin/zsh", "-c", line.replace(/\$'claude'.*/, () => "$'pwd'")],
+      { env: { ...Bun.env }, stderr: "pipe", stdout: "pipe" },
+    );
+    const [code, out] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+    ]);
+    expect(code).not.toBe(0);
+    expect(out.trim()).toBe("");
+  });
+
+  /** Callers that never had a cwd keep the exact line they had. */
+  test("no cwd is still a bare command", () => {
+    expect(launchLine("claude", ["claude", "hello"]).startsWith("cd ")).toBe(false);
+  });
 });

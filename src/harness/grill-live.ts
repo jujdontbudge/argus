@@ -33,21 +33,19 @@
  * spawning real `argus watch` children whose eye brains are real `codex exec`
  * calls. Nothing about the five stores is written by this file.
  *
- * WHAT IS NOT, STATED HERE RATHER THAN DISCOVERED LATER. Two substitutions,
- * both forced, both reported in the evidence file as surviving doubles:
+ * WHAT IS NOT, STATED HERE RATHER THAN DISCOVERED LATER. One substitution,
+ * forced, and reported in the evidence file as a surviving double.
  *
- * - **cmux is a TAB, not a workspace.** `startGrill` calls
- *   `createCmuxWorkspace`, which shells `cmux new-workspace`. Directive 14
- *   forbids this harness from spawning a cmux workspace at all, so the `cmux`
- *   seam `startGrill` already exposes is used to translate `new-workspace`
- *   into `new-surface` — a tab in the workspace this process is already in,
- *   named by `CMUX_WORKSPACE_ID`. Everything downstream of the ref is
- *   untouched, including #7's resolve-guard, which re-resolves the surface
- *   before every keystroke. `CMUX_WORKSPACE_ID` and not `cmux
- *   current-workspace`: the latter returns the SELECTED workspace, which on
- *   this machine is whichever one Johan is looking at, and typing a shell
- *   command into that is precisely #7's hazard with the harness as the
- *   author.
+ * `cmux` is NOT one of them any more. This driver was first written against a
+ * `startGrill` that shelled `cmux new-workspace`, which Directive 14 forbids
+ * the harness to do, and it carried a seam that rewrote that verb into
+ * `new-surface`. #95 then made a deployed session a TAB in the workspace
+ * Argus is already running in — so the substitution became the production
+ * behaviour and was deleted rather than kept as a double that no longer
+ * doubles anything. `CMUX_WORKSPACE_ID` is threaded into the sandbox env
+ * because `createSandbox` strips every `CMUX_*` name, and `openWorkerTab`
+ * reads that one to decide which workspace it may open a tab in.
+ *
  * - **Johan is not here.** §7.2 step 3 is "Johan answers in the terminal
  *   directly", and a driver cannot be Johan. The answer is sent through
  *   `sendToWorker`, which registry-logs it, which classifies it
@@ -162,6 +160,9 @@ export interface GrillLiveReport {
   skillLoadEvidence: string[];
   sessionId: string | null;
   workspace: string | null;
+  surface: string | null;
+  /** The tab's screen when the session failed to start. Evidence, not a log. */
+  launchScreen: string | null;
   before: StoreSnapshot | null;
   after: StoreSnapshot | null;
   /** Peak RSS in KiB across this process plus every watcher, sampled. */
@@ -178,129 +179,6 @@ export interface GrillLiveOptions {
   hostWorkspace?: string;
   /** How long to let the session and the eyes work, in milliseconds. */
   budgetMilliseconds?: number;
-}
-
-/**
- * Translate the ONE cmux verb Directive 14 forbids, and pass every other
- * through untouched.
- *
- * `createCmuxWorkspace` discovers the ref it just made by diffing
- * `list-workspaces` across the create — so both halves of that diff have to
- * move together, or the discovery would see the tab appear in a listing that
- * never mentions it. `list-workspaces` therefore answers with the host
- * workspace's SURFACES, and `new-workspace` opens one. `listedRefs` already
- * accepts `surface:` refs, so the guard downstream is the same code.
- *
- * The `cd` is what stands in for `--cwd`: `new-surface` has no equivalent, and
- * a grill launched in the wrong directory is a grill about the wrong repo.
- * It is typed BEFORE `startGrill` types anything, into a shell that has no
- * transcript, so it is not a §5 rule 2 send and is not logged as one — the
- * same reasoning `launch.ts` gives for the launch line itself.
- */
-export function createTabCmux(hostWorkspace: string, run: CmuxRun = runCmux): CmuxRun {
-  return async (args) => {
-    const [verb, ...rest] = args;
-    if (verb === "list-workspaces") {
-      return run(["list-pane-surfaces", "--workspace", hostWorkspace]);
-    }
-    if (verb === "new-workspace") {
-      const cwdIndex = rest.indexOf("--cwd");
-      const cwd = cwdIndex >= 0 ? rest[cwdIndex + 1] : undefined;
-      const created = await run([
-        "new-surface",
-        "--type",
-        "terminal",
-        "--workspace",
-        hostWorkspace,
-      ]);
-      if (created.exitCode === 0 && cwd !== undefined) {
-        const fresh = await newestSurface(run, hostWorkspace);
-        if (fresh !== null) await settleShell(run, fresh, cwd);
-      }
-      return created;
-    }
-    // A surface ref reached a verb that only speaks `--workspace`. `notify`
-    // is the only one that does, and it wants the host anyway.
-    if (verb === "notify") {
-      const rewritten = [...args];
-      const index = rewritten.indexOf("--workspace");
-      if (index >= 0) rewritten[index + 1] = hostWorkspace;
-      return run(rewritten);
-    }
-    if (verb === "send" || verb === "send-key") {
-      const rewritten = [...args];
-      const index = rewritten.indexOf("--workspace");
-      if (index >= 0 && rewritten[index + 1]?.startsWith("surface:")) {
-        rewritten[index] = "--surface";
-      }
-      return run(rewritten);
-    }
-    return run(args);
-  };
-}
-
-/**
- * Put a freshly created tab into `cwd`, and do not return until it IS there.
- *
- * `cmux new-surface` returns as soon as the surface exists, which is BEFORE
- * the shell inside it has printed its first prompt. Typing into that gap does
- * not fail — the keystrokes interleave with the login banner, and on this
- * machine `cd "<path>"` typed a beat too early arrived as a truncated path
- * with an unterminated double quote. zsh then sat at `quote>` and consumed
- * everything sent afterwards as continuation text, including the whole grill
- * launch line, which therefore never ran and never reported that it had not.
- * A blind `sleep` is the same bug with a longer fuse, so this waits on the
- * shell's own output instead: a prompt, then `pwd` echoing the path back.
- *
- * This is the cost of the tab substitution, and it is worth stating plainly:
- * `cmux new-workspace --cwd` has no such race, because the workspace is BORN
- * in the directory and no keystroke is involved. Nothing in production runs
- * this function.
- */
-async function settleShell(run: CmuxRun, surface: string, cwd: string): Promise<boolean> {
-  const screen = async (): Promise<string> => {
-    const read = await run(["read-screen", "--surface", surface, "--lines", "40"]);
-    return read.exitCode === 0 ? read.stdout : "";
-  };
-  const type = async (line: string): Promise<void> => {
-    await run(["send", "--surface", surface, "--", line]);
-    await run(["send-key", "--surface", surface, "--", "enter"]);
-  };
-
-  // 1. A prompt, and a continuation prompt cleared if the shell is in one.
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    await Bun.sleep(500);
-    const text = await screen();
-    if (/\b(quote|dquote|cmdsubst)>/.test(text)) {
-      await run(["send-key", "--surface", surface, "--", "ctrl+c"]);
-      continue;
-    }
-    if (/[$%#]\s*$/m.test(text.trimEnd())) break;
-  }
-
-  // 2. `cd`, confirmed by the shell's own `pwd` rather than by assumption.
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    await type(`cd ${JSON.stringify(cwd)} && pwd`);
-    for (let poll = 0; poll < 20; poll += 1) {
-      await Bun.sleep(500);
-      const text = await screen();
-      if (/\b(quote|dquote|cmdsubst)>/.test(text)) {
-        await run(["send-key", "--surface", surface, "--", "ctrl+c"]);
-        break;
-      }
-      // The echoed command also contains the path, so the match must be a
-      // line that is ONLY the path: that line is `pwd`'s output.
-      if (text.split(/\r?\n/).some((line) => line.trim() === cwd)) return true;
-    }
-  }
-  return false;
-}
-
-async function newestSurface(run: CmuxRun, workspace: string): Promise<string | null> {
-  const listed = await run(["list-pane-surfaces", "--workspace", workspace]);
-  if (listed.exitCode !== 0) return null;
-  const refs = [...listed.stdout.matchAll(/(surface:[A-Za-z0-9-]+)/g)].map((m) => m[1]!);
-  return refs.length === 0 ? null : refs[refs.length - 1]!;
 }
 
 /** SHA-256 of a file's bytes, or of nothing when it does not exist. */
@@ -503,7 +381,9 @@ export async function runGrillLive(
     routedSkill: "",
     routedSource: "",
     rssSamples,
+    launchScreen: null,
     sessionId: null,
+    surface: null,
     skillLoadEvidence: [],
     skillLoadedByName: false,
     skills: [],
@@ -539,7 +419,7 @@ export async function runGrillLive(
   }
   const honchoApiKey = await configuredHonchoApiKey();
 
-  const cmux = createTabCmux(hostWorkspace);
+  const cmux = runCmux;
   let sandbox: Sandbox | null = null;
   let supervisor: WatcherSupervisor | null = null;
   let tabRef: string | null = null;
@@ -593,7 +473,10 @@ export async function runGrillLive(
         repo,
         topic: SCRIPTED_TOPIC,
       },
-      { cmux, env: sandbox.env },
+      // `createSandbox` strips every CMUX_* name; `openWorkerTab` needs this
+      // one to know which workspace it is allowed to open a tab in, and
+      // refuses outright without it (R6: Argus never creates a workspace).
+      { env: { ...sandbox.env, CMUX_WORKSPACE_ID: hostWorkspace } },
     );
     if (started.status !== "started") {
       report.gate = {
@@ -604,8 +487,15 @@ export async function runGrillLive(
     }
     report.sessionId = started.sessionId;
     report.workspace = started.workspace;
-    tabRef = started.workspace;
-    notes.push(`grill session ${started.sessionId} in cmux ${started.workspace}`);
+    // `GrillResult` does not carry the surface, but the registry row does —
+    // `deployWorker` wrote it as `surfaceRef`, and it is the handle every
+    // later send resolves against, so it is the right one to clean up too.
+    const registered = await loadRegistry(registryPaths(repo));
+    report.surface =
+      registered.sessions.findLast(({ sessionId }) => sessionId === started.sessionId)
+        ?.surface ?? null;
+    tabRef = report.surface;
+    notes.push(`grill session ${started.sessionId} in cmux tab ${report.surface} of ${started.workspace}`);
     if (started.degraded.length > 0) notes.push(...started.degraded.map((d) => `degraded: ${d}`));
 
     // ---- the five real watchers ----------------------------------------
@@ -655,16 +545,47 @@ export async function runGrillLive(
     }
     notes.push(`watcher fleet: ${rssSamples.at(-1)?.watchers ?? 0}/${EYE_NAMES.length} up`);
 
-    // ---- the stand-in answer, through the registry-logged send ---------
-    const askedBy = Date.now();
-    let answered = false;
-    while (Date.now() - askedBy < 3 * 60 * 1000) {
-      await Bun.sleep(5000);
+    // ---- did the session actually START? -------------------------------
+    //
+    // The transcript file is the only honest answer. `startGrill` returning
+    // `started` means the launch line was DELIVERED, which is a claim about
+    // cmux and not about `claude`: `cmux send` exits 0 whatever the shell
+    // then does with the keystrokes. A driver that took `started` at its word
+    // would go on to grade five empty stores as an eye problem.
+    let transcriptPath: string | null = null;
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      await Bun.sleep(2000);
       await sampleFleet();
-      const screen = await cmux(["read-screen", "--surface", started.workspace, "--lines", "80"]);
-      // A question mark on screen is the cheapest end-of-turn signal there is,
-      // and the topic asks for exactly one question.
-      if (screen.exitCode === 0 && /\?/.test(screen.stdout)) {
+      transcriptPath = await findTranscript(repo, started.sessionId);
+      if (transcriptPath !== null) break;
+    }
+    if (transcriptPath === null) {
+      notes.push(
+        "NO TRANSCRIPT after 120s — the launch line was delivered and the session " +
+          "never started; see the screen capture below",
+      );
+      if (report.surface !== null) {
+        const screen = await cmux([
+          "read-screen",
+          "--surface",
+          report.surface,
+          "--lines",
+          "40",
+        ]);
+        report.launchScreen = screen.stdout;
+      }
+    } else {
+      notes.push(`transcript appeared: ${transcriptPath}`);
+    }
+
+    // ---- the stand-in answer, through the registry-logged send ---------
+    if (transcriptPath !== null) {
+      const askedBy = Date.now();
+      let answered = false;
+      while (Date.now() - askedBy < 3 * 60 * 1000) {
+        await Bun.sleep(5000);
+        await sampleFleet();
+        if (!(await hasAssistantTurn(transcriptPath))) continue;
         const sent = await sendToWorker(
           { repo, sessionId: started.sessionId, text: SCRIPTED_ANSWER },
           { resolve: createCmuxResolve(cmux), send: createCmuxSend(cmux) },
@@ -673,8 +594,8 @@ export async function runGrillLive(
         answered = sent.status === "sent";
         break;
       }
+      if (!answered) notes.push("the session produced no assistant turn to answer");
     }
-    if (!answered) notes.push("the session never asked a question the driver could answer");
 
     // ---- let the eyes work ---------------------------------------------
     while (Date.now() - startedAt < budget) {
@@ -690,11 +611,7 @@ export async function runGrillLive(
 
     report.after = await snapshotStores(repo, honchoApiKey, report.honchoWorkspace);
 
-    const transcriptPath = await findTranscript(repo, started.sessionId);
-    if (transcriptPath === null) {
-      notes.push("no transcript file found for the session");
-    } else {
-      notes.push(`transcript ${transcriptPath}`);
+    if (transcriptPath !== null) {
       const loaded = await skillLoadedInTranscript(transcriptPath, report.routedSkill);
       report.skillLoadedByName = loaded.loaded;
       report.skillLoadEvidence = loaded.evidence;
@@ -716,8 +633,15 @@ export async function runGrillLive(
       }
     }
     if (tabRef !== null) {
+      // Production's own closer, which refuses an unresolved handle rather
+      // than closing Johan's focused tab — half of Directive 14.
       try {
-        await runCmux(["close-surface", "--surface", tabRef]);
+        const { closeWorkerTab } = await import("../deploy/tab.ts");
+        const closed = await closeWorkerTab(
+          { surface: tabRef, workspace: hostWorkspace },
+          runCmux,
+        );
+        notes.push(`grill tab ${tabRef}: ${JSON.stringify(closed)}`);
       } catch (error) {
         notes.push(`could not close the grill tab ${tabRef}: ${String(error)}`);
       }
@@ -738,6 +662,18 @@ export async function runGrillLive(
         notes.push(`sandbox teardown failed: ${String(error)}`);
       }
     }
+  }
+}
+
+/** Has `claude` written an assistant turn yet? The end-of-turn signal. */
+async function hasAssistantTurn(transcript: string): Promise<boolean> {
+  try {
+    const content = await Bun.file(transcript).text();
+    return content
+      .split("\n")
+      .some((line) => line.includes('"role":"assistant"') || line.includes('"role": "assistant"'));
+  } catch {
+    return false;
   }
 }
 
