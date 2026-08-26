@@ -503,6 +503,7 @@ function batchSpawn(
   sandbox: Sandbox,
   witnesses: WorkerWitness[],
   processes: WorkerProcess[],
+  ownedPids: Set<number>,
 ): WorkerSpawn {
   return async (request) => {
     const env: Record<string, string> = { ...request.env };
@@ -533,6 +534,7 @@ function batchSpawn(
     if (process.pid !== undefined) {
       witness.pid = process.pid;
       sandbox.scope.adopt(process.pid);
+      ownedPids.add(process.pid);
     }
     processes.push(process);
     void process.exited.then((exit) => {
@@ -588,6 +590,14 @@ export interface SearchInvocation {
 
 export interface BatchSearchReport {
   sandboxRoot: string;
+  /**
+   * The sandbox root with symlinks resolved. On macOS `mkdtemp` under
+   * `$TMPDIR` hands back `/var/folders/…` while every path git and the CLIs
+   * report back is `/private/var/folders/…`. #89's check — "the session ran in
+   * the deployment's own worktree, not in Johan's real repo" — must be made
+   * against this, or it fails on the symlink and looks like an escape.
+   */
+  sandboxRootResolved: string;
   repo: string;
   upExitCode: number;
   passes: BatchPass[];
@@ -625,16 +635,32 @@ async function sha256(path: string): Promise<string> {
   return hasher.digest("hex");
 }
 
-/** Every live `bun ... watch` / agent process this run owns, and its RSS. */
-async function sampleFleet(): Promise<{ processes: number; rssMb: number }> {
-  const ps = Bun.spawn(["ps", "-Ao", "rss=,command="], { stdout: "pipe", stderr: "ignore" });
+/**
+ * The resident set of the processes THIS RUN OWNS, and nothing else.
+ *
+ * The first cut of this function matched `ps -Ao command=` against
+ * `.local/share/claude/versions` and friends. On this machine that counts
+ * Johan's own live Claude sessions: the very first sample of the first live
+ * run reported 9 processes and 3.07 GB BEFORE the batch had started a single
+ * worker. A command-line grep cannot tell this harness's agents from the
+ * human's, so it is not used. `ownedPids` is populated in the same statements
+ * that discover a pid — the spawn wrapper for agents, the supervisor snapshot
+ * for watchers — and `ps -p` is asked about those pids only.
+ */
+async function sampleFleet(
+  ownedPids: ReadonlySet<number>,
+): Promise<{ processes: number; rssMb: number }> {
+  if (ownedPids.size === 0) return { processes: 0, rssMb: 0 };
+  const ps = Bun.spawn(
+    ["ps", "-o", "rss=", "-p", [...ownedPids].join(",")],
+    { stderr: "ignore", stdout: "pipe" },
+  );
   const text = await new Response(ps.stdout).text();
   await ps.exited;
   let rss = 0;
   let count = 0;
   for (const line of text.split("\n")) {
-    if (!/cli\.ts watch|\bcodex\b exec|\.local\/share\/claude\/versions/.test(line)) continue;
-    const match = /^\s*(\d+)\s/.exec(line);
+    const match = /^\s*(\d+)\s*$/.exec(line);
     if (match?.[1] === undefined) continue;
     rss += Number(match[1]);
     count += 1;
@@ -656,6 +682,7 @@ export async function runBatchAndSearch(
   const notes: string[] = options.notes ?? [];
   const sandbox = await createSandbox({ checkout: options.checkout });
   const repo = await realpath(sandbox.repo);
+  const sandboxRootResolved = await realpath(sandbox.root);
   const sessionTimeoutMs = options.sessionTimeoutMs ?? 600_000;
 
   // The one production touchpoint SPEC §13 permits: a COPY of auth.json into
@@ -679,19 +706,20 @@ export async function runBatchAndSearch(
 
   const witnesses: WorkerWitness[] = [];
   const processes: WorkerProcess[] = [];
-  const spawn = batchSpawn(sandbox, witnesses, processes);
+  const ownedPids = new Set<number>();
+  const spawn = batchSpawn(sandbox, witnesses, processes, ownedPids);
   const poller = startSlotPoller(dispatchSlotsDirectory(repo));
   const fleetSamples: Array<{ at: string; processes: number; rssMb: number }> = [];
   let peakFleetRssMb = 0;
   let sampling = true;
   const fleetLoop = (async (): Promise<void> => {
     while (sampling) {
-      const sample = await sampleFleet();
+      const sample = await sampleFleet(ownedPids);
       if (sample.processes > 0) {
         fleetSamples.push({ at: new Date().toISOString(), ...sample });
         if (sample.rssMb > peakFleetRssMb) peakFleetRssMb = sample.rssMb;
       }
-      await Bun.sleep(1000);
+      await Bun.sleep(400);
     }
   })();
 
@@ -810,7 +838,12 @@ export async function runBatchAndSearch(
     ];
 
     // ---- production's own watchers, over the batch ------------------------
-    const watcherStatus = await runRealWatchers(sandbox, repo, dispatched.length * 2);
+    const watcherStatus = await runRealWatchers(
+      sandbox,
+      repo,
+      dispatched.length * 2,
+      ownedPids,
+    );
 
     const archived = readArchive(join(repo, ".argus", "archive.db"));
     const userMdAfter = await Bun.file(userMdPath).text();
@@ -835,6 +868,7 @@ export async function runBatchAndSearch(
         relocatedTranscripts: relocated,
         repo,
         sandboxRoot: sandbox.root,
+      sandboxRootResolved: sandboxRootResolved,
         searches,
         timeline: await poller.stop(),
         upExitCode: sandbox.up.exitCode,
@@ -916,6 +950,7 @@ async function runRealWatchers(
   sandbox: Pick<Sandbox, "env" | "root" | "scope">,
   repo: string,
   expected: number,
+  ownedPids: Set<number>,
 ): Promise<SupervisorStatus | null> {
   const databasePath = join(repo, ".argus", "archive.db");
   const statusPath = join(sandbox.root, "state", "batch-search-status.json");
@@ -931,7 +966,9 @@ async function runRealWatchers(
     try {
       const status = (await Bun.file(statusPath).json()) as SupervisorStatus;
       for (const watcher of status.watchers) {
-        if (watcher.repo === repo) sandbox.scope.adopt(watcher.pid);
+        if (watcher.repo !== repo) continue;
+        sandbox.scope.adopt(watcher.pid);
+        ownedPids.add(watcher.pid);
       }
       return status;
     } catch {

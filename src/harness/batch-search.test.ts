@@ -188,7 +188,8 @@ export function assertBatch(report: BatchSearchReport): void {
   // #89: every session ran in the deployment's own worktree, never in a real
   // repo. Asserted against the process's own cwd, not against the plan.
   for (const worker of report.workers) {
-    expect(worker.cwd.startsWith(report.sandboxRoot)).toBe(true);
+    expect(worker.cwd.startsWith(report.sandboxRootResolved)).toBe(true);
+    expect(worker.cwd).toContain("-worktrees/ticket-");
   }
   expect(report.workers).toHaveLength(5);
 
