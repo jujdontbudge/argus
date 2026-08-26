@@ -77,6 +77,14 @@ export const CLAUDE_ROUTE: AgentRoute = {
     sessionId ?? "",
     "--model",
     model ?? "claude-opus-5",
+    // Johan's standing directive for a DEPLOYED claude worker: Opus, max
+    // effort. Named here rather than left to the CLI default because the
+    // default follows whatever the human last set interactively, and an AFK
+    // worker has no human to notice it running shallow. This is the deploy
+    // route only — the watcher brains (`src/eyes/config.ts`) stay on
+    // luna at low effort, which #54 settled and #88 does not touch.
+    "--effort",
+    "max",
     ...extraArgs,
     "-p",
     dispatchPrompt,
@@ -105,6 +113,12 @@ export const CODEX_ROUTE: AgentRoute = {
     "codex",
     "exec",
     "--json",
+    // SPEC §2: "Codex | ChatGPT subscription, `gpt-5.6-sol`, high reasoning
+    // effort." Before #88 nothing was routed here, so the effort was never
+    // spent one way or the other; codex is now the default implementer and
+    // the SPEC's stated effort has to be on the command line.
+    "-c",
+    "model_reasoning_effort=high",
     ...(model === undefined ? [] : ["-m", model]),
     ...extraArgs,
     dispatchPrompt,
