@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { liveHalfTitle } from "../../harness/live-gate";
 import { createCodexBrain } from "../brain";
 import { DEFAULT_EYES_CONFIG } from "../config";
+import { loadScaledMs } from "../test-budget";
 import {
   describeLiveIntegrationGate,
   LIVE_WATCHER_BRAINS_GATE,
@@ -21,6 +22,13 @@ import { CURATOR_OUTPUT_SCHEMA, parseCuratorVerdict } from "./schema";
  * (SPEC §1).
  * Sandboxed to a temp dir; the eye is not involved, only the brain seam, so
  * nothing here can move a file in any repo.
+ *
+ * AMENDED BY #91. The memory half of this test used to assert NOTHING: it
+ * planted facts and an orphan, spent the call, and then only checked two
+ * SKILL decisions. Worse, the planted facts were two spellings of one
+ * proposition, so merging them and merging everything were indistinguishable.
+ * The set now carries distinct controls, and the assertions below grade the
+ * judgment rather than the parse.
  */
 const liveGate = resolveWatcherBrainGate({
   codexInstalled: Bun.which("codex") !== null,
@@ -33,6 +41,9 @@ console.log(
     liveGate,
   ),
 );
+
+/** One real `codex exec` round trip; stretched under load, per retro's note. */
+const BUDGET_MS = loadScaledMs(240_000, 600_000);
 
 const PROMPT = buildCuratorPrompt({
   dryRun: false,
@@ -61,17 +72,40 @@ const PROMPT = buildCuratorPrompt({
     },
   ],
   facts: [
+    // The pair that MUST merge: two spellings of one proposition.
     { slug: "metro-port", title: "Metro runs on 8082", idleDays: 5, indexed: true },
     { slug: "metro-8082", title: "Metro listens on port 8082", idleDays: 6, indexed: true },
+    // The controls that MUST survive: distinct propositions about different
+    // subsystems, sharing no subject with each other or with the pair. #54
+    // measured this model class consolidating real content away; without a
+    // control, "merge everything" and "merge the duplicate" look identical.
+    {
+      slug: "archive-fts5",
+      title: "The archive is a SQLite FTS5 index",
+      idleDays: 12,
+      indexed: true,
+    },
+    {
+      slug: "launchd-login",
+      title: "launchd starts the eyes on login",
+      idleDays: 9,
+      indexed: true,
+    },
   ],
   orphans: [{ kind: "index-without-file", slug: "ghost" }],
 });
+
+/** The duplicate pair, in whichever direction the brain chose to merge it. */
+const DUPLICATE_PAIR = ["metro-8082", "metro-port"].join("|");
+
+/** Facts that are about different things and must not be touched. */
+const DISTINCT_FACTS = ["archive-fts5", "launchd-login"];
 
 describe.skipIf(liveGate.status !== "run")(
   liveHalfTitle("live luna brain (curator integration)", liveGate),
   () => {
   test(
-    "the real brain returns a schema-conforming curator verdict the eye can act on",
+    "the real brain merges the duplicate fact and leaves the distinct ones whole",
     async () => {
       const sandboxRepo = await mkdtemp(join(tmpdir(), "argus-live-curator-"));
       try {
@@ -87,6 +121,9 @@ describe.skipIf(liveGate.status !== "run")(
 
         expect(outcome.ok).toBe(true);
         if (!outcome.ok) return;
+        // The raw verdict is the evidence artifact (#91): what the brain
+        // actually said, printed beside the assertions it then had to satisfy.
+        console.log(`argus: live curator verdict\n${outcome.text}`);
         const verdict = parseCuratorVerdict(outcome.text);
         expect(verdict).not.toBeNull();
         expect(verdict!.summary.length).toBeGreaterThan(0);
@@ -99,11 +136,49 @@ describe.skipIf(liveGate.status !== "run")(
         expect(
           verdict!.consolidations.map(({ from }) => from),
         ).not.toContain("release-runbook");
+
+        // #91 — THE MEMORY HALF, which asserted nothing until now. SPEC.md:276
+        // promises this pass compacts the memory files, and the planted set is
+        // built so that both wrong answers are visible: a brain that merges
+        // nothing fails the first assertion, and one that merges everything —
+        // the #54 failure — fails the second.
+        const merges = verdict!.memory.merges;
+        const mergedSlugs = merges.flatMap(({ from, into }) => [from, into]);
+        const prunedSlugs = verdict!.memory.prunings.map(({ slug }) => slug);
+
+        // 1. The genuine duplicate is merged. WHICH of the two keeps the
+        //    content is a real choice between two right answers, so the
+        //    assertion is on the unordered pair; that both slugs appear
+        //    together in one merge is not.
+        expect(
+          merges.map(({ from, into }) => [from, into].sort().join("|")),
+        ).toContain(DUPLICATE_PAIR);
+
+        // 2. The distinct facts survive whole. Over-merging is the dangerous
+        //    answer: it destroys content, and it is what #54 measured.
+        for (const slug of DISTINCT_FACTS) {
+          expect(mergedSlugs).not.toContain(slug);
+          expect(prunedSlugs).not.toContain(slug);
+        }
+
+        // 3. The orphan. NOT asserted as restraint, and the first live run of
+        //    this test is why: luna returned
+        //    `prunings: [{slug: "ghost", reason: "the index references a fact
+        //    file that does not exist"}]`, which is a defensible reading of an
+        //    ask that says "report on the orphans" and hands back a schema
+        //    with no orphan field — `prunings` is the nearest thing it has.
+        //    The eye rejects that name as `unknown fact: ghost` and repairs
+        //    the index itself in phase 6, so the answer costs nothing;
+        //    curator.test.ts owns both halves of that mechanically. What IS
+        //    unambiguous is that a REAL fact must not be dragged into the
+        //    orphan: a merge either way round would be a decision about live
+        //    content taken on the strength of a dangling index line.
+        expect(mergedSlugs).not.toContain("ghost");
       } finally {
         await rm(sandboxRepo, { force: true, recursive: true });
       }
     },
-    240_000,
+    BUDGET_MS,
   );
   },
 );
