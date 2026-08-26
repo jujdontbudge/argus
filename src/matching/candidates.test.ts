@@ -428,6 +428,41 @@ describe("syntheticEnvelopeTag", () => {
     }
   });
 
+  // #78. What a live `codex exec` drive of SPEC §13 slot 4 actually found in
+  // the sandbox rollout: the catalogue no longer arrives alone. Two complete
+  // envelopes, one user-role item. Under the single-envelope rule the whole
+  // thing read as a prompt nobody logged — a Johan takeover, with a plugin
+  // catalogue landing in USER.md on every Codex session Argus watches.
+  test("a CHAIN of envelopes is one injection, and reports the first tag", () => {
+    expect(
+      syntheticEnvelopeTag(
+        "<recommended_plugins>\nHere is a list of plugins that are available but not installed.\n" +
+          "- some-plugin: does a thing\n</recommended_plugins>\n" +
+          "<environment_context>\n  <cwd>/repo</cwd>\n</environment_context>",
+      ),
+    ).toBe("recommended_plugins");
+    // Three, and a repeated tag, so the end of one envelope cannot be found by
+    // reaching for the last closing tag in the text.
+    expect(
+      syntheticEnvelopeTag(
+        "<a>\nfirst\n</a>\n<b>\nsecond\n</b>\n<a>\nthird\n</a>",
+      ),
+    ).toBe("a");
+  });
+
+  test("a chain with anything left over is NOT an injection", () => {
+    // The widening must not become "starts with an envelope". Johan appending
+    // a sentence to something he pasted is still Johan.
+    expect(
+      syntheticEnvelopeTag(
+        "<recommended_plugins>\nlist\n</recommended_plugins>\nwhy is this here?",
+      ),
+    ).toBeNull();
+    expect(
+      syntheticEnvelopeTag("<a>\nfirst\n</a>\n<b>\nunclosed second"),
+    ).toBeNull();
+  });
+
   test("an envelope must close with its OWN tag", () => {
     expect(syntheticEnvelopeTag("<outer>\nbody\n</inner>")).toBeNull();
     expect(syntheticEnvelopeTag("<outer attr=\"1\">\nbody\n</outer>")).toBeNull();

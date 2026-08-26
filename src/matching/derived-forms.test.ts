@@ -36,16 +36,22 @@ describe("derivedForms", () => {
     ]);
   });
 
-  // Observed landing for `!echo hermes-bang-probe`: the `!` is dropped and the
-  // command lands as `<bash-input>…</bash-input>` (findings §2.3, §7).
-  test("bang: only the bash-input form", () => {
+  // Two observed landings, one per door. INTERACTIVE (findings §2.3, §7): the
+  // `!` is dropped and the command lands as `<bash-input>…</bash-input>`.
+  // HEADLESS (#78's live drive, `claude -p --resume` 2.1.246 and `codex exec
+  // resume`): bash mode is a TUI feature, there is no TUI, and the text lands
+  // verbatim. Deriving only the first left a Hermes-logged bang send matching
+  // nothing through the second door — an unmatched candidate, which is a Johan
+  // takeover, which is the §13.4 breach.
+  test("bang: the bash-input form AND the literal text", () => {
     expect(derivedForms("!echo hermes-bang-probe", "bang")).toEqual([
       "<bash-input>echo hermes-bang-probe</bash-input>",
+      "!echo hermes-bang-probe",
     ]);
   });
 
   test("kind defaults to deriveKind(text)", () => {
     expect(derivedForms("plain message")).toEqual(["plain message"]);
-    expect(derivedForms("!ls")).toEqual(["<bash-input>ls</bash-input>"]);
+    expect(derivedForms("!ls")).toEqual(["<bash-input>ls</bash-input>", "!ls"]);
   });
 });

@@ -115,8 +115,23 @@ const CODEX_SYNTHETIC_PREFIXES = [
  * injects context into a rollout as a user-role item; it is not what a person
  * types at a prompt.
  *
- * Deliberately narrow, because a false positive here makes Argus deaf to Johan
- * (§13.4 from the other direction):
+ * SINCE #78, a CHAIN of such envelopes counts too, and the first tag is
+ * returned. That is not a loosening for its own sake — it is the same finding
+ * as #36's, one CLI version later. A live `codex exec` drive of SPEC §13 slot
+ * 4 found the plugin catalogue no longer arriving alone: codex-cli now packs
+ * `<recommended_plugins>…</recommended_plugins>` and
+ * `<environment_context>…</environment_context>` into ONE user-role item. The
+ * single-envelope rule opened on the first tag, looked for it at the end,
+ * found the other one, and returned null — so the whole injection read as a
+ * prompt nobody logged, which is a Johan takeover, which puts a plugin
+ * catalogue in USER.md and flips `johan_touched` on every Codex session Argus
+ * watches. Exactly the failure the comment above the tag list describes,
+ * reached by a shape that list could not see.
+ *
+ * Still deliberately narrow, because a false positive here makes Argus deaf to
+ * Johan (§13.4 from the other direction). EVERY part of the text must be a
+ * complete envelope opening with a bare lowercase tag on its own line, with
+ * nothing between the parts but whitespace — prose does not decompose that way:
  * - `<Button onClick={x} />` — uppercase, attributes, unclosed: not an envelope.
  * - `<bash-input>echo hi</bash-input>` — a REAL candidate (§2.3), and inline,
  *   so the one-line form is excluded on purpose.
@@ -125,14 +140,40 @@ const CODEX_SYNTHETIC_PREFIXES = [
  */
 const ENVELOPE_OPEN = /^<([a-z][a-z0-9_-]*)>$/;
 
-export function syntheticEnvelopeTag(text: string): string | null {
-  const trimmed = text.trim();
-  const breakAt = trimmed.indexOf("\n");
+/** The opening tag of the envelope `text` starts with, or null. */
+function openingTag(text: string): string | null {
+  const breakAt = text.indexOf("\n");
   if (breakAt === -1) return null;
-  const open = ENVELOPE_OPEN.exec(trimmed.slice(0, breakAt).trimEnd());
-  if (!open) return null;
-  const tag = open[1]!;
-  return trimmed.endsWith(`</${tag}>`) ? tag : null;
+  const open = ENVELOPE_OPEN.exec(text.slice(0, breakAt).trimEnd());
+  return open ? open[1]! : null;
+}
+
+export function syntheticEnvelopeTag(text: string): string | null {
+  const first = openingTag(text.trim());
+  return first !== null && consumesEntirely(text.trim()) ? first : null;
+}
+
+/**
+ * Does the text decompose, with nothing left over, into complete envelopes?
+ *
+ * A closing tag is only accepted as an envelope's end if what FOLLOWS it also
+ * decomposes — which is what keeps a same-named nested tag from ending its
+ * parent early, and what keeps trailing prose from being ignored.
+ */
+function consumesEntirely(text: string): boolean {
+  const rest = text.trim();
+  if (rest.length === 0) return true;
+  const tag = openingTag(rest);
+  if (tag === null) return false;
+  const close = `</${tag}>`;
+  for (
+    let at = rest.indexOf(close);
+    at !== -1;
+    at = rest.indexOf(close, at + close.length)
+  ) {
+    if (consumesEntirely(rest.slice(at + close.length))) return true;
+  }
+  return false;
 }
 
 export function codexCandidateText(record: unknown): string | null {

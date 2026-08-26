@@ -48,7 +48,10 @@ import { registerDigestScenarios } from "../eyes/digest/scenarios.ts";
 import { registerHonchoScenarios } from "../eyes/honcho/scenarios.ts";
 import { registerRetroScenarios } from "../eyes/retro/scenarios.ts";
 import { registerReviewerScenarios } from "../eyes/reviewer/scenarios.ts";
-import { registerProvenanceScenarios } from "../provenance/scenarios.ts";
+import {
+  registerProvenanceScenarios,
+  type ProvenanceScenarioDriver,
+} from "../provenance/scenarios.ts";
 import { registerCodexScenarios } from "../tailing/codex-scenarios.ts";
 import { registerHermesScenarios } from "../tailing/hermes-scenarios.ts";
 import { registerWatchScenarios } from "../watch/scenarios.ts";
@@ -77,18 +80,41 @@ export interface ScenarioBrainOverrides {
 
 export interface AllScenarioOptions {
   brains?: ScenarioBrainOverrides;
+  /**
+   * ADDITIVE #78. `ProvenanceScenarioDriver` is #25's seam — "how messages got
+   * into the session" — and the registrars below that take one have always
+   * defaulted to the fixture. Threading it through here is what lets
+   * `ARGUS_LIVE_SLOTS=1` compose the SAME ten slots with a live driver
+   * instead, so a slot's `agent` double is retired by the slot's own body
+   * running against a real CLI rather than by a second copy of the slot.
+   * Omitted, every caller gets exactly what it got before: the fixture.
+   */
+  driver?: ProvenanceScenarioDriver;
 }
 
-/** Compose every ticket's §13 halves onto an existing registry. */
+/**
+ * Compose every ticket's §13 halves onto an existing registry.
+ *
+ * The two opt-in gates thread through the SAME composition rather than each
+ * getting a copy of it: #77 replaces the watcher `brain` a slot judges with,
+ * #78 replaces the `driver` its messages arrive through. Both default to the
+ * fixture, so a default `bun test` composes exactly what it always did.
+ *
+ * `registerEventScenarios` deliberately keeps the fixture driver: it registers
+ * slot 7 only, which #78 established is NOT live-drivable — it chains a half
+ * that scripts what the ASSISTANT says. Handing it a live driver would make it
+ * throw rather than skip.
+ */
 export function registerAllScenarios(
   registry: ScenarioRegistry,
   options: AllScenarioOptions = {},
 ): void {
   const brains = options.brains ?? {};
+  const { driver } = options;
   // Overwriters first, innermost half outward: #25 → #30 → #31 → #34.
-  registerProvenanceScenarios(registry);
-  registerReviewerScenarios(registry, undefined, brains.reviewer);
-  registerDigestScenarios(registry, undefined, {
+  registerProvenanceScenarios(registry, driver);
+  registerReviewerScenarios(registry, driver, brains.reviewer);
+  registerDigestScenarios(registry, driver, {
     ...(brains.digest !== undefined && { digest: brains.digest }),
     ...(brains.reviewer !== undefined && { reviewer: brains.reviewer }),
   });

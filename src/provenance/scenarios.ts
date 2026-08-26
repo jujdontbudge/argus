@@ -42,6 +42,20 @@ export interface DeployOptions {
 
 /** One deployed (or observed) session the driver can act into. */
 export interface ScenarioSessionHandle {
+  /**
+   * The user-role items the AGENT CLI injected into its own rollout before
+   * the dispatch landed — what the CLI actually did, not what the caller
+   * asked for.
+   *
+   * #78. It used to be enough for the scenario to compare against the
+   * constant it had just passed in as `preamble`, because the only driver was
+   * the fixture and the constant was the whole world. A live driver cannot
+   * inject anything — the CLI injects what it injects — so the scenario now
+   * asserts over what came back. That also makes the requirement UNSATISFIABLE
+   * by a CLI that injects nothing, which is the point: a live leg with an
+   * empty preamble fails loudly instead of passing vacuously.
+   */
+  readonly preamble: readonly string[];
   readonly sessionId: string;
   /** Hermes logs a follow-up in sends.jsonl, then it lands in the transcript. */
   hermesSend(text: string): Promise<void>;
@@ -157,6 +171,7 @@ export function createFixtureProvenanceDriver(): ProvenanceScenarioDriver {
       };
 
       return {
+        preamble: options.preamble ?? [],
         sessionId,
         hermesSend: (text) => loggedSend(text, true),
         hermesSendLost: (text) => loggedSend(text, false),
@@ -258,7 +273,7 @@ export function takeoverScenario(
       "the takeover record itself carries johan_touched",
     );
     assert(
-      classifier.sessionState("sess-takeover")?.johanTouched === true,
+      classifier.sessionState(session.sessionId)?.johanTouched === true,
       "johan_touched is set on the session after the takeover",
     );
     assert(
@@ -268,6 +283,26 @@ export function takeoverScenario(
   };
 }
 
+/**
+ * The two routes by which an agent CLI's own content is taken off Johan.
+ *
+ * `synthetic-preamble` is #42's shape-plus-position filter, and it is what the
+ * fixture's hand-authored envelope takes. #78's live `codex exec` drive found
+ * the real `<recommended_plugins>` injection taking the other one: the codex
+ * SOURCE already refuses it candidacy, so the classifier never reaches the
+ * shape filter and records `non-candidate` instead.
+ *
+ * Both are refusals, and the requirement SPEC §13.4 states is "classified
+ * Hermes-authored ... USER.md untouched" — that the CLI's own words are never
+ * Johan's. Pinning one route would make the assertion about the mechanism
+ * rather than the property, and would have failed a live run for taking the
+ * SAFER of the two paths. What is NOT relaxed is the author: `system`, in both.
+ */
+const MACHINE_CONTENT_VIA: ReadonlySet<string> = new Set([
+  "non-candidate",
+  "synthetic-preamble",
+]);
+
 /** §13 scenario 4 — the poisoning test (slot 4). */
 export function poisoningScenario(
   driver: ProvenanceScenarioDriver = createFixtureProvenanceDriver(),
@@ -276,7 +311,14 @@ export function poisoningScenario(
     const session = await driver.deploy({
       sandbox,
       sessionId: "sess-poison",
-      agent: "claude",
+      // #78: CODEX, deliberately. This slot's preamble requirement comes from
+      // #36 F3, which was a codex-cli finding, and codex-cli still injects a
+      // user-role `<recommended_plugins>` block ahead of the dispatch on every
+      // `exec`. Naming codex here is what lets the live driver satisfy that
+      // requirement with the CLI'S OWN injection instead of the constant
+      // below. Slot 5 takes claude in exchange, so both CLIs are still
+      // represented in the fixture suite.
+      agent: "codex",
       ticket: "42",
       dispatchPrompt: DISPATCH_PROMPT,
       preamble: [AGENT_PREAMBLE],
@@ -286,14 +328,26 @@ export function poisoningScenario(
     await session.hermesSend("!git log --oneline -3");
 
     const { classifier, records } = await classifyAll(driver, sandbox);
+    // The messages someone SENT — everything user-role that is not the CLI
+    // talking to itself. #78 widened the exclusion to both machine-content
+    // routes for the reason `MACHINE_CONTENT_VIA` gives; the count below is
+    // still exactly four, and still every one of them Hermes'.
     const userSide = records.filter(
-      ({ event, via }) => event.role === "user" && via !== "synthetic-preamble",
+      ({ event, via }) => event.role === "user" && !MACHINE_CONTENT_VIA.has(via),
     );
 
+    // #78 — two assertions where there was one, and the first is what stops
+    // the second going vacuous the moment a real CLI is on the other end.
     assert(
-      records.some(
-        ({ text, author, via }) =>
-          text === AGENT_PREAMBLE && author === "system" && via === "synthetic-preamble",
+      session.preamble.length > 0,
+      "the agent CLI injected user-role items ahead of the dispatch",
+    );
+    assert(
+      session.preamble.every((text) =>
+        records.some(
+          ({ text: seen, author, via }) =>
+            seen === text && author === "system" && MACHINE_CONTENT_VIA.has(via),
+        ),
       ),
       "the agent CLI's own injected preamble classifies system, never Johan",
     );
@@ -307,7 +361,7 @@ export function poisoningScenario(
       "no user-side message classified Johan — USER.md stays untouched",
     );
     assert(
-      classifier.sessionState("sess-poison")?.johanTouched === false,
+      classifier.sessionState(session.sessionId)?.johanTouched === false,
       "the session is not marked johan_touched by Hermes' own nudges",
     );
   };
@@ -321,7 +375,8 @@ export function unloggedSendScenario(
     const session = await driver.deploy({
       sandbox,
       sessionId: "sess-fault",
-      agent: "codex",
+      // #78: CLAUDE, in the swap slot 4 made — see the comment there.
+      agent: "claude",
       dispatchPrompt: DISPATCH_PROMPT,
     });
     await session.unloggedSend("sneaky nudge that bypassed the registry");

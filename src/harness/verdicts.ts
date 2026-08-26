@@ -39,6 +39,18 @@
  *     with a shortfall grades `partial` and prints what it still fails to
  *     prove.
  *
+ * AMENDED BY #78, which moved a DIFFERENT axis. LIVE is still what it was —
+ * zero doubles plus recorded evidence — and no slot reaches it here. What #78
+ * added is `retiredByLiveDrive`: the doubles a live drive of THIS slot, run
+ * through `live-slots.ts` behind `ARGUS_LIVE_SLOTS=1`, actually replaces.
+ * Slots 4 and 5 name `agent`, and on a report carrying live evidence it comes
+ * off — a real codex or Claude session took the dispatch and every nudge as
+ * its own turns and wrote the transcript the slot classifies. They stay
+ * STRUCTURAL, because `cmux` and `hermes` survive: the registry rows are still
+ * appended by the harness and no `cmux send` carried anything. The retirement
+ * is evidence-gated for the same reason LIVE is — editing a manifest changes
+ * nothing, so a fixture run of the slot keeps every double it has always had.
+ *
  * WHAT THIS MODULE DELIBERATELY DOES NOT DO. It does not fail the suite for
  * an `uncovered` or `partial` requirement. Those are honest statements of the
  * gap, not regressions, and failing on them would create exactly the pressure
@@ -98,6 +110,15 @@ export interface SpecRequirement {
   /** Stable SPEC-addressed id. Core slots use `13.<slot>.<slug>`. */
   id: string;
   /**
+   * The shortfall that applies when the slot's transcripts came from a LIVE
+   * agent instead of the fixture driver (#78). Read only when the report
+   * carries live evidence, so it can never soften the default grade.
+   *
+   * Absent means the live drive changes nothing about this requirement, and
+   * `shortfall` stands either way.
+   */
+  liveShortfall?: string;
+  /**
    * What the covering assertions still fail to prove. `""` when nothing does
    * — which, across all ten slots, is true of exactly four requirements.
    */
@@ -109,6 +130,17 @@ export interface SpecRequirement {
 export interface ScenarioManifest {
   doubles: readonly Double[];
   number: CoreScenarioNumber;
+  /**
+   * Doubles a LIVE drive of this exact slot retires (#78).
+   *
+   * This is a claim about what a live run WOULD replace, and on its own it
+   * changes nothing: `gradeScenario` subtracts these only from a report that
+   * carries live evidence, and `recordLiveEvidence` is reachable only from
+   * code that spawned an agent. So the same property #63 built for LIVE holds
+   * one level down — a double cannot be retired by editing this file, and the
+   * default fixture run of the slot keeps every double it has always had.
+   */
+  retiredByLiveDrive?: readonly Double[];
   requirements: readonly SpecRequirement[];
   title: string;
 }
@@ -167,6 +199,22 @@ export function verdictFor(
   return doubles.length === 0 && liveEvidence.length > 0 ? "LIVE" : "STRUCTURAL";
 }
 
+/**
+ * The doubles a report actually ran on (#78).
+ *
+ * EVIDENCE, NOT DECLARATION — the same rule as `verdictFor`. With no live
+ * evidence the manifest's own list stands untouched, which is what every
+ * default `bun test` run of the core ten gets.
+ */
+export function effectiveDoubles(
+  manifest: AnyScenarioManifest,
+  liveEvidence: readonly string[],
+): readonly Double[] {
+  if (liveEvidence.length === 0) return manifest.doubles;
+  const retired = new Set(manifest.retiredByLiveDrive ?? []);
+  return manifest.doubles.filter((double) => !retired.has(double));
+}
+
 export function gradeScenario(
   manifest: AnyScenarioManifest,
   report: Pick<ScenarioReport, "assertions" | "liveEvidence" | "status">,
@@ -176,19 +224,26 @@ export function gradeScenario(
       .filter(({ passed: ok }) => ok)
       .map(({ description }) => description),
   );
-  const verdict = verdictFor(manifest.doubles, report.liveEvidence);
+  const live = report.liveEvidence.length > 0;
+  const doubles = effectiveDoubles(manifest, report.liveEvidence);
+  const verdict = verdictFor(doubles, report.liveEvidence);
   const requirements = manifest.requirements.map((requirement): RequirementGrade => {
     const absent = requirement.assertions.filter((name) => !passed.has(name));
+    // The shortfall the RUN earns, not the one the manifest lists first.
+    const shortfall =
+      live && requirement.liveShortfall !== undefined
+        ? requirement.liveShortfall
+        : requirement.shortfall;
+    const graded = { ...requirement, absent, shortfall };
     if (requirement.assertions.length === 0) {
-      return { ...requirement, absent, coverage: "uncovered" };
+      return { ...graded, coverage: "uncovered" };
     }
-    if (absent.length > 0) return { ...requirement, absent, coverage: "missing" };
-    if (requirement.shortfall !== "") {
-      return { ...requirement, absent, coverage: "partial" };
+    if (absent.length > 0) return { ...graded, coverage: "missing" };
+    if (shortfall !== "") {
+      return { ...graded, coverage: "partial" };
     }
     return {
-      ...requirement,
-      absent,
+      ...graded,
       coverage: verdict === "LIVE" ? "live" : "covered",
     };
   });
@@ -204,7 +259,7 @@ export function gradeScenario(
 
   return {
     counts,
-    doubles: manifest.doubles,
+    doubles,
     liveEvidence: report.liveEvidence,
     number: manifest.number,
     requirements,
@@ -390,11 +445,22 @@ export const SPEC_MANIFESTS: Readonly<
   4: {
     doubles: ["agent", "cmux", "hermes"],
     number: 4,
+    // #78. Driven live (`ARGUS_LIVE_SLOTS=1`), THIS slot's own body runs with
+    // a real codex-cli session on the other end: the dispatch and all three
+    // Hermes nudges are that session's own turns, the transcript is the one
+    // the CLI wrote, and the preamble the slot grades is the CLI's own
+    // `<recommended_plugins>` injection rather than a constant the scenario
+    // handed itself. `cmux` and `hermes` stay, and so does STRUCTURAL: the
+    // registry rows are still appended by the harness and no `cmux send`
+    // carried anything. Retiring `agent` is what the evidence buys — no more.
+    retiredByLiveDrive: ["agent"],
     title: "The poisoning test",
     requirements: [
       {
         assertions: ["all four sent messages landed and were classified"],
         id: "13.4.hermes-sends",
+        liveShortfall:
+          "the SESSION is real — a live codex-cli session took the dispatch and all three nudges as its own turns and wrote its own transcript — but no Hermes process ran and no `cmux send` was issued: the registry rows are still appended by the harness, and the nudges reach the session through `codex exec resume` rather than through a send into a deployed tab",
         shortfall:
           "no Hermes process ran and no `cmux send` was issued — the nudges are rows appended to the registry and the transcript by the same fixture driver",
         spec: "Hermes sends registry-logged nudges into a session",
@@ -406,6 +472,11 @@ export const SPEC_MANIFESTS: Readonly<
           "the agent CLI's own injected preamble classifies system, never Johan",
         ],
         id: "13.4.hermes-authored",
+        // The shortfall #78 closed, and it closed by the slot doing more. The
+        // words the classifier grades are a live codex-cli session's own
+        // transcript rows, and the preamble half is the CLI's own injection —
+        // the thing #36 F3 found in the wild — not `AGENT_PREAMBLE`.
+        liveShortfall: "",
         shortfall:
           "asserted on fixture transcripts. The same invariant IS asserted on real Opus and Codex transcripts, but only in the separately gated live drives (`subscription-drive.test.ts`, `live-agents.test.ts`), never in this slot",
         spec: "classified Hermes-authored",
@@ -416,6 +487,8 @@ export const SPEC_MANIFESTS: Readonly<
           "the session is not marked johan_touched by Hermes' own nudges",
         ],
         id: "13.4.user-md-untouched",
+        liveShortfall:
+          "the traffic is live, and that is all the live drive changed here: USER.md is still not read back in this slot, so untouched-ness is still INFERRED from nothing classifying Johan. #74's FULL journey is the only place the bytes are compared",
         shortfall:
           "USER.md is not read back here; untouched-ness is INFERRED from nothing classifying Johan rather than observed on the file. " +
           "#74: the opt-in FULL real-driver journey renders this LIVE behind `ARGUS_LIVE_FULL_JOURNEY=1` — see `FULL_JOURNEY_MANIFESTS`. This slot's own verdict is unchanged, because this slot still runs on doubles",
@@ -426,11 +499,18 @@ export const SPEC_MANIFESTS: Readonly<
   5: {
     doubles: ["agent", "cmux", "hermes"],
     number: 5,
+    // #78, the other half of the swap slot 4 describes: driven live this slot
+    // runs on a real CLAUDE session, so both CLIs are exercised. The unlogged
+    // landing is a real prompt in a real transcript that the registry has no
+    // row for — the misattribution is observed rather than staged.
+    retiredByLiveDrive: ["agent"],
     title: "Fault injection: the unlogged send",
     requirements: [
       {
         assertions: ["the unlogged landing is not silently absorbed as Hermes"],
         id: "13.5.unlogged-send",
+        liveShortfall:
+          "the landing is real — an unlogged prompt in a live Claude session's own transcript, which the registry has no row for — but the DOOR is still a double: the harness resumes the session with `claude -p --resume` instead of issuing an unlogged `cmux send` into a deployed tab",
         shortfall:
           "the send is synthesized; no real unlogged `cmux send` was issued into a real session",
         spec: "deliberately send into a session without registry logging",
