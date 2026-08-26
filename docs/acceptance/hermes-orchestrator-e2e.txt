@@ -1,0 +1,25 @@
+==============================================================================
+HERMES-DRIVEN ARGUS BATCH — ticket #82 (IN PROGRESS)
+==============================================================================
+Run date        2026-08-26
+checkout        /Users/johansardar/argus-worktrees/hermes-e2e (build/hermes-e2e)
+sandbox root    /private/tmp/argus-t82-LFSpxD
+isolation       scratch HOME, HERMES_HOME, CODEX_HOME, CLAUDE_CONFIG_DIR;
+                env -i so no ambient credential or PATH leaks in
+credentials     ~/.hermes/auth.json copied into scratch HERMES_HOME (permitted
+                by the ticket, same touchpoint as #78 for CODEX_HOME)
+
+  real ~/.hermes/auth.json BEFORE  da742362b9e49833760e31672d012dd9e894389617a965074a3244eb2b349220
+  real ~/.codex/auth.json  BEFORE  ab81a7c70ad1ea4db247eec89ae1ff3568e50af3014dc694f689119408c66315
+
+------------------------------------------------------------------------------
+0. Hermes is alive headless in the scratch home
+------------------------------------------------------------------------------
+$ cd $SANDBOX/repo
+$ env -i PATH=... HOME=$R/home HERMES_HOME=$R/home/.hermes \
+      CODEX_HOME=$R/home/.codex CLAUDE_CONFIG_DIR=$R/home/.claude TERM=dumb \
+      hermes -z 'Reply with exactly the word: ALIVE'
+  out| ALIVE
+
+  hermes 0.16.0, provider openai-codex (subscription; no API key in env).
+  Real credential re-checksummed immediately after this call: UNCHANGED.
