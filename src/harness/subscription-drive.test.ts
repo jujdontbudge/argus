@@ -119,14 +119,11 @@ test.skipIf(gate.claude.status !== "run")(
       expect(metas.map(({ cwd }) => cwd)).toContain(realWorktree);
       expect(metas.every((meta) => meta.cwd !== undefined)).toBe(true);
 
-      // The OTHER half of §7.3/#22 is missing, and the drive pins that rather
-      // than implying coverage: `repo` — the worktree-to-parent-repo mapping
-      // the Codex source resolves in `repositoryFor` — is never resolved by
-      // the Claude source at all. Not a wrong answer, a feature this source
-      // has never had; visible only now that a real session in a real
-      // worktree has been read. It needs its own ticket and its own scenario
-      // grading, so here it is asserted as the KNOWN gap it is.
-      expect(metas.every((meta) => meta.repo === undefined)).toBe(true);
+      // Ticket #51 fills the OTHER half of §7.3/#22: the live transcript's
+      // genuine linked-worktree cwd must resolve to the parent sandbox repo.
+      // Keep this at the live seam where #49 first exposed the missing feature
+      // so fixture-only coverage cannot make the mapping appear complete.
+      expect(metas.map(({ repo }) => repo)).toContain(await realpath(sandbox.repo));
 
       const messages = events.filter(
         (event): event is MessageEvent => event.type === "message",

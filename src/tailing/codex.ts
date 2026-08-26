@@ -58,7 +58,7 @@ function pathExists(path: string): boolean {
   }
 }
 
-function repositoryFor(cwd: string): string | undefined {
+export function repositoryFor(cwd: string): string | undefined {
   let directory = canonicalPath(cwd);
   try {
     if (!lstatSync(directory).isDirectory()) directory = dirname(directory);
