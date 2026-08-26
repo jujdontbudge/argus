@@ -53,7 +53,7 @@ const LIFECYCLE_STATUS = {
   "session-dead": "dead",
 } as const;
 
-interface PendingEntry {
+export interface PendingEntry {
   record: ProvenanceRecord;
   /** Wall-clock arrival, the coalescer's time base. */
   ingestedAt: number;
@@ -94,7 +94,12 @@ export interface DigestEyeOptions {
   signal?: AbortSignal;
 }
 
-function buildPrompt(entries: PendingEntry[]): string {
+/**
+ * The production digest ask. Exported (#91) so the live brain test sends the
+ * SAME words the eye sends, rather than a hand-copied paraphrase that can
+ * drift away from what is actually shipped.
+ */
+export function buildDigestPrompt(entries: PendingEntry[]): string {
   const blocks = entries.map(
     ({ record, root }) =>
       `[session=${root} author=${record.author} role=${record.event.role} ` +
@@ -334,7 +339,7 @@ export class DigestEye {
     const release = await this.options.cap.acquire();
     try {
       const outcome = await this.options.brain.evaluate({
-        prompt: buildPrompt(batch),
+        prompt: buildDigestPrompt(batch),
         schema: DIGEST_OUTPUT_SCHEMA,
         cwd: this.options.repo,
       });
