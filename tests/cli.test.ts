@@ -47,11 +47,43 @@ describe("argus CLI", () => {
       "watch",
       "dispatch",
       "complete",
+      "grill",
       "search",
       "install",
     ]) {
       expect(result.stdout).toContain(command);
     }
+  });
+
+  test("grill --dry-run prints the routed skill and prompt without touching cmux", async () => {
+    // The one `argus grill` case that runs the real command: `--dry-run`
+    // creates no cmux workspace, writes no registry row and starts no session,
+    // so it cannot type into a workspace this test did not create (#7) or
+    // spend a subscription turn. Everything past that seam is covered in
+    // `src/grill/grill.test.ts` against an injected cmux.
+    const result = await runCli(["grill", "the retro eye's scope-drift question", "--dry-run"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("pocock-plus:grilling");
+    expect(result.stdout).toContain("the retro eye's scope-drift question");
+    expect(result.stdout).toContain("no cmux workspace, no registry row and no session");
+  });
+
+  test("grill with no topic refuses instead of opening an empty session", async () => {
+    const result = await runCli(["grill"]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Usage: argus grill");
+  });
+
+  test("grill rejects an unknown mode rather than guessing a skill", async () => {
+    // A skill id `claude` does not recognise does not fail — the session
+    // carries on and does something adjacent, which is the worst outcome for a
+    // planning entry point. So the mode is validated before anything starts.
+    const result = await runCli(["grill", "x", "--mode", "vibes"]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("unknown mode 'vibes'");
   });
 
   test("dispatch outside a git repository refuses rather than guessing a repo", async () => {
