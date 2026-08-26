@@ -188,6 +188,19 @@ The registry (`.argus/registry/`) is the single source of provenance truth:
      classifies **system**. Both directions are audited loudly: over-filtering
      would make Argus deaf to Johan, which breaks the same invariant the other
      way round.
+   - **How a prompt arrived is not provenance.** The same Hermes dispatch is
+     recorded `promptSource: "typed"` when the session was opened in a terminal
+     and `"sdk"` when it was opened headlessly — and Argus's own dispatcher
+     spawns every worker headlessly. The same injected `<task-notification>` is
+     stamped `"system"` on some CLI versions and `"sdk"` on others. So the
+     eligibility question is only *did a prompt land here*: a record the CLI
+     attributes to **itself** (`origin.kind` other than `human`, or
+     `promptSource: "system"`) is not a prompt; any other record carrying a
+     prompt source is. **Who** sent it stays the registry's answer, above.
+     Unknown values default in opposite directions on purpose — a new
+     *injection kind* is refused, a new *source name* is heard — because
+     admitting an injection poisons USER.md loudly, while dropping a prompt
+     makes Argus deaf to Johan silently.
 4. Every watcher classifies through this one mechanism. No heuristics elsewhere.
 
 ### 5.1 Reviewer (evaluative; the self-improvement loop)

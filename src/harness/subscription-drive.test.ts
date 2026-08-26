@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { readdir, realpath } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loadScaledMs } from "../eyes/test-budget.ts";
@@ -44,6 +44,12 @@ import { createSubscriptionAgentSpawner } from "./subscription-mode.ts";
  * benign work with no tools; every destructive step in the harness goes
  * through `SandboxScope`, which `sandbox-scope.test.ts` proves refuses paths
  * and pids outside the sandbox.
+ *
+ * AMENDED BY #50. This drive is where `promptSource: "sdk"` was found, and it
+ * pinned the defect so it could not regress unnoticed while the policy ticket
+ * ran. That ticket has run: the drive now registers the dispatch it sends —
+ * which is what #43's drives always did, and what makes the §13.4 assertion
+ * below mean something — and pins the FIXED verdict on the same real shape.
  */
 const checkout = fileURLToPath(new URL("../../", import.meta.url));
 const gate = resolveSubscriptionGate(probeSubscriptionMode());
@@ -142,6 +148,26 @@ test.skipIf(gate.claude.status !== "run")(
         ),
       ).toBe(true);
 
+      // #50: what Hermes would have logged before opening the session (§5
+      // rule 1). #49's version of this drive registered NOTHING, which made
+      // its §13.4 assertion below pass for the wrong reason — the dispatch was
+      // dropped as a non-candidate, so there was nothing left to attribute to
+      // anyone. The harness is playing Hermes here exactly as it does in #43's
+      // drives, so it logs the row Hermes logs.
+      const { sessionsFile } = registryPaths(sandbox.repo);
+      await mkdir(dirname(sessionsFile), { recursive: true });
+      await appendFile(
+        sessionsFile,
+        `${JSON.stringify({
+          ts: dispatched!.ts,
+          sessionId: dispatched!.sessionId,
+          agent: "claude",
+          ticket: "49",
+          dispatchPrompt: DISPATCH,
+          workspace: worktree,
+        })}\n`,
+      );
+
       const { classifier } = classifierFromRegistry(
         await loadRegistry(registryPaths(sandbox.repo)),
       );
@@ -161,19 +187,46 @@ test.skipIf(gate.claude.status !== "run")(
           .map((record) => record.event.text.slice(0, 120)),
       ).toEqual([]);
 
-      // The finding this drive is pinning rather than papering over: a real
-      // `claude -p` prompt carries `promptSource: "sdk"`, which is neither
-      // "typed" nor "queued", so the candidate filter drops it and the
-      // dispatch lands as `system`/`non-candidate` instead of
-      // `hermes`/`dispatch-prompt`. It fails SAFE — the deafness direction,
-      // never the poisoning one — but it is a real gap in §5 provenance for
-      // headless Claude sessions, and it belongs to a provenance ticket, not
-      // to this one. Asserted so it cannot regress unnoticed either way.
+      // #49 FOUND the finding here and pinned it as the defect it was: a real
+      // `claude -p` prompt carries `promptSource: "sdk"`, which was neither
+      // "typed" nor "queued", so the candidate filter dropped it and the
+      // dispatch landed `system`/`non-candidate` instead of
+      // `hermes`/`dispatch-prompt`. #50 FIXED it, so the pin now asserts the
+      // fix on the same real shape rather than the defect — same live
+      // evidence, opposite verdict, and still the only assertion in this tree
+      // that reads a genuinely headless transcript end to end.
       expect(dispatched!.promptSource).toBe("sdk");
-      expect(dispatched!.candidate).toBe(false);
+      expect(dispatched!.candidate).toBe(true);
       expect(
-        records.find((record) => record.event === dispatched)?.via,
-      ).toBe("non-candidate");
+        records
+          .filter((record) => record.event === dispatched)
+          .map(({ author, via }) => ({ author, via })),
+      ).toEqual([{ author: "hermes", via: "dispatch-prompt" }]);
+
+      // And the raw record behind it, because `MessageEvent` does not carry
+      // `origin` and the fix turns on it: a real 2.1.246 headless dispatch
+      // prompt carries NO `origin` at all, while the CLI's own injected
+      // user-role records carry `origin.kind`. If a future CLI starts
+      // stamping dispatch prompts with an origin kind, this is where that
+      // shows up — before it can quietly make Argus deaf again.
+      const lines = (
+        await Promise.all(
+          written.map((name) => readFile(join(slug, name), "utf8")),
+        )
+      ).flatMap((text) => text.split("\n").filter((line) => line.trim() !== ""));
+      const raw = lines
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .find(
+          (record) =>
+            record.type === "user" &&
+            typeof (record.message as { content?: unknown })?.content === "string" &&
+            ((record.message as { content: string }).content).includes("ticket #49"),
+        );
+      expect({
+        promptSource: raw?.promptSource,
+        entrypoint: raw?.entrypoint,
+        origin: raw?.origin,
+      }).toEqual({ promptSource: "sdk", entrypoint: "sdk-cli", origin: undefined });
     } finally {
       await sandbox.teardown();
     }
