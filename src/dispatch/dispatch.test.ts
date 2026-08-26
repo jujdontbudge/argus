@@ -351,6 +351,98 @@ describe("dispatchFrontier (#56): recovery tells a DEAD session from a SLOW one"
     }
   }, GIT_BUDGET_MS);
 
+  test("#95: a DEAD worker's cmux tab is closed, and no workspace is ever created", async () => {
+    // THE #82 CASE. The worker never reaches a clean completion, so nothing on
+    // #57's green path ever runs — recovery is the only thing that will ever
+    // touch this deployment again, and if it does not close the tab, the tab
+    // leaks. That is precisely how three workspaces ended up on Johan's
+    // machine, and closing them was manual work he had to do twice.
+    const repo = await scratchRepo();
+    const ARGUS = "2D3B8B38-C9FC-46F4-A512-8F1157CE2E10";
+    const WORKER = "11111111-2222-4333-8444-555555555555";
+    try {
+      const gh = createFakeGh({ login: LOGIN, repo: REPO });
+      gh.seed({ number: 1, title: "died with a tab open" });
+
+      // A cmux with one workspace (Johan's) that grows a tab on `new-surface`
+      // and loses it on `close-surface`. Never the real binary: creating a
+      // workspace is the bug and closing a live surface is Johan's tab.
+      const calls: string[][] = [];
+      // Unique per create: the second pass re-dispatches the returned ticket
+      // and legitimately opens a tab of its own, so "the tab is gone" has to
+      // mean THIS deployment's tab, not "no worker tab exists".
+      let minted = 0;
+      let surfaces = ["E0492BBB-0A3B-4393-B50B-75EB3439EB6C"];
+      const cmux: NonNullable<DispatchOptions["cmux"]> = async (args) => {
+        calls.push([...args]);
+        if (args.includes("tree")) {
+          return {
+            exitCode: 0,
+            stderr: "",
+            stdout: JSON.stringify({
+              windows: [
+                {
+                  workspaces: [
+                    {
+                      id: ARGUS,
+                      panes: [
+                        {
+                          ref: "pane:1",
+                          surfaces: surfaces.map((id, index) => ({
+                            id,
+                            ref: `surface:${index + 1}`,
+                          })),
+                        },
+                      ],
+                      ref: "workspace:1",
+                      title: "argus",
+                    },
+                  ],
+                },
+              ],
+            }),
+          };
+        }
+        if (args[0] === "new-surface") {
+          minted += 1;
+          surfaces = [...surfaces, `${WORKER}-${minted}`];
+        }
+        if (args[0] === "close-surface") {
+          surfaces = surfaces.filter((id) => id !== args[args.indexOf("--surface") + 1]);
+        }
+        return { exitCode: 0, stderr: "", stdout: "" };
+      };
+      const env = { ...process.env, CMUX_WORKSPACE_ID: ARGUS };
+
+      const dead = await deadPid();
+      const first = witnessSpawn(repo, gh, () => dead);
+      await dispatchFrontier(
+        options(repo, gh, first.spawn, { cmux, env, maxConcurrency: 1 }),
+      );
+      // The deployment got a TAB, in Johan's workspace, not one of its own.
+      expect(surfaces).toContain(`${WORKER}-1`);
+      expect(calls.some((call) => call.includes("new-workspace"))).toBe(false);
+
+      const second = witnessSpawn(repo, gh);
+      await dispatchFrontier(
+        options(repo, gh, second.spawn, { cmux, env, maxConcurrency: 1 }),
+      );
+
+      // Recovery closed it. This is the assertion #82 needed and did not have.
+      expect(calls.some((call) => call.includes("close-surface"))).toBe(true);
+      expect(surfaces).not.toContain(`${WORKER}-1`);
+      // Johan's own tab is untouched throughout, and the only surface left
+      // beside it belongs to the live redeployment.
+      expect(surfaces).toEqual([
+        "E0492BBB-0A3B-4393-B50B-75EB3439EB6C",
+        `${WORKER}-2`,
+      ]);
+      expect(calls.some((call) => call.includes("close-workspace"))).toBe(false);
+    } finally {
+      await cleanup(repo);
+    }
+  }, GIT_BUDGET_MS);
+
   test("a DEAD worker that produced nothing releases the ticket back to the frontier", async () => {
     const repo = await scratchRepo();
     try {

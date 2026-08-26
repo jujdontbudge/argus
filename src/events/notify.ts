@@ -83,6 +83,88 @@ export function listedRefs(stdout: string): Set<string> {
   return refs;
 }
 
+/** One workspace as `cmux tree` reports it: both handles, and its surfaces. */
+export interface CmuxWorkspaceNode {
+  id: string;
+  ref: string;
+  title: string;
+  surfaces: { id: string; ref: string }[];
+}
+
+export interface CmuxInventory {
+  workspaces: CmuxWorkspaceNode[];
+}
+
+/**
+ * `cmux --id-format both tree --all --json`, parsed. `null` when cmux cannot
+ * answer at all — every caller degrades on that rather than guessing.
+ *
+ * This is the WHOLE-MACHINE inventory, and #95 needed it for two reasons.
+ *
+ * 1. `list-workspaces` is documented as "List workspaces in the current
+ *    window" and behaves that way: measured on this machine, a caller sitting
+ *    in `workspace:1` (window 1) gets back window 2's workspaces and NOT its
+ *    own. So a membership check built only on it refuses every handle outside
+ *    the focused window — including, now, the workspace every worker tab lives
+ *    in.
+ * 2. `CMUX_WORKSPACE_ID` is a UUID, and `list-workspaces` prints only refs.
+ *    `--id-format both` is what puts the two beside each other.
+ */
+export async function readCmuxInventory(
+  run: CmuxRun = runCmux,
+): Promise<CmuxInventory | null> {
+  let result;
+  try {
+    result = await run(["--id-format", "both", "tree", "--all", "--json"]);
+  } catch {
+    return null;
+  }
+  if (result.exitCode !== 0) return null;
+  try {
+    return parseInventory(JSON.parse(result.stdout));
+  } catch {
+    return null;
+  }
+}
+
+/** The workspace a handle names, by UUID or by ref. `undefined` if unknown. */
+export function findWorkspace(
+  inventory: CmuxInventory,
+  handle: string,
+): CmuxWorkspaceNode | undefined {
+  return inventory.workspaces.find(
+    (workspace) => workspace.id === handle || workspace.ref === handle,
+  );
+}
+
+function parseInventory(raw: unknown): CmuxInventory {
+  const asRecord = (value: unknown): Record<string, unknown> =>
+    typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+  const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
+  const text = (value: unknown): string => (typeof value === "string" ? value : "");
+
+  const workspaces: CmuxWorkspaceNode[] = [];
+  for (const window of asArray(asRecord(raw)["windows"])) {
+    for (const entry of asArray(asRecord(window)["workspaces"])) {
+      const workspace = asRecord(entry);
+      const surfaces: { id: string; ref: string }[] = [];
+      for (const pane of asArray(workspace["panes"])) {
+        for (const surfaceEntry of asArray(asRecord(pane)["surfaces"])) {
+          const surface = asRecord(surfaceEntry);
+          surfaces.push({ id: text(surface["id"]), ref: text(surface["ref"]) });
+        }
+      }
+      workspaces.push({
+        id: text(workspace["id"]),
+        ref: text(workspace["ref"]),
+        surfaces,
+        title: text(workspace["title"]),
+      });
+    }
+  }
+  return { workspaces };
+}
+
 export interface CmuxTarget {
   surface?: string;
   workspace: string;
@@ -115,33 +197,53 @@ export function createCmuxResolve(run: CmuxRun = runCmux): CmuxResolve {
     result.stderr.trim() || `cmux ${what} exited ${result.exitCode}`;
 
   return async (target) => {
+    // The window-scoped listing stays the FAST PATH, unchanged: it is what #7
+    // measured and what every handle inside the focused window still resolves
+    // through. What #95 added is the fallback below it, because a handle this
+    // listing cannot see is not necessarily a handle cmux cannot resolve.
     const workspaces = await run(["list-workspaces"]);
     if (workspaces.exitCode !== 0) {
       return { ok: false, error: failed(workspaces, "list-workspaces") };
     }
-    if (!listedRefs(workspaces.stdout).has(target.workspace)) {
+    if (listedRefs(workspaces.stdout).has(target.workspace)) {
+      if (target.surface === undefined) return { ok: true };
+      const surfaces = await run(["list-pane-surfaces", "--workspace", target.workspace]);
+      if (surfaces.exitCode !== 0) {
+        return { ok: false, error: failed(surfaces, "list-pane-surfaces") };
+      }
+      if (listedRefs(surfaces.stdout).has(target.surface)) return { ok: true };
+      return {
+        ok: false,
+        error: `cmux does not resolve ${target.surface} in ${target.workspace}; refusing to type into the focused surface instead`,
+      };
+    }
+
+    // #95's fallback. Two handles legitimately miss the fast path: anything in
+    // a workspace outside the focused WINDOW (which is where the argus
+    // workspace sits on this machine — the dispatcher cannot see its own
+    // workspace in `list-workspaces`), and any UUID, which that listing never
+    // prints. Refusing them would mean no worker tab could ever be typed into.
+    // The tree is consulted before refusing, never instead of refusing: a
+    // handle absent from BOTH is still refused, which is the guard #7 added.
+    const inventory = await readCmuxInventory(run);
+    const workspace =
+      inventory === null ? undefined : findWorkspace(inventory, target.workspace);
+    if (workspace === undefined) {
       return {
         ok: false,
         error: `cmux does not resolve ${target.workspace}; refusing to type into the focused workspace instead`,
       };
     }
-    if (target.surface !== undefined) {
-      const surfaces = await run([
-        "list-pane-surfaces",
-        "--workspace",
-        target.workspace,
-      ]);
-      if (surfaces.exitCode !== 0) {
-        return { ok: false, error: failed(surfaces, "list-pane-surfaces") };
-      }
-      if (!listedRefs(surfaces.stdout).has(target.surface)) {
-        return {
+    if (target.surface === undefined) return { ok: true };
+    const resolved = workspace.surfaces.some(
+      (surface) => surface.id === target.surface || surface.ref === target.surface,
+    );
+    return resolved
+      ? { ok: true }
+      : {
           ok: false,
           error: `cmux does not resolve ${target.surface} in ${target.workspace}; refusing to type into the focused surface instead`,
         };
-      }
-    }
-    return { ok: true };
   };
 }
 

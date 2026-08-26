@@ -42,11 +42,17 @@
  */
 import { stat } from "node:fs/promises";
 
-import { branchForTicket, runGit, worktreeForTicket, type GitRun } from "../deploy";
+import {
+  branchForTicket,
+  retireWorkerTab,
+  runGit,
+  worktreeForTicket,
+  type GitRun,
+} from "../deploy";
 // The leaf module, not the barrel: `../dispatch` imports this package's queue,
 // and two barrels importing each other is a cycle waiting to bite.
 import { createDispatchSlots, dispatchSlotsDirectory } from "../dispatch/slots.ts";
-import { pollHermesSignals, type HermesSignal } from "../events";
+import { pollHermesSignals, type CmuxRun, type HermesSignal } from "../events";
 import type { Brain } from "../eyes/brain";
 import { createCodexBrain } from "../eyes/brain";
 import { loadEyesConfig } from "../eyes/config";
@@ -131,6 +137,8 @@ export interface CompleteOptions {
   base?: string;
   /** The review brain; defaults to the config's `codex exec` tier. */
   brain?: Brain;
+  /** The cmux seam #95's teardown closes the worker's tab through. Stubbed in tests. */
+  cmux?: CmuxRun;
   gates?: readonly Gate[];
   gh?: GhRunner;
   git?: GitRun;
@@ -253,6 +261,7 @@ export async function completeReadyTickets(
     const outcome = await verifyOne({
       base,
       entry,
+      ...(options.cmux !== undefined && { cmux: options.cmux }),
       gateRunner,
       gates,
       gh,
@@ -288,6 +297,7 @@ interface VerifyOutcome {
 
 async function verifyOne(request: {
   base: string;
+  cmux?: CmuxRun;
   entry: VerifyEntry;
   gateRunner: GateRunner;
   gates: readonly Gate[];
@@ -482,6 +492,17 @@ async function verifyOne(request: {
   const retired = await retireWorktree({ branch, git, repo, worktree });
   if (retired !== null) {
     degraded.push(`ticket #${ticket}: merged and closed, but ${retired}`);
+  }
+
+  // The tab goes with the worktree (#95). They are the two things the
+  // deployment brought into existence, and Directive 14 / R6 is as much about
+  // "fully closed when done" as it is about "never a new workspace" — #82 left
+  // three of these standing on Johan's machine and he closed them by hand.
+  // Reported, never swallowed: a teardown that fails quietly leaves exactly
+  // the leak this ticket exists to remove, only harder to see.
+  if (entry.sessionId !== undefined) {
+    const tab = await retireWorkerTab({ repo, sessionId: entry.sessionId }, request.cmux);
+    if (tab !== null) degraded.push(`ticket #${ticket}: merged and closed, but ${tab}`);
   }
 
   // Capacity last: the ticket is finished, so the slot it held is a lie.

@@ -62,19 +62,13 @@
  * whole-machine inventory, and it carries UUIDs beside refs, which is what
  * lets a `CMUX_WORKSPACE_ID` (a UUID) be checked at all.
  */
-import { runCmux, type CmuxRun } from "../events";
-
-/** One workspace as cmux reports it. Both handles, because callers hold both. */
-export interface CmuxWorkspaceNode {
-  id: string;
-  ref: string;
-  title: string;
-  surfaces: { id: string; ref: string }[];
-}
-
-export interface CmuxInventory {
-  workspaces: CmuxWorkspaceNode[];
-}
+import {
+  findWorkspace,
+  readCmuxInventory,
+  runCmux,
+  type CmuxRun,
+} from "../events";
+import { loadRegistry, registryPaths } from "../provenance";
 
 export type TabResult =
   | { status: "opened"; surface: string; workspace: string }
@@ -107,27 +101,6 @@ export interface TabCloseRequest {
   tolerateMissing?: boolean;
 }
 
-/**
- * `cmux --id-format both tree --all --json`, parsed. `null` means cmux could
- * not answer at all, which every caller degrades on rather than guessing.
- */
-export async function readCmuxInventory(
-  run: CmuxRun = runCmux,
-): Promise<CmuxInventory | null> {
-  let result;
-  try {
-    result = await run(["--id-format", "both", "tree", "--all", "--json"]);
-  } catch {
-    return null;
-  }
-  if (result.exitCode !== 0) return null;
-  try {
-    return parseInventory(JSON.parse(result.stdout));
-  } catch {
-    return null;
-  }
-}
-
 export async function openWorkerTab(
   request: TabRequest = {},
   run: CmuxRun = runCmux,
@@ -144,7 +117,7 @@ export async function openWorkerTab(
   const before = await readCmuxInventory(run);
   if (before === null) return degraded("cmux is unavailable; deploying without a tab");
 
-  const workspace = find(before, target);
+  const workspace = findWorkspace(before, target);
   if (workspace === undefined) {
     return degraded(
       `cmux does not resolve ${target}; refusing to open the worker's tab in the ` +
@@ -165,7 +138,7 @@ export async function openWorkerTab(
 
   const after = await readCmuxInventory(run);
   if (after === null) return degraded("cmux stopped answering after the tab was created");
-  const grown = find(after, target);
+  const grown = findWorkspace(after, target);
   if (grown === undefined) {
     return degraded(`cmux stopped resolving ${target} after the tab was created`);
   }
@@ -203,7 +176,7 @@ export async function closeWorkerTab(
   const before = await readCmuxInventory(run);
   if (before === null) return degraded("cmux is unavailable; the worker's tab was left open");
 
-  const workspace = find(before, request.workspace);
+  const workspace = findWorkspace(before, request.workspace);
   if (workspace === undefined) {
     return request.tolerateMissing === true
       ? { status: "closed" }
@@ -245,7 +218,7 @@ export async function closeWorkerTab(
   // ticket is about, so it is confirmed rather than assumed.
   const after = await readCmuxInventory(run);
   if (after === null) return degraded("cmux stopped answering after the tab was closed");
-  const remaining = find(after, request.workspace);
+  const remaining = findWorkspace(after, request.workspace);
   const survived = remaining?.surfaces.some(
     (surface) => surface.id === request.surface || surface.ref === request.surface,
   );
@@ -258,43 +231,6 @@ export async function closeWorkerTab(
   return { status: "closed" };
 }
 
-function parseInventory(raw: unknown): CmuxInventory {
-  const windows = asArray(asRecord(raw)["windows"]);
-  const workspaces: CmuxWorkspaceNode[] = [];
-  for (const window of windows) {
-    for (const entry of asArray(asRecord(window)["workspaces"])) {
-      const workspace = asRecord(entry);
-      const surfaces: { id: string; ref: string }[] = [];
-      for (const paneEntry of asArray(workspace["panes"])) {
-        for (const surfaceEntry of asArray(asRecord(paneEntry)["surfaces"])) {
-          const surface = asRecord(surfaceEntry);
-          surfaces.push({ id: text(surface["id"]), ref: text(surface["ref"]) });
-        }
-      }
-      workspaces.push({
-        id: text(workspace["id"]),
-        ref: text(workspace["ref"]),
-        surfaces,
-        title: text(workspace["title"]),
-      });
-    }
-  }
-  return { workspaces };
-}
-
-/** A handle is a UUID or a `workspace:N` ref; callers legitimately hold both. */
-const find = (inventory: CmuxInventory, handle: string): CmuxWorkspaceNode | undefined =>
-  inventory.workspaces.find(
-    (workspace) => workspace.id === handle || workspace.ref === handle,
-  );
-
-const asRecord = (value: unknown): Record<string, unknown> =>
-  typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-
-const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
-
-const text = (value: unknown): string => (typeof value === "string" ? value : "");
-
 const degraded = (reason: string): { reason: string; status: "degraded" } => ({
   reason,
   status: "degraded",
@@ -302,3 +238,62 @@ const degraded = (reason: string): { reason: string; status: "degraded" } => ({
 
 const message = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
+
+export interface TabRetireRequest {
+  /** The repo whose registry holds the row — never the worktree. */
+  repo: string;
+  sessionId: string;
+}
+
+/**
+ * Close the tab a deployment left behind. Returns `null` on success (including
+ * "there was never a tab" and "it is already gone"), or a reason to surface.
+ *
+ * REGISTRY-FIRST, because that is the only source both endings can reach.
+ * A deployment ends two ways and #95 has to cover both:
+ *
+ * - CLEANLY, in `completeReadyTickets`' retire step, beside `retireWorktree` —
+ *   the worktree and the tab are the two things the deployment brought into
+ *   existence, so they go away together, after the merge and the close and
+ *   before the slot is released.
+ * - BY DYING, in `recoverDeadSlots`. This is the case that matters, because it
+ *   is the one #82 actually produced: the worker never reaches a clean
+ *   completion and nothing on the green path ever runs. The dispatch slot is
+ *   the durable record that a dead deployment existed, recovery already sweeps
+ *   it to discard the worktree, and the tab is discarded in the same sweep. A
+ *   tab whose deployment died is exactly the leak Johan cleaned by hand.
+ *
+ * Neither path holds a cmux handle: the slot record does not carry one, and by
+ * recovery time the `Deployment` object is long gone with the process. The
+ * registry row does carry both, written before the session started (§5 rule
+ * 1), so teardown looks the deployment up the same way everything else in the
+ * tree does rather than growing a second copy of the handles that could drift.
+ *
+ * `tolerateMissing` is on for both callers. They can legitimately both run —
+ * a dead session can be recovered and later completed — and the second one
+ * must not report a leak for work the first one did.
+ */
+export async function retireWorkerTab(
+  request: TabRetireRequest,
+  run: CmuxRun = runCmux,
+): Promise<string | null> {
+  let row;
+  try {
+    const registry = await loadRegistry(registryPaths(request.repo));
+    row = registry.sessions.findLast((session) => session.sessionId === request.sessionId);
+  } catch {
+    // A registry that cannot be read is a real problem, but it is not THIS
+    // function's problem to raise: everything upstream of here already reads
+    // it, and a teardown that throws would abort a merge that already landed.
+    return null;
+  }
+  if (row?.workspace === undefined || row.surface === undefined) return null;
+
+  const closed = await closeWorkerTab(
+    { surface: row.surface, tolerateMissing: true, workspace: row.workspace },
+    run,
+  );
+  return closed.status === "closed"
+    ? null
+    : `the worker's cmux tab could not be closed (${closed.reason})`;
+}

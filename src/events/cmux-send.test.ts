@@ -74,7 +74,21 @@ describe("cmux send seam", () => {
     expect(result.ok).toBe(false);
     expect(result.error).toContain("workspace:9999");
     // The whole point: nothing was typed anywhere.
-    expect(calls).toEqual([["list-workspaces"]]);
+    //
+    // #95 changed this assertion from `toEqual([["list-workspaces"]])`. The
+    // refusal above is untouched and is what the test is named for; what moved
+    // is that a handle missing from the WINDOW-SCOPED listing is now checked
+    // against `tree --all` before being refused, because on this machine
+    // `list-workspaces` cannot see the workspace the dispatcher itself runs
+    // in. Pinning the exact call list made the test assert the lookup
+    // STRATEGY, which was never the guarantee — the guarantee is that no
+    // keystroke reaches cmux, so that is what it asserts now. Both extra calls
+    // are read-only.
+    expect(calls).toEqual([
+      ["list-workspaces"],
+      ["--id-format", "both", "tree", "--all", "--json"],
+    ]);
+    expect(calls.some(([verb]) => verb === "send" || verb === "send-key")).toBe(false);
   });
 
   test("refuses to type when the surface does not resolve", async () => {

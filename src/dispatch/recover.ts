@@ -38,7 +38,8 @@ import { stat } from "node:fs/promises";
 import { releaseClaim } from "./claim.ts";
 import type { DispatchSlots, SlotEntry } from "./slots.ts";
 import type { GhRunner } from "../eyes/retro/gh";
-import { runGit, type GitRun } from "../deploy";
+import { retireWorkerTab, runGit, type GitRun } from "../deploy";
+import type { CmuxRun } from "../events";
 
 export type RecoveryOutcome =
   /** Dead, produced nothing, unassigned: dispatchable again this very pass. */
@@ -60,6 +61,8 @@ export interface RecoveredSlot {
 
 export interface RecoverRequest {
   cwd: string;
+  /** The cmux seam #95's tab teardown runs through. Stubbed in every test. */
+  cmux?: CmuxRun;
   git?: GitRun;
   gh: GhRunner;
   login: string;
@@ -106,6 +109,32 @@ export async function recoverDeadSlots(
     }
 
     const { record } = entry;
+
+    // #95: the dead session's TAB, before anything else is decided.
+    //
+    // This is the leak #82 actually produced. A worker that dies never reaches
+    // #57's green path, so recovery is the only code that will ever look at
+    // this deployment again — and Directive 14 / R6 is as much "fully closed
+    // when done" as it is "never a new workspace". It runs for EVERY dead
+    // slot, whatever the outcome below turns out to be: the tab is a shell
+    // around a process that no longer exists, so it is dead whether the
+    // session left commits, dirt or nothing at all. Unlike the worktree, a tab
+    // holds no work that could be lost by closing it.
+    //
+    // Reported, never fatal. `retireWorkerTab` resolves the handle against
+    // cmux's own inventory first and tolerates a tab that is already gone, so
+    // the worst case here is a line in `degraded` — and a leak Johan can see
+    // beats a leak he finds by counting workspaces.
+    if (record.sessionId !== undefined) {
+      const tab = await retireWorkerTab(
+        { repo: request.repo, sessionId: record.sessionId },
+        request.cmux,
+      );
+      if (tab !== null) {
+        degraded.push(`ticket #${record.ticket}: the dead session left a tab open (${tab})`);
+      }
+    }
+
     const give = async (detail: string): Promise<void> => {
       const cleaned = await discardWorktree(git, request.repo, record);
       if (cleaned !== null) {

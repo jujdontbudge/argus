@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 
 import type { CmuxRun, CmuxRunResult } from "../events";
-import { closeWorkerTab, openWorkerTab } from "./index.ts";
+import { registryPaths } from "../provenance";
+import { closeWorkerTab, openWorkerTab, retireWorkerTab } from "./index.ts";
 
 /**
  * Ticket #95 — a worker is a TAB in the workspace Argus is already running in,
@@ -24,6 +28,7 @@ const ARGUS = "2D3B8B38-C9FC-46F4-A512-8F1157CE2E10";
 const DISPATCHER = "E0492BBB-0A3B-4393-B50B-75EB3439EB6C";
 const WORKER = "11111111-2222-4333-8444-555555555555";
 const OTHER = "99999999-8888-4777-8666-555555555555";
+const SESSION = "77777777-6666-4555-8444-333333333333";
 
 /** The shape of `cmux --id-format both tree --all --json` on 0.62.2. */
 function tree(workspaces: { id: string; ref: string; surfaces: string[] }[]): string {
@@ -249,5 +254,92 @@ describe("#95's acceptance: the workspace count is unchanged across a cycle", ()
     // workspaces", and closing one Johan opened would be the same violation
     // pointed the other way.
     expect(calls.some((call) => call.includes("close-workspace"))).toBe(false);
+  });
+});
+
+describe("retireWorkerTab (#95): teardown is registry-first, like everything else", () => {
+  const registryWith = async (rows: Record<string, unknown>[]): Promise<string> => {
+    const repo = await mkdtemp(join(tmpdir(), "argus-tab-"));
+    const { sessionsFile } = registryPaths(repo);
+    await mkdir(dirname(sessionsFile), { recursive: true });
+    await Bun.write(sessionsFile, rows.map((row) => JSON.stringify(row)).join("\n") + "\n");
+    return repo;
+  };
+
+  const row = (extra: Record<string, unknown>): Record<string, unknown> => ({
+    dispatchPrompt: "ticket #95",
+    sessionId: SESSION,
+    ts: "2026-08-26T00:00:00.000Z",
+    ...extra,
+  });
+
+  test("closes the tab the registry recorded for that session", async () => {
+    const repo = await registryWith([row({ surface: WORKER, workspace: ARGUS })]);
+    try {
+      const { calls, run } = fakeCmux({
+        trees: [ARGUS_ONLY([DISPATCHER, WORKER]), ARGUS_ONLY([DISPATCHER])],
+      });
+      expect(await retireWorkerTab({ repo, sessionId: SESSION }, run)).toBeNull();
+      expect(calls).toContainEqual([
+        "close-surface",
+        "--surface",
+        WORKER,
+        "--workspace",
+        ARGUS,
+      ]);
+    } finally {
+      await rm(repo, { force: true, recursive: true });
+    }
+  });
+
+  test("a deployment that never got a tab retires silently", async () => {
+    const repo = await registryWith([row({})]);
+    try {
+      const { calls, run } = fakeCmux({ trees: [ARGUS_ONLY([DISPATCHER])] });
+      expect(await retireWorkerTab({ repo, sessionId: SESSION }, run)).toBeNull();
+      // Not even a read: there is nothing to close and nothing to resolve.
+      expect(calls).toEqual([]);
+    } finally {
+      await rm(repo, { force: true, recursive: true });
+    }
+  });
+
+  test("a tab that cannot be closed is REPORTED, never swallowed", async () => {
+    // The leak is the whole bug. A teardown that fails quietly is the same
+    // outcome as the one #82 measured, just harder to see.
+    const repo = await registryWith([row({ surface: WORKER, workspace: ARGUS })]);
+    try {
+      const { run } = fakeCmux({
+        trees: [ARGUS_ONLY([DISPATCHER, WORKER])],
+        results: { "close-surface": { exitCode: 1, stderr: "no such surface", stdout: "" } },
+      });
+      const reason = await retireWorkerTab({ repo, sessionId: SESSION }, run);
+      expect(reason).toContain("no such surface");
+    } finally {
+      await rm(repo, { force: true, recursive: true });
+    }
+  });
+
+  test("a crashed worker's tab is closed by the same call, twice-safe", async () => {
+    // Dead-slot recovery and the green path both call this. Whichever runs
+    // second finds the tab already gone and must not report a degradation.
+    const repo = await registryWith([row({ surface: WORKER, workspace: ARGUS })]);
+    try {
+      const { calls, run } = fakeCmux({ trees: [ARGUS_ONLY([DISPATCHER])] });
+      expect(await retireWorkerTab({ repo, sessionId: SESSION }, run)).toBeNull();
+      expect(calls.some((call) => call.includes("close-surface"))).toBe(false);
+    } finally {
+      await rm(repo, { force: true, recursive: true });
+    }
+  });
+
+  test("an unreadable registry degrades instead of throwing into the caller", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "argus-tab-"));
+    try {
+      const { run } = fakeCmux({ trees: [ARGUS_ONLY([DISPATCHER])] });
+      expect(await retireWorkerTab({ repo, sessionId: SESSION }, run)).toBeNull();
+    } finally {
+      await rm(repo, { force: true, recursive: true });
+    }
   });
 });

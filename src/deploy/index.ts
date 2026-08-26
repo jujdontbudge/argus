@@ -43,12 +43,11 @@ export {
 export {
   closeWorkerTab,
   openWorkerTab,
-  readCmuxInventory,
-  type CmuxInventory,
-  type CmuxWorkspaceNode,
+  retireWorkerTab,
   type TabCloseRequest,
   type TabCloseResult,
   type TabRequest,
+  type TabRetireRequest,
   type TabResult,
 } from "./tab.ts";
 export {

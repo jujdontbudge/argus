@@ -191,7 +191,7 @@ export async function startGrill(
     };
   }
 
-  const attach = attachLine(request, resolved.skill, workspace.workspace);
+  const attach = attachLine(request, resolved.skill, workspace.surface);
 
   // 3. "…and notifies Johan to attach." Best-effort by construction: the
   //    session is already live and attachable, so a notifier that fails
@@ -216,13 +216,19 @@ export async function startGrill(
   };
 }
 
-function attachLine(
-  request: GrillRequest,
-  skill: string,
-  workspace: string,
-): string {
+/**
+ * #95: this names the TAB, not the workspace.
+ *
+ * Before #95 the grill got a workspace of its own, so naming the workspace
+ * told Johan exactly where the session was. Its tab now sits in the workspace
+ * he already has open, beside the dispatcher and every other worker — so
+ * "attach to <workspace>" would point him at a workspace he is very possibly
+ * already looking at and leave him hunting for which tab. The surface is the
+ * only handle that identifies the session now.
+ */
+function attachLine(request: GrillRequest, skill: string, surface: string): string {
   return (
-    `Grill ready in cmux ${workspace} (${skill}): ${collapse(request.topic)} — ` +
+    `Grill ready in cmux ${surface} (${skill}): ${collapse(request.topic)} — ` +
     `attach and answer in the terminal`
   );
 }

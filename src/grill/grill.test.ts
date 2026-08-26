@@ -40,33 +40,80 @@ import { startGrill } from "./index.ts";
 const SESSION = "11111111-2222-4333-8444-555555555555";
 const TOPIC = "the retro eye's scope-drift question";
 
+/** #95: the grill's tab goes in the workspace Argus is already running in. */
+const GRILL_ENV = { ...process.env, CMUX_WORKSPACE_ID: "2D3B8B38-C9FC-46F4-A512-8F1157CE2E10" };
+
 const ok = (stdout = ""): CmuxRunResult => ({ exitCode: 0, stderr: "", stdout });
 const fail = (stderr: string): CmuxRunResult => ({ exitCode: 1, stderr, stdout: "" });
 
-/** A cmux 0.62.2 that hands out workspace:15 for the one create it is asked for. */
+const ARGUS_WS = "2D3B8B38-C9FC-46F4-A512-8F1157CE2E10";
+const DISPATCHER = "E0492BBB-0A3B-4393-B50B-75EB3439EB6C";
+const GRILL = "AAAA1111-2222-4333-8444-555555555555";
+
+/**
+ * A cmux 0.62.2 with ONE workspace — Johan's, the one Argus is running in —
+ * that hands out a TAB for the one create it is asked for (#95).
+ *
+ * `surfaceSets` replaces #62's `listings`, one-for-one: it is the same
+ * "what does cmux say it has, on each successive read" dial, moved from
+ * workspaces to surfaces because that is what Argus now creates. The default
+ * has three entries for the same reason the old default did — the create's
+ * before-read, its after-read, and the send guard's re-read.
+ */
 function cmuxStub(
   overrides: {
-    listings?: string[];
+    surfaceSets?: string[][];
     notify?: CmuxRunResult;
     onSend?: () => Promise<void> | void;
   } = {},
 ): { calls: string[][]; run: CmuxRun } {
-  const listings = overrides.listings ?? [
-    "* workspace:14  argus\n",
-    "* workspace:14  argus\n  workspace:15  argus-grill\n",
-    "* workspace:14  argus\n  workspace:15  argus-grill\n",
+  const sets = overrides.surfaceSets ?? [
+    [DISPATCHER],
+    [DISPATCHER, GRILL],
+    [DISPATCHER, GRILL],
   ];
   const calls: string[][] = [];
-  let listed = 0;
+  let read = 0;
+  const current = (): string[] => {
+    const set = sets[Math.min(read, sets.length - 1)] ?? [];
+    read += 1;
+    return set;
+  };
+  const tree = (surfaces: string[]): string =>
+    JSON.stringify({
+      windows: [
+        {
+          workspaces: [
+            {
+              id: ARGUS_WS,
+              panes: [
+                {
+                  ref: "pane:1",
+                  surfaces: surfaces.map((id, index) => ({
+                    id,
+                    ref: `surface:${index + 1}`,
+                  })),
+                },
+              ],
+              ref: "workspace:1",
+              title: "argus",
+            },
+          ],
+        },
+      ],
+    });
   const run: CmuxRun = async (args) => {
     calls.push([...args]);
+    if (args.includes("tree")) return ok(tree(current()));
     switch (args[0]) {
-      case "list-workspaces": {
-        const stdout = listings[Math.min(listed, listings.length - 1)] ?? "";
-        listed += 1;
-        return ok(stdout);
-      }
-      case "new-workspace":
+      case "list-workspaces":
+        // Window-scoped on the real CLI, and on this machine it does NOT list
+        // the workspace the dispatcher runs in. The guard's `tree` fallback
+        // (#95) is what resolves it, so this answers as the real one does.
+        return ok("");
+      case "new-surface":
+        return ok("");
+      case "rename-tab":
         return ok("");
       case "send":
         await overrides.onSend?.();
@@ -123,6 +170,7 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
         { repo, topic: TOPIC },
         {
           cmux: cmux.run,
+          env: GRILL_ENV,
           git: git.run,
           newSessionId: () => SESSION,
           now: () => new Date("2026-08-26T09:00:00.000Z"),
@@ -131,14 +179,20 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
 
       expect(result.status).toBe("started");
       if (result.status !== "started") return;
-      expect(result.workspace).toBe("workspace:15");
+      // #95: Johan's OWN workspace, because the grill no longer gets one of
+      // its own. The handle that identifies the session is the surface.
+      expect(result.workspace).toBe(ARGUS_WS);
       expect(result.sessionId).toBe(SESSION);
 
       // THE ORDERING PROOF, taken by another reader at the instant the launch
       // line went out. Swap register and type, and this is the empty string.
       const row = JSON.parse(registryAtSend.trim()) as Record<string, unknown>;
       expect(row.sessionId).toBe(SESSION);
-      expect(row.workspace).toBe("workspace:15");
+      expect(row.workspace).toBe(ARGUS_WS);
+      // #95: and the SURFACE, durable in the same row. Teardown reads the tab
+      // handle back out of the registry — a row with a workspace and no
+      // surface is a tab nothing can ever close, which is the leak itself.
+      expect(row.surface).toBe(GRILL);
       expect(row.dispatchPrompt).toBe(result.prompt);
       expect(row.agent).toBe("claude");
       // §7.5: planning and grilling sessions are exempt from "every
@@ -146,7 +200,7 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
       // would make the Retro eye judge it against a scope it never had.
       expect(row.ticket).toBeUndefined();
 
-      // §7.2 says "a cmux workspace in R" — the repo itself. A grill produces
+      // §7.2 (as amended by #95) says a tab "in R" — the repo itself. A grill produces
       // a spec and tickets, and on a worktree branch nobody merges that output
       // is stranded, so no worktree is created.
       expect(git.args.some((a) => a[0] === "worktree")).toBe(false);
@@ -208,7 +262,7 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
       const cmux = cmuxStub();
       const started = await startGrill(
         { repo, topic: TOPIC },
-        { cmux: cmux.run, git: gitStub().run, newSessionId: () => SESSION },
+        { cmux: cmux.run, env: GRILL_ENV, git: gitStub().run, newSessionId: () => SESSION },
       );
       expect(started.status).toBe("started");
 
@@ -240,7 +294,7 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
       const cmux = cmuxStub();
       await startGrill(
         { repo, topic: TOPIC },
-        { cmux: cmux.run, git: gitStub().run, newSessionId: () => SESSION },
+        { cmux: cmux.run, env: GRILL_ENV, git: gitStub().run, newSessionId: () => SESSION },
       );
       // It is a SHELL command line, not a prompt into a session. Logging it
       // would put a Hermes attribution in the matcher's window that no
@@ -255,18 +309,17 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
     }
   });
 
-  test("a workspace cmux will not resolve is refused with nothing written", async () => {
+  test("a tab cmux will not resolve is refused with nothing written", async () => {
     const repo = await sandboxRepo();
     try {
-      // 0.62.2's `new-workspace` prints no ref, so the ref is discovered from
-      // cmux's own listing. Here the listing does not grow: guessing would
-      // type the grill launch line into whatever Johan is looking at (#7).
-      const cmux = cmuxStub({
-        listings: ["* workspace:14  argus\n", "* workspace:14  argus\n"],
-      });
+      // 0.62.2's `new-surface` prints no ref either, so the handle is
+      // discovered from cmux's own inventory. Here the inventory does not
+      // grow: guessing would type the grill launch line into whatever Johan is
+      // looking at (#7), and it is a shell command, so it would RUN there.
+      const cmux = cmuxStub({ surfaceSets: [[DISPATCHER], [DISPATCHER]] });
       const result = await startGrill(
         { repo, topic: TOPIC },
-        { cmux: cmux.run, git: gitStub().run, newSessionId: () => SESSION },
+        { cmux: cmux.run, env: GRILL_ENV, git: gitStub().run, newSessionId: () => SESSION },
       );
       expect(result.status).toBe("refused");
       expect(cmux.calls.some((a) => a[0] === "send")).toBe(false);
@@ -281,15 +334,11 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
     try {
       // Created and discovered, then gone by the time the guard re-asks.
       const cmux = cmuxStub({
-        listings: [
-          "* workspace:14  argus\n",
-          "* workspace:14  argus\n  workspace:15  argus-grill\n",
-          "* workspace:14  argus\n",
-        ],
+        surfaceSets: [[DISPATCHER], [DISPATCHER, GRILL], [DISPATCHER]],
       });
       const result = await startGrill(
         { repo, topic: TOPIC },
-        { cmux: cmux.run, git: gitStub().run, newSessionId: () => SESSION },
+        { cmux: cmux.run, env: GRILL_ENV, git: gitStub().run, newSessionId: () => SESSION },
       );
       expect(result.status).toBe("failed");
       if (result.status === "failed") {
@@ -319,7 +368,7 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
       };
       const result = await startGrill(
         { repo, topic: TOPIC },
-        { cmux: guarded, git: gitStub().run, newSessionId: () => SESSION },
+        { cmux: guarded, env: GRILL_ENV, git: gitStub().run, newSessionId: () => SESSION },
       );
       expect(result.status).toBe("started");
       expect(cmux.calls.some((a) => a[0] === "hooks")).toBe(false);
@@ -334,7 +383,7 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
       const cmux = cmuxStub({ notify: fail("notification centre is not available") });
       const result = await startGrill(
         { repo, topic: TOPIC },
-        { cmux: cmux.run, git: gitStub().run, newSessionId: () => SESSION },
+        { cmux: cmux.run, env: GRILL_ENV, git: gitStub().run, newSessionId: () => SESSION },
       );
       expect(result.status).toBe("started");
       if (result.status !== "started") return;
@@ -342,7 +391,9 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
       expect(result.degraded.join(" ")).toContain("notification centre");
       // The session is live and attachable whatever the notifier did, so the
       // command still has to say where it is.
-      expect(result.attach).toContain("workspace:15");
+      // #95: the tab, not the workspace. The workspace is Johan's own and he
+      // may already be looking at it; the surface is what names the session.
+      expect(result.attach).toContain(GRILL);
     } finally {
       await rm(repo, { force: true, recursive: true });
     }
@@ -353,7 +404,7 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
     try {
       const result = await startGrill(
         { repo, topic: TOPIC },
-        { cmux: cmuxStub().run, git: gitStub().run, newSessionId: () => SESSION },
+        { cmux: cmuxStub().run, env: GRILL_ENV, git: gitStub().run, newSessionId: () => SESSION },
       );
       expect(result.status).toBe("started");
       if (result.status !== "started") return;
