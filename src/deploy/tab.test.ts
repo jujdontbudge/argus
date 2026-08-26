@@ -1,0 +1,253 @@
+import { describe, expect, test } from "bun:test";
+
+import type { CmuxRun, CmuxRunResult } from "../events";
+import { closeWorkerTab, openWorkerTab } from "./index.ts";
+
+/**
+ * Ticket #95 — a worker is a TAB in the workspace Argus is already running in,
+ * never a workspace of its own, and the tab is closed when the deployment ends.
+ *
+ * These tests replace #55's `createCmuxWorkspace` suite. That suite asserted
+ * `new-workspace` was called and that its ref was discovered safely: it was
+ * green the whole time production was leaving a workspace per deployment on
+ * Johan's machine, because it tested the wrong verb correctly. The assertion
+ * that would have caught it is `workspaces unchanged across a full
+ * deploy/teardown cycle`, and it is the last test in this file.
+ *
+ * Everything here is a stub. Running the real binary is forbidden: creating a
+ * workspace is the bug, and `close-surface` against a mis-resolved handle
+ * closes whatever tab Johan is looking at.
+ */
+const ok = (stdout: string): CmuxRunResult => ({ exitCode: 0, stderr: "", stdout });
+
+const ARGUS = "2D3B8B38-C9FC-46F4-A512-8F1157CE2E10";
+const DISPATCHER = "E0492BBB-0A3B-4393-B50B-75EB3439EB6C";
+const WORKER = "11111111-2222-4333-8444-555555555555";
+const OTHER = "99999999-8888-4777-8666-555555555555";
+
+/** The shape of `cmux --id-format both tree --all --json` on 0.62.2. */
+function tree(workspaces: { id: string; ref: string; surfaces: string[] }[]): string {
+  return JSON.stringify({
+    caller: { workspace_id: ARGUS, workspace_ref: "workspace:1" },
+    windows: [
+      {
+        index: 0,
+        workspaces: workspaces.map((workspace, index) => ({
+          id: workspace.id,
+          index,
+          panes: [
+            {
+              ref: "pane:1",
+              surfaces: workspace.surfaces.map((id, position) => ({
+                id,
+                index: position,
+                ref: `surface:${position + 1}`,
+                title: "worker",
+                type: "terminal",
+              })),
+            },
+          ],
+          ref: workspace.ref,
+          title: "argus",
+        })),
+      },
+    ],
+  });
+}
+
+const ARGUS_ONLY = (surfaces: string[]): string =>
+  tree([{ id: ARGUS, ref: "workspace:1", surfaces }]);
+
+/**
+ * A stubbed cmux whose `tree` answer is a queue: one entry per read, so a test
+ * can say "before the create it looked like this, after it looked like that".
+ */
+function fakeCmux(options: {
+  trees: string[];
+  results?: Record<string, CmuxRunResult>;
+}): { calls: string[][]; run: CmuxRun } {
+  const calls: string[][] = [];
+  const trees = [...options.trees];
+  const run: CmuxRun = async (args) => {
+    calls.push([...args]);
+    const verb = args.find((arg) => !arg.startsWith("--") && arg !== "both");
+    if (verb === "tree") {
+      const next = trees.length > 1 ? trees.shift()! : trees[0];
+      if (next === undefined) throw new Error("no tree scripted");
+      return ok(next);
+    }
+    const scripted = options.results?.[verb ?? ""];
+    if (scripted === undefined) return ok("");
+    return scripted;
+  };
+  return { calls, run };
+}
+
+/** Did anything in this run ask cmux for a workspace? R6 says: never. */
+const createdAWorkspace = (calls: string[][]): boolean =>
+  calls.some((call) => call.includes("new-workspace"));
+
+describe("openWorkerTab (#95): a tab in the workspace Argus already has", () => {
+  test("opens a surface in the existing workspace and never creates a workspace", async () => {
+    const { calls, run } = fakeCmux({
+      trees: [ARGUS_ONLY([DISPATCHER]), ARGUS_ONLY([DISPATCHER, WORKER])],
+    });
+
+    const result = await openWorkerTab({ env: { CMUX_WORKSPACE_ID: ARGUS } }, run);
+
+    expect(result).toEqual({ status: "opened", surface: WORKER, workspace: ARGUS });
+    expect(calls).toContainEqual([
+      "new-surface",
+      "--type",
+      "terminal",
+      "--workspace",
+      ARGUS,
+    ]);
+    expect(createdAWorkspace(calls)).toBe(false);
+  });
+
+  test("a workspace handle cmux does not resolve degrades and creates nothing", async () => {
+    // Measured live on 0.62.2 for #95, read-only: `list-pane-surfaces
+    // --workspace workspace:9999` exits 0 and answers for the FOCUSED
+    // workspace. So `new-surface` with a stale handle would open the worker's
+    // tab in whatever Johan is looking at. The handle is checked against
+    // cmux's own inventory first, or nothing is created at all.
+    const { calls, run } = fakeCmux({ trees: [ARGUS_ONLY([DISPATCHER])] });
+
+    const result = await openWorkerTab({ env: { CMUX_WORKSPACE_ID: OTHER } }, run);
+
+    expect(result.status).toBe("degraded");
+    if (result.status === "degraded") expect(result.reason).toContain("does not resolve");
+    expect(calls.some((call) => call.includes("new-surface"))).toBe(false);
+    expect(createdAWorkspace(calls)).toBe(false);
+  });
+
+  test("running outside cmux degrades; it never falls back to a new workspace", async () => {
+    const { calls, run } = fakeCmux({ trees: [ARGUS_ONLY([DISPATCHER])] });
+
+    const result = await openWorkerTab({ env: {} }, run);
+
+    expect(result.status).toBe("degraded");
+    if (result.status === "degraded") {
+      expect(result.reason).toContain("not running inside a cmux workspace");
+    }
+    expect(createdAWorkspace(calls)).toBe(false);
+  });
+
+  test("cmux missing entirely degrades", async () => {
+    const run: CmuxRun = async () => {
+      throw new Error("spawn cmux ENOENT");
+    };
+    const result = await openWorkerTab({ env: { CMUX_WORKSPACE_ID: ARGUS } }, run);
+    expect(result.status).toBe("degraded");
+  });
+
+  test("two new surfaces (a concurrent create) degrades rather than guessing", async () => {
+    const { run } = fakeCmux({
+      trees: [ARGUS_ONLY([DISPATCHER]), ARGUS_ONLY([DISPATCHER, WORKER, OTHER])],
+    });
+
+    const result = await openWorkerTab({ env: { CMUX_WORKSPACE_ID: ARGUS } }, run);
+
+    expect(result.status).toBe("degraded");
+    if (result.status === "degraded") expect(result.reason).toContain("refusing to guess");
+  });
+});
+
+describe("closeWorkerTab (#95): the half of the directive that burned Johan", () => {
+  test("closes the worker's surface and confirms it is gone", async () => {
+    const { calls, run } = fakeCmux({
+      trees: [ARGUS_ONLY([DISPATCHER, WORKER]), ARGUS_ONLY([DISPATCHER])],
+    });
+
+    const result = await closeWorkerTab({ surface: WORKER, workspace: ARGUS }, run);
+
+    expect(result).toEqual({ status: "closed" });
+    expect(calls).toContainEqual([
+      "close-surface",
+      "--surface",
+      WORKER,
+      "--workspace",
+      ARGUS,
+    ]);
+  });
+
+  test("a surface that does not resolve is NOT closed — that is Johan's tab", async () => {
+    // The same live 0.62.2 fallback, pointed at a destructive verb. An
+    // unresolved `--surface` would close the focused one.
+    const { calls, run } = fakeCmux({ trees: [ARGUS_ONLY([DISPATCHER])] });
+
+    const result = await closeWorkerTab({ surface: WORKER, workspace: ARGUS }, run);
+
+    expect(result.status).toBe("degraded");
+    if (result.status === "degraded") {
+      expect(result.reason).toContain("refusing to close the focused surface");
+    }
+    expect(calls.some((call) => call.includes("close-surface"))).toBe(false);
+  });
+
+  test("a surface that survives the close degrades rather than reporting success", async () => {
+    const { run } = fakeCmux({ trees: [ARGUS_ONLY([DISPATCHER, WORKER])] });
+
+    const result = await closeWorkerTab({ surface: WORKER, workspace: ARGUS }, run);
+
+    expect(result.status).toBe("degraded");
+    if (result.status === "degraded") expect(result.reason).toContain("still resolves");
+  });
+
+  test("closing an already-gone tab is not an error — teardown runs twice", async () => {
+    // The green path closes the tab and so does dead-slot recovery. The second
+    // one must not report a failure Johan has to read.
+    const { calls, run } = fakeCmux({ trees: [ARGUS_ONLY([DISPATCHER])] });
+
+    const result = await closeWorkerTab(
+      { surface: WORKER, tolerateMissing: true, workspace: ARGUS },
+      run,
+    );
+
+    expect(result).toEqual({ status: "closed" });
+    expect(calls.some((call) => call.includes("close-surface"))).toBe(false);
+  });
+});
+
+describe("#95's acceptance: the workspace count is unchanged across a cycle", () => {
+  test("open → close leaves cmux's workspace inventory byte-for-byte identical", async () => {
+    // THE test the ticket asks for, and the one that was missing. #82 left
+    // three workspaces on Johan's machine twice over while every cmux test in
+    // the tree was green.
+    const before = ARGUS_ONLY([DISPATCHER]);
+    const withWorker = ARGUS_ONLY([DISPATCHER, WORKER]);
+    const trees = [before, withWorker, withWorker, before];
+    const calls: string[][] = [];
+    let read = 0;
+    const run: CmuxRun = async (args) => {
+      calls.push([...args]);
+      if (!args.includes("tree")) return ok("");
+      const next = trees[Math.min(read, trees.length - 1)]!;
+      read += 1;
+      return ok(next);
+    };
+
+    const workspaces = (json: string): string[] =>
+      (JSON.parse(json).windows as { workspaces: { id: string }[] }[])
+        .flatMap((window) => window.workspaces)
+        .map((workspace) => workspace.id);
+
+    const opened = await openWorkerTab({ env: { CMUX_WORKSPACE_ID: ARGUS } }, run);
+    expect(opened.status).toBe("opened");
+    if (opened.status !== "opened") return;
+    const closed = await closeWorkerTab(
+      { surface: opened.surface, workspace: opened.workspace },
+      run,
+    );
+    expect(closed).toEqual({ status: "closed" });
+
+    // The whole ticket, in one assertion.
+    expect(workspaces(trees[trees.length - 1]!)).toEqual(workspaces(before));
+    expect(createdAWorkspace(calls)).toBe(false);
+    // And no workspace-scoped destructive verb either: R6 is "no new
+    // workspaces", and closing one Johan opened would be the same violation
+    // pointed the other way.
+    expect(calls.some((call) => call.includes("close-workspace"))).toBe(false);
+  });
+});

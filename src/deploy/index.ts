@@ -41,10 +41,16 @@ export {
   type WorkerSpawnRequest,
 } from "./spawn.ts";
 export {
-  createCmuxWorkspace,
-  type WorkspaceRequest,
-  type WorkspaceResult,
-} from "./workspace.ts";
+  closeWorkerTab,
+  openWorkerTab,
+  readCmuxInventory,
+  type CmuxInventory,
+  type CmuxWorkspaceNode,
+  type TabCloseRequest,
+  type TabCloseResult,
+  type TabRequest,
+  type TabResult,
+} from "./tab.ts";
 export {
   branchForTicket,
   createWorktree,

@@ -82,8 +82,22 @@ export function launchLine(executable: string, argv: readonly string[]): string 
 }
 
 export interface CmuxLaunchOptions {
-  /** The resolved workspace ref the session is launched into. */
+  /** The resolved workspace the session's tab lives in. */
   workspace: string;
+  /**
+   * The resolved SURFACE — the grill's own tab (#95).
+   *
+   * Load-bearing, not a refinement. Before #95 the grill got a brand-new
+   * workspace with exactly one surface in it, so aiming a send at the
+   * WORKSPACE could only ever hit the session being launched. A tab lives in
+   * the workspace Johan already has open, next to the dispatcher and whatever
+   * else he is running, and `cmux send --workspace` types into that
+   * workspace's SELECTED surface. Aiming at the workspace now would run the
+   * launch line — a shell command — in whichever tab happened to be in front.
+   * That is #7's hazard reintroduced by the fix for #95, so the target is the
+   * surface, and `createCmuxSend` resolves it before it types.
+   */
+  surface: string;
   /** Defaults to the production cmux runner; injected in tests. */
   cmux?: CmuxRun;
 }
@@ -109,11 +123,15 @@ export function createCmuxLaunch(options: CmuxLaunchOptions): WorkerSpawn {
   const send = createCmuxSend(options.cmux ?? runCmux);
   return async (request): Promise<WorkerProcess> => {
     const line = launchLine(request.executable, request.command);
-    const delivered = await send({ text: line, workspace: options.workspace });
+    const delivered = await send({
+      surface: options.surface,
+      text: line,
+      workspace: options.workspace,
+    });
     if (!delivered.ok) {
       throw new Error(
         delivered.error ??
-          `cmux would not deliver the grill launch line to ${options.workspace}`,
+          `cmux would not deliver the grill launch line to ${options.surface}`,
       );
     }
     return {
