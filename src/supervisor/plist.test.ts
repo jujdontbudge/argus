@@ -1,8 +1,19 @@
 import { describe, expect, test } from "bun:test";
 
 import { renderSupervisorPlist } from "./plist.ts";
+import { supervisorConfiguration } from "./control.ts";
 
 describe("supervisor launchd plist", () => {
+  test("a scratch HOME cannot register a real GUI LaunchAgent without an explicit override", () => {
+    const configuration = supervisorConfiguration({
+      HOME: "/private/tmp/argus-worker-death/home",
+      PATH: "/usr/bin:/bin",
+      ARGUS_LAUNCHCTL: "/bin/launchctl",
+    });
+
+    expect(configuration.manageLaunchd).toBe(false);
+  });
+
   test("renders a byte-stable launch-at-login job with explicit sandboxable paths", () => {
     const options = {
       bunPath: "/opt/homebrew/bin/bun",
