@@ -97,3 +97,57 @@ FINDING 1 (BLOCKER, argus bug not skill bug)
     ls -d ~/.hermes/profiles/*/ -> no matches
   argus has never been init'ed on its own checkout, and no argus Hermes
   profile has ever existed on this machine.
+
+------------------------------------------------------------------------------
+3. First Hermes drive — verbatim
+------------------------------------------------------------------------------
+The mission-control prompt deliberately gave Hermes the JOB, never the steps:
+
+  You are mission control for the Argus repository at $SANDBOX/repo.
+  Use the repo's argus-orchestrator skill. Never implement worker tickets yourself.
+  Three tickets are open on this repo's tracker. Deploy, monitor and close that
+  batch. `argus`, `gh`, `cmux` and `git` are on PATH.
+  When you are done, report exactly what you did and what, if anything, stopped you.
+
+$ hermes -z "$(cat mission.txt)" -s argus-orchestrator --yolo
+
+Every argus/cmux/gh call below was made by HERMES, logged by shims on the
+sandbox PATH. These are not commands the ticket author typed.
+
+  $SANDBOX/tracker/argus.log
+    $ argus --help
+    $ argus status
+    $ argus dispatch --help
+    $ argus dispatch
+    $ argus dispatch
+    $ argus complete
+    $ argus status
+
+  $SANDBOX/tracker/cmux.log
+    $ cmux --version
+    $ cmux list-workspaces
+    $ cmux new-workspace --cwd $SANDBOX/repo --focus false
+      -> REFUSED (workspace creation forbidden)
+
+  $SANDBOX/tracker/gh.log (excerpt)
+    $ gh repo view --json nameWithOwner --jq .nameWithOwner
+    $ gh issue list --state open --limit 20 --json number,title,labels,assignees,url
+    $ gh auth status
+
+Hermes' verbatim closing report:
+
+  Batch was not deployed or closed because the required orchestration
+  infrastructure refused the operation.
+  ...
+  1. `argus dispatch` reported tracker-less mode: `no GitHub tracker for this
+     repo (no remote, no auth, or no network)`
+  2. Independently, cmux refused the workspace required by the orchestrator
+     skill: `cmux: refusing to create a workspace in this environment`
+  I did not bypass either refusal and did not implement any ticket myself.
+
+Wall 1 was MY instrument's gap, not Argus's: trackerRepoName (src/eyes/retro/
+gh.ts:303-314) calls `gh repo view --json nameWithOwner --jq .nameWithOwner`
+and my stub ignored `--jq`. Fixed the stub, not Argus. Recorded here because
+honesty about which walls are the harness's matters.
+
+Wall 2 is real and is FINDING 2.
