@@ -171,6 +171,49 @@ describe("mission-control notification", () => {
     expect(calls[0]![0].text).not.toMatch(/[\r\n]/);
   });
 
+  test("#90: a mission workspace addressed by UUID is found, not reported absent", async () => {
+    // Regression. The selector used to require `workspace:`, so every
+    // UUID-addressed mission — which is what `CMUX_WORKSPACE_ID` and
+    // `openWorkerTab` hand over since #95 — degraded as "absent" for a
+    // workspace that was present. Measured live under #90 before the fix:
+    // `{"status":"degraded","reason":"Hermes mission-control workspace is
+    // absent from the registry"}`. The prefix it required is also the handle
+    // form that fails OPEN on cmux 0.62.2, so the filter selected for the
+    // dangerous one.
+    const repo = await scratchRepo();
+    await Bun.write(
+      join(repo, ".argus", "registry", "sessions.jsonl"),
+      `${JSON.stringify({
+        ts: "2026-08-25T11:00:00.000Z",
+        sessionId: "hermes-mission-uuid",
+        agent: "hermes",
+        dispatchPrompt: "Run mission control.",
+        workspace: "2D3B8B38-C9FC-46F4-A512-8F1157CE2E10",
+        surface: "E0492BBB-0A3B-4393-B50B-75EB3439EB6C",
+      })}\n`,
+    );
+    const event = (
+      await writeEvent(repo, {
+        agent: "codex",
+        kind: "end-of-session",
+        message: "DONE",
+        sessionId: "codex-thread-uuid",
+      })
+    ).event;
+    const targets: string[] = [];
+    const result = await notifyMissionControl(repo, event, {
+      send: async (request) => {
+        targets.push(`${request.workspace}/${request.surface ?? ""}`);
+        return { ok: true };
+      },
+    });
+
+    expect(result).toEqual({ status: "sent" });
+    expect(targets).toEqual([
+      "2D3B8B38-C9FC-46F4-A512-8F1157CE2E10/E0492BBB-0A3B-4393-B50B-75EB3439EB6C",
+    ]);
+  });
+
   test("degrades loudly when mission control is absent without losing the event", async () => {
     const repo = await scratchRepo();
     const written = await writeEvent(repo, {

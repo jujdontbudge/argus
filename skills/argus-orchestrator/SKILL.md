@@ -91,20 +91,40 @@ workspace is context, never a requirement.
 The addressable unit for a session is a SURFACE, not a pane. Typed prefixed refs
 (`workspace:1`, `surface:60`) and raw UUIDs both resolve — Argus uses UUIDs
 internally because `CMUX_WORKSPACE_ID` is one — but they are NOT equally safe.
+cmux also accepts a bare INDEX in the same flag, and it is a third thing again:
+`--workspace 1` is positional and resolved to a different workspace than
+`--workspace workspace:1` when #90 measured it. Never drop the prefix.
 
-**Never pass a short ref to `close-surface`.** Short refs are positional and
-cmux REMAPS them as surfaces open and close, so the `surface:60` you read a
-moment ago can name a different tab by the time you close it — and closing it
-destroys someone else's session with no error. Hold the UUID from
-`cmux --id-format both tree --all --json`, re-resolve it immediately before the
-call, and close by UUID. Read-only verbs may use whatever ref is convenient;
-anything that destroys state uses a UUID.
+**Never pass a short ref to `close-surface`.** #90 measured why against the
+real 0.62.2 binary, and the reason is NOT the one this skill gave until then.
+Short refs do not remap: they come from a monotonic counter, they survive
+`reorder-surface`, and a closed surface's ref is never handed to a new one
+(`surface:64` closed, next tab got `surface:66`). What actually kills you is
+that a ref which resolves to NOTHING — freed by an earlier close, or minted by
+a previous cmux process — **fails open**:
 
-An unresolvable handle on cmux 0.62.2 does NOT error — it exits 0 and
-acts on the FOCUSED workspace, which is how a stray handle closes one of Johan's
-own tabs. `list-workspaces` sees only the current window and will miss the
-workspace Argus runs in; `tree --all` is the only whole-machine inventory. Never
-steal focus.
+```
+cmux list-pane-surfaces --workspace workspace:9999   -> exit 0, answers for the FOCUSED workspace
+cmux list-pane-surfaces --workspace 00000000-...     -> exit 1, "not_found: Pane or workspace not found"
+cmux close-surface --surface 00000000-... --workspace 00000000-...  -> exit 1, closes nothing
+```
+
+An unresolvable **short ref** exits 0 and acts on the focused workspace. An
+unresolvable **UUID** errors and acts on nothing. That is the whole argument:
+a UUID handle fails CLOSED, so a destructive verb pointed at a dead UUID is a
+no-op, while the same verb pointed at a dead ref destroys whatever Johan is
+looking at. Refs are also renumbered from scratch when cmux restarts, so a ref
+persisted in a registry row outlives the process that gave it meaning.
+
+So: **hold the UUID from `cmux --id-format both tree --all --json` and pass a
+UUID to anything that destroys state.** Re-resolving first is good practice but
+it is not the protection — resolve-then-act is not atomic, and the UUID is what
+makes the gap harmless. Read-only verbs may use whatever ref is convenient.
+
+`list-workspaces` sees only the current window and will miss the workspace
+Argus runs in; `tree --all` is the only whole-machine inventory. Never steal
+focus — `cmux identify` shows `focused` moving on its own while other sessions
+work, so "I checked what was focused" is never a safety argument.
 
 Report worker state with `cmux set-status`, batch state with `cmux set-progress`, and
 blocking events with `cmux notify`. Open digests and ticket context beside mission

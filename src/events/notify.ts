@@ -35,10 +35,18 @@ export interface MissionNotificationOptions {
 function missionSession(sessions: SessionRecord[]): SessionRecord | null {
   for (let index = sessions.length - 1; index >= 0; index -= 1) {
     const session = sessions[index]!;
-    if (
-      session.agent?.toLowerCase() === "hermes" &&
-      session.workspace?.startsWith("workspace:")
-    ) {
+    // #90: the handle is accepted in EITHER form, and deliberately not
+    // filtered to `workspace:` any more. That prefix test predates #95 and
+    // selected FOR the short ref — the one form measured to fail OPEN (an
+    // unresolvable `workspace:9999` exits 0 and answers for the focused
+    // workspace, while an unresolvable UUID errors `not_found`). Since #95 a
+    // worker's tab is addressed by the UUID in `CMUX_WORKSPACE_ID`, so the
+    // filter both rejected every UUID-addressed mission — delivery degraded
+    // as "workspace is absent" for a workspace that was present — and kept
+    // only the form Argus should be moving away from. Resolution is not this
+    // function's job: `createCmuxSend` resolves the handle against cmux's own
+    // inventory before typing, and refuses there.
+    if (session.agent?.toLowerCase() === "hermes" && (session.workspace ?? "") !== "") {
       return session;
     }
   }
