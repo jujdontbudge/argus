@@ -552,6 +552,18 @@ function batchSpawn(
 export interface BatchPass {
   label: string;
   report: DispatchReport;
+  /**
+   * The fake tracker's own state the instant this pass returned.
+   *
+   * This is where "the cap refused two tickets" is actually visible. A pass
+   * that broke on `inFlight >= maxConcurrency` never reaches `claimTicket`,
+   * so the refused tickets are NOT in `DispatchReport.excluded` — they are
+   * simply still open and still unassigned. Reading the tracker is the only
+   * way to tell that apart from a frontier that never offered them.
+   */
+  tracker: Array<{ number: string; state: string; assignees: string[] }>;
+  /** Every `gh` argv issued up to the end of this pass. */
+  ghCalls: string[][];
 }
 
 export interface ArchivedMessage {
@@ -705,7 +717,16 @@ export async function runBatchAndSearch(
       // the degradation is recorded rather than engineered away.
       workspace: "auto",
     });
-    passes.push({ label, report });
+    passes.push({
+      ghCalls: gh.calls.map((call) => [...call]),
+      label,
+      report,
+      tracker: gh.issues.map((issue) => ({
+        assignees: [...issue.assignees],
+        number: issue.number,
+        state: issue.state,
+      })),
+    });
     for (const entry of report.dispatched) {
       dispatched.push({
         agent: entry.agent,

@@ -156,16 +156,38 @@ export function renderBatchEvidence(report: BatchSearchReport): string {
     for (const degraded of pass.report.degraded) {
       out.push(`      DEGRADED: ${degraded}`);
     }
+    out.push(
+      `      fake tracker after this pass: ${pass.tracker
+        .map(
+          (issue) =>
+            `#${issue.number}=${issue.state}${issue.assignees.length > 0 ? `/${issue.assignees.join("+")}` : "/unassigned"}`,
+        )
+        .join("  ")}`,
+    );
+    out.push(`      gh calls issued so far: ${pass.ghCalls.length}`);
   }
 
+  const afterFirst = report.passes[0]?.tracker ?? [];
+  const refused = afterFirst.filter((issue) => issue.assignees.length === 0);
   out.push(
     [
       "",
       "  READ THIS BEFORE READING THE COUNTS. Pass 1 had FIVE dispatchable tickets in",
-      "  front of it and started THREE. Tickets four and five were not claimed, not",
-      "  assigned, and never reached deployWorker — the loop broke on `inFlight >=",
-      "  maxConcurrency` before the slot was even attempted. That refusal, not the",
-      "  number of slot files, is the cap doing its job.",
+      "  front of it and started THREE. The two it refused are NOT in `excluded` —",
+      "  the loop broke on `inFlight >= maxConcurrency` before `claimTicket` was ever",
+      "  called on them, so on the tracker they are simply still open and still",
+      "  unassigned. That is where the refusal is visible, and it is the cap doing its",
+      "  job rather than a frontier that never offered them:",
+      "",
+      `    open and STILL UNASSIGNED after pass 1: ${refused.map((issue) => `#${issue.number}`).join(", ") || "(none)"}`,
+      `    claimed by pass 1:                      ${afterFirst
+        .filter((issue) => issue.assignees.length > 0)
+        .map((issue) => `#${issue.number}`)
+        .join(", ") || "(none)"}`,
+      "",
+      "    No `gh issue edit --add-assignee` was issued for the refused tickets in pass",
+      "    1; the full argv list per pass is counted above and the fake tracker is the",
+      "    only tracker this run ever touched.",
     ].join("\n"),
   );
 

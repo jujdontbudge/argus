@@ -158,6 +158,20 @@ export function assertBatch(report: BatchSearchReport): void {
   expect(first.report.maxConcurrency).toBe(3);
   expect(first.report.dispatched).toHaveLength(3);
   expect(first.report.inFlight).toBe(3);
+  // Where the refusal is actually visible: the two tickets the cap held back
+  // never reached `claimTicket`, so on the tracker they are still open and
+  // still unassigned. They are NOT in `excluded` — the loop broke before them.
+  const claimedInPassOne = first.tracker.filter((issue) => issue.assignees.length > 0);
+  expect(claimedInPassOne.map((issue) => issue.number).sort()).toEqual([
+    "501",
+    "502",
+    "503",
+  ]);
+  for (const issue of first.tracker) {
+    if (claimedInPassOne.includes(issue)) continue;
+    expect(issue.state).toBe("open");
+    expect(issue.assignees).toEqual([]);
+  }
 
   // ---- 2. Three worktrees, three sessions, no sharing ----------------------
   expect(report.dispatched).toHaveLength(5);
