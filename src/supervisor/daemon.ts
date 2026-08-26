@@ -8,6 +8,7 @@ import {
 export function createWatcherSpawner(
   commandPrefix: readonly string[],
   env?: Readonly<Record<string, string>>,
+  options: { stderr?: "ignore" | "inherit" } = {},
 ): SpawnWatcher {
   return ({ eye, repo }) => {
     const child = Bun.spawn(
@@ -15,7 +16,7 @@ export function createWatcherSpawner(
       {
         cwd: repo,
         ...(env !== undefined && { env }),
-        stderr: "inherit",
+        stderr: options.stderr ?? "inherit",
         stdout: "ignore",
       },
     );

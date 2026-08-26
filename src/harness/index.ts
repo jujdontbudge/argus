@@ -86,7 +86,7 @@ export function createSandboxWatcherSpawner(
   return createWatcherSpawner(commandPrefix, {
     ...sandbox.env,
     ARGUS_WATCH_OWNER_PID: String(process.pid),
-  });
+  }, { stderr: "ignore" });
 }
 
 export type TestAgent = "claude" | "codex";
