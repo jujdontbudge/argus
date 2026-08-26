@@ -1,6 +1,7 @@
 import { gitRoot } from "../up/git.ts";
 import {
   formatSupervisorStatus,
+  originRefusalStatus,
   stopRepo,
   supervisorStatus,
 } from "./control.ts";
@@ -20,6 +21,10 @@ export async function down(cwd = process.cwd()): Promise<number> {
 }
 
 export async function status(): Promise<number> {
-  console.log(formatSupervisorStatus(await supervisorStatus()).trimEnd());
+  const [rows, refusals] = await Promise.all([
+    supervisorStatus(),
+    originRefusalStatus(),
+  ]);
+  console.log(formatSupervisorStatus(rows, refusals).trimEnd());
   return 0;
 }

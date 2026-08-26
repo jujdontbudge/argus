@@ -21,6 +21,7 @@ import {
   type CursorMap,
   Tailer,
 } from "../tailing/index.ts";
+import { recordOriginRefusals } from "../provenance/origin-audit.ts";
 import { loadHonchoBinding } from "./honcho/honcho.ts";
 
 function codexForRepo(source: TranscriptSource, repo: string): TranscriptSource {
@@ -120,13 +121,20 @@ function rowKey(row: SessionRecord | SendRecord): string {
 
 /** One watcher's stateful registry classifier over its repo-scoped source. */
 export class ProvenanceFeed {
+  readonly #auditRegistryPath: string;
   readonly #classifier = new ProvenanceClassifier();
   readonly #repo: string;
   readonly #seenSends = new Set<string>();
   readonly #seenSessions = new Set<string>();
   readonly #tailer: Tailer;
 
-  constructor(source: TranscriptSource, repo: string, cursors: CursorMap = {}) {
+  constructor(
+    source: TranscriptSource,
+    repo: string,
+    auditRegistryPath: string,
+    cursors: CursorMap = {},
+  ) {
+    this.#auditRegistryPath = auditRegistryPath;
     this.#repo = repo;
     this.#tailer = new Tailer(source, { cursors });
   }
@@ -166,6 +174,17 @@ export class ProvenanceFeed {
       if (output.record !== null) records.push(output.record);
     }
     audits.push(...this.#classifier.sweep(Date.now()));
-    return { audits, records, sessions };
+    const recordedOriginRefusals = new Set(
+      await recordOriginRefusals(this.#auditRegistryPath, this.#repo, audits),
+    );
+    return {
+      audits: audits.filter(
+        (audit) =>
+          audit.type !== "claude-origin-kind-refused" ||
+          recordedOriginRefusals.has(audit),
+      ),
+      records,
+      sessions,
+    };
   }
 }

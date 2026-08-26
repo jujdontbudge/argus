@@ -86,6 +86,7 @@ class ClaudeCodeParser implements SourceParser {
       if (content !== undefined) {
         const uuid = str(rec.uuid);
         const promptSource = str(rec.promptSource);
+        const origin = str(asRecord(rec.origin)?.kind);
         events.push({
           type: "message",
           sessionId,
@@ -94,6 +95,7 @@ class ClaudeCodeParser implements SourceParser {
           ts,
           ...(uuid !== undefined && { uuid }),
           ...(promptSource !== undefined && { promptSource }),
+          ...(origin !== undefined && { origin }),
           candidate: claudeCandidateText(rec) !== null,
           file: this.file,
         });

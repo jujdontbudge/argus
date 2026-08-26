@@ -70,6 +70,10 @@ function claudeOriginKind(rec: Rec): string | null {
  * `queued` is not special-cased any more, but it is worth recording that it is
  * NOT dead: #50's ticket reports it as never seen in 18,000 lines, which was
  * the `*argus*` slugs only. Across all 60 slugs it appears 110 times.
+ *
+ * #53 adds visibility without changing these rules: the parser carries the
+ * kind on MessageEvent, and the first refusal per kind is surfaced by
+ * `argus status`. Absence remains absent and never alarms.
  */
 export function claudeCandidateText(record: unknown): string | null {
   const rec = asRecord(record);

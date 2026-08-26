@@ -79,9 +79,15 @@ async function openEye(
   repo: string,
   source: TranscriptSource,
   signal: AbortSignal,
+  registryPath: string,
 ): Promise<OpenWatcher> {
   const cursorPath = join(repo, ".argus", "eyes", eye, "cursors.json");
-  const feed = new ProvenanceFeed(source, repo, await loadCursors(cursorPath));
+  const feed = new ProvenanceFeed(
+    source,
+    repo,
+    registryPath,
+    await loadCursors(cursorPath),
+  );
   const ingest = async (
     consume: (batch: Awaited<ReturnType<ProvenanceFeed["catchUp"]>>) => Promise<void>,
   ): Promise<void> => {
@@ -222,7 +228,13 @@ async function runLoop(
         source ??= await (
           await import("./eyes/source.ts")
         ).createRepoTranscriptSource(repo);
-        watcher ??= await openEye(eye, repo, source, controller.signal);
+        watcher ??= await openEye(
+          eye,
+          repo,
+          source,
+          controller.signal,
+          registryPath,
+        );
         await watcher.tick?.();
       } catch (error) {
         console.error(

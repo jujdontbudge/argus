@@ -9,6 +9,10 @@ import {
 } from "./launchd.ts";
 import { disableRepo, readEnabledRepos } from "./registry.ts";
 import { EYE_NAMES, type EyeName, type SupervisorStatus } from "./runtime.ts";
+import {
+  readOriginRefusals,
+  type OriginRefusalAudit,
+} from "../provenance/origin-audit.ts";
 
 interface CommandResult {
   exitCode: number;
@@ -179,7 +183,20 @@ export async function supervisorStatus(
   );
 }
 
-export function formatSupervisorStatus(rows: readonly ProcessStatusRow[]): string {
+export interface OriginRefusalStatus extends OriginRefusalAudit {
+  repo: string;
+}
+
+export async function originRefusalStatus(
+  configuration = supervisorConfiguration(),
+): Promise<OriginRefusalStatus[]> {
+  return readOriginRefusals(configuration.job.registryPath);
+}
+
+export function formatSupervisorStatus(
+  rows: readonly ProcessStatusRow[],
+  originRefusals: readonly OriginRefusalStatus[] = [],
+): string {
   const values = [
     ["REPO", "EYE", "STATE", "PID"],
     ...rows.map((row) => [row.repo, row.eye, row.state, row.pid?.toString() ?? "-"]),
@@ -187,7 +204,7 @@ export function formatSupervisorStatus(rows: readonly ProcessStatusRow[]): strin
   const widths = values[0]!.map((_, column) =>
     Math.max(...values.map((row) => row[column]!.length)),
   );
-  return `${values
+  const watchers = values
     .map((row) =>
       row
         .map((value, column) =>
@@ -196,5 +213,12 @@ export function formatSupervisorStatus(rows: readonly ProcessStatusRow[]): strin
         .join("  ")
         .trimEnd(),
     )
-    .join("\n")}\n`;
+    .join("\n");
+  const alerts = originRefusals
+    .map(
+      ({ kind, repo, ts }) =>
+        `${repo}: refused Claude origin.kind ${JSON.stringify(kind)} at ${ts}`,
+    )
+    .join("\n");
+  return `${watchers}\n${alerts === "" ? "" : `\nCANDIDACY ALERTS\n${alerts}\n`}`;
 }
