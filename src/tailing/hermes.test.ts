@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,7 +24,62 @@ async function fixtureDatabase(
   return { db, file };
 }
 
+async function runGit(cwd: string, args: string[]): Promise<void> {
+  const child = Bun.spawn(["git", "-C", cwd, ...args], {
+    env: {
+      ...Bun.env,
+      GIT_AUTHOR_EMAIL: "fixture@invalid.example",
+      GIT_AUTHOR_NAME: "Argus Fixture",
+      GIT_COMMITTER_EMAIL: "fixture@invalid.example",
+      GIT_COMMITTER_NAME: "Argus Fixture",
+    },
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  if ((await child.exited) !== 0) {
+    throw new Error(await new Response(child.stderr).text());
+  }
+}
+
 describe("Hermes state.db source", () => {
+  test("resolves a real linked-worktree cwd to its parent repository", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-hermes-source-"));
+    try {
+      const parent = join(root, "parent");
+      const worktree = join(root, "worktrees/ticket-52");
+      await mkdir(parent, { recursive: true });
+      await runGit(parent, ["init", "--quiet"]);
+      await runGit(parent, ["commit", "--quiet", "--allow-empty", "-m", "fixture"]);
+      await mkdir(join(root, "worktrees"), { recursive: true });
+      await runGit(parent, ["worktree", "add", "--quiet", "--detach", worktree]);
+
+      const { db } = await fixtureDatabase(root);
+      db.run(
+        `INSERT INTO sessions
+          (id, source, started_at, message_count, cwd)
+         VALUES (?, ?, ?, ?, ?)`,
+        ["session-worktree", "cli", 1_777_000_000, 1, worktree],
+      );
+      db.run(
+        "INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)",
+        ["session-worktree", "user", "Resolve this repository.", 1_777_000_001],
+      );
+      db.close();
+
+      const events = await new Tailer(
+        createHermesSource({ hermesRoot: root }),
+      ).catchUp();
+
+      expect(events[0]).toMatchObject({
+        type: "session-meta",
+        cwd: worktree,
+        repo: await realpath(parent),
+      });
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
   test("polls configured profile homes by message id and decodes persisted content", async () => {
     const root = await mkdtemp(join(tmpdir(), "argus-hermes-source-"));
     try {
