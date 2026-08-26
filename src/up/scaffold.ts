@@ -9,8 +9,18 @@
  * launchd. Both are convergers, so running either twice changes nothing.
  */
 
-import { lstat, mkdir, readdir, readlink, rename, rm, symlink } from "node:fs/promises";
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  readdir,
+  readlink,
+  rename,
+  rm,
+  symlink,
+} from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export const ARGUS_DIRECTORIES = [
   "registry",
@@ -96,6 +106,10 @@ standing directives, how he wants work done here. Only provenance-verified
 Johan messages reach this file. Safe to edit by hand.
 `,
 } as const;
+
+const ORCHESTRATOR_SKILL_SOURCE = fileURLToPath(
+  new URL("../../skills/argus-orchestrator/SKILL.md", import.meta.url),
+);
 
 /** Repo-relative paths Argus writes that belong in version control. */
 export const INTEGRATION_PATHS = [".gitignore", "AGENTS.md", "docs/agents"] as const;
@@ -313,6 +327,24 @@ async function seedMemoryFiles(memoryDirectory: string): Promise<string[]> {
 }
 
 /**
+ * Fork the bundled orchestrator procedure into the repo's canonical store.
+ *
+ * The copy is deliberately seed-only. Once present, the repo's skill may be
+ * edited by a human or the learning loop, and a later `argus up` must not
+ * replace that local fork with newer bundled bytes without a merge.
+ */
+async function seedOrchestratorSkill(skillsDirectory: string): Promise<void> {
+  const destination = join(
+    skillsDirectory,
+    "argus-orchestrator",
+    "SKILL.md",
+  );
+  if (await pathExists(destination)) return;
+  await mkdir(dirname(destination), { recursive: true });
+  await copyFile(ORCHESTRATOR_SKILL_SOURCE, destination);
+}
+
+/**
  * Everything Argus generates that must NOT be committed.
  *
  * `.claude/skills` is a symlink into the ignored canonical store and `init`
@@ -396,6 +428,7 @@ export async function scaffoldRepo(repo: string): Promise<ScaffoldReport> {
   await migrateClaudeMemory(repo, memoryDirectory);
   const seededMemory = await seedMemoryFiles(memoryDirectory);
 
+  await seedOrchestratorSkill(join(argusDirectory, "skills"));
   await ensureClaudeSkillsAdapter(repo);
   await ensureAgentsPointer(repo);
   await ensureMattWiring(repo, await githubRepo(repo));

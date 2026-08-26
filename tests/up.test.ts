@@ -193,6 +193,54 @@ describe("argus up", () => {
     expect(result.stdout).toContain("Committed nothing");
   });
 
+  test("installs the orchestrator skill at the path configured for Hermes", async () => {
+    const { env, repo } = await createScratchRepo("Hermes Orchestrator Skill");
+
+    const result = await runUp(repo, env);
+
+    expect(result.exitCode).toBe(0);
+    const profile = result.stdout.match(/^Hermes profile: (\S+)$/m)?.[1];
+    expect(profile).toBeDefined();
+    const config = await Bun.file(
+      join(env.HERMES_HOME!, "profiles", profile!, "config.yaml"),
+    ).text();
+    const configuredDirectory = config.match(
+      /external_dirs:\n\s+- ("(?:[^"\\]|\\.)*")/,
+    )?.[1];
+    expect(configuredDirectory).toBeDefined();
+    const configuredSkillsDirectory = JSON.parse(configuredDirectory!);
+
+    const skillPath = join(
+      configuredSkillsDirectory,
+      "argus-orchestrator",
+      "SKILL.md",
+    );
+    const skill = await Bun.file(skillPath).text();
+    expect(skill).toContain("name: argus-orchestrator");
+    expect((await lstat(skillPath)).isSymbolicLink()).toBe(false);
+    expect(await realpath(join(repo, ".claude", "skills"))).toBe(
+      await realpath(configuredSkillsDirectory),
+    );
+  });
+
+  test("preserves a locally edited orchestrator skill on re-run", async () => {
+    const { env, repo } = await createScratchRepo("Edited Orchestrator Skill");
+    const skill = join(
+      repo,
+      ".argus",
+      "skills",
+      "argus-orchestrator",
+      "SKILL.md",
+    );
+
+    expect((await runUp(repo, env)).exitCode).toBe(0);
+    const edited = "# Project-specific orchestrator\n\nKeep this local behavior.\n";
+    await Bun.write(skill, edited);
+
+    expect((await runUp(repo, env)).exitCode).toBe(0);
+    expect(await Bun.file(skill).text()).toBe(edited);
+  });
+
   test("commits the integration files only when explicitly asked", async () => {
     const { env, repo } = await createScratchRepo();
 
@@ -254,7 +302,7 @@ describe("argus up", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain(
-      "wiring: claude skills adapter OK (1 canonical skill readable through .claude/skills)",
+      "wiring: claude skills adapter OK (2 canonical skills readable through .claude/skills)",
     );
     expect(result.stdout).toContain("wiring: AGENTS.md pointers OK (6/6 resolve)");
     expect(result.stdout).toContain(
@@ -300,7 +348,7 @@ description: proves Hermes reads the Argus canonical skills store
 
     expect(listed.exitCode).toBe(0);
     expect(listed.stdout).toContain("argus-reader-proof");
-    expect(listed.stdout).toContain("1 local");
+    expect(listed.stdout).toContain("2 local");
     expect(listed.stdout).toContain("enabled");
   });
 
