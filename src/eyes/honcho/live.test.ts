@@ -4,8 +4,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { liveHalfTitle } from "../../harness/live-gate";
 import type { ProvenanceRecord } from "../../provenance";
 import { HttpHonchoClient } from "../../up/bindings";
+import {
+  describeLiveIntegrationGate,
+  LIVE_HONCHO_GATE,
+  liveGateEnabled,
+  resolveHonchoGate,
+} from "../live-gate";
 import { HonchoEye } from "./honcho";
 
 const LIVE_URL = "http://localhost:8000";
@@ -27,18 +34,41 @@ async function configuredApiKey(): Promise<string | null> {
   }
 }
 
-const live = await (async (): Promise<{ apiKey: string } | null> => {
+async function probeLiveHoncho(): Promise<{
+  live: { apiKey: string } | null;
+  reason: string | null;
+}> {
   const apiKey = await configuredApiKey();
-  if (!apiKey) return null;
+  if (!apiKey) {
+    return { live: null, reason: "Honcho credentials are not configured" };
+  }
   try {
     const response = await fetch(`${LIVE_URL}/health`, {
       signal: AbortSignal.timeout(500),
     });
-    return response.ok ? { apiKey } : null;
+    return response.ok
+      ? { live: { apiKey }, reason: null }
+      : {
+          live: null,
+          reason: `the local Honcho health check returned ${response.status}`,
+        };
   } catch {
-    return null;
+    return { live: null, reason: "the local Honcho service is unavailable" };
   }
-})();
+}
+
+const probe = liveGateEnabled(LIVE_HONCHO_GATE, Bun.env)
+  ? await probeLiveHoncho()
+  : { live: null, reason: null };
+const live = probe.live;
+const liveGate = resolveHonchoGate(Bun.env, probe.reason);
+console.log(
+  describeLiveIntegrationGate(
+    "live local Honcho integration",
+    LIVE_HONCHO_GATE,
+    liveGate,
+  ),
+);
 
 async function cleanup(
   apiKey: string,
@@ -91,10 +121,13 @@ function liveRecord(sessionId: string, text: string): ProvenanceRecord {
   };
 }
 
-const liveTest = live === null ? test.skip : test;
+const liveTest = liveGate.status === "run" ? test : test.skip;
 
 liveTest(
-  "live local Honcho accepts a scratch eye batch and cleans up session then workspace",
+  liveHalfTitle(
+    "live local Honcho accepts a scratch eye batch and cleans up session then workspace",
+    liveGate,
+  ),
   async () => {
     const suffix = randomUUID();
     const workspace = `scratch-argus-honcho-eye-${suffix}`;
