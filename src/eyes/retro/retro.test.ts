@@ -198,6 +198,48 @@ describe("the Retro watcher's production tick path", () => {
       await place.cleanup();
     }
   }, BUDGET_MS);
+
+  test("git-only work is scanned on an independent periodic cadence", async () => {
+    const place = await scratch();
+    const gh = createFakeGh({ repo: "JohanSardar/argus" });
+    let now = 0;
+    try {
+      const { eye } = await openEye(place, gh, { now: () => now });
+      await place.commit("src/git-only.ts", "export const gitOnly = true;\n", "git-only work");
+
+      now = 600_000;
+      const filings = await eye.tick();
+
+      expect(filings.map((filing) => filing.title)).toEqual(["Retro: git-only work"]);
+    } finally {
+      await place.cleanup();
+    }
+  }, BUDGET_MS);
+
+  test("an observed session survives restart before production tick files its work", async () => {
+    const place = await scratch();
+    const gh = createFakeGh({ repo: "JohanSardar/argus" });
+    let now = 0;
+    const prompt = "Please add the restart-safe worker without a ticket.";
+    try {
+      const harness = await openEye(place, gh, { now: () => now });
+      await harness.eye.observeSession({ sessionId: "sess-restart", cwd: place.repo });
+
+      const restarted = await harness.reopen();
+      await restarted.ingest([johanSays("sess-restart", prompt)]);
+      await place.commit(
+        "src/restart-safe.ts",
+        "export const restartSafe = true;\n",
+        "restart-safe work",
+      );
+
+      now = 60_000;
+      expect(await restarted.tick()).toHaveLength(1);
+      expect(filedIssue(gh)!.body).toContain(prompt);
+    } finally {
+      await place.cleanup();
+    }
+  }, BUDGET_MS);
 });
 
 describe("the Retro eye files closed retro sub-issues (SPEC §5.5)", () => {
@@ -218,7 +260,7 @@ describe("the Retro eye files closed retro sub-issues (SPEC §5.5)", () => {
         "adhoc-sess-rogue.md",
         "Implemented the frobnicator end to end.",
       );
-      eye.observeSession({ sessionId: "sess-rogue", cwd: place.repo });
+      await eye.observeSession({ sessionId: "sess-rogue", cwd: place.repo });
       await eye.ingest([
         johanSays("sess-rogue", "just add a frobnicator, don't bother with a ticket"),
       ]);
@@ -310,7 +352,7 @@ describe("the Retro eye files closed retro sub-issues (SPEC §5.5)", () => {
       await eye.prime();
       await place.commit("src/johan.ts", "export const mine = true;\n", "johan's own fix");
       await seedDigest(place.repo, "adhoc-sess-johan.md", "Johan implemented a fix.");
-      eye.observeSession({ sessionId: "sess-johan", cwd: place.repo });
+      await eye.observeSession({ sessionId: "sess-johan", cwd: place.repo });
       await eye.ingest([johanSays("sess-johan", "I'll just do this one myself")]);
 
       const filings = await eye.scan();
@@ -352,7 +394,7 @@ describe("the Retro eye degrades loudly, never silently (ADR-0001)", () => {
       await eye.prime();
       await place.commit("src/rogue.ts", "export const rogue = 1;\n", "rogue work");
       await seedDigest(place.repo, "adhoc-sess-rogue.md", "Implemented something.");
-      eye.observeSession({ sessionId: "sess-rogue", cwd: place.repo });
+      await eye.observeSession({ sessionId: "sess-rogue", cwd: place.repo });
       await eye.ingest([johanSays("sess-rogue", "do the thing")]);
 
       const filings = await eye.scan();
@@ -402,7 +444,7 @@ describe("the Retro eye degrades loudly, never silently (ADR-0001)", () => {
       await eye.prime();
       await place.commit("src/rogue.ts", "export const rogue = 1;\n", "rogue work");
       await seedDigest(place.repo, "adhoc-sess-rogue.md", "Implemented something.");
-      eye.observeSession({ sessionId: "sess-rogue", cwd: place.repo });
+      await eye.observeSession({ sessionId: "sess-rogue", cwd: place.repo });
 
       const filings = await eye.scan();
 

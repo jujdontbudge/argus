@@ -163,6 +163,8 @@ interface PersistedState {
   /** Johan-authored prompts per session, newest last (bounded). */
   prompts: StoredPrompt[];
   window: CoalesceWindow | null;
+  /** Independent git-scan deadline; transcript activity may make a scan earlier. */
+  nextScanAt: number | null;
   /** The git cursor: commit shas already reported. */
   seen: string[];
   /** signalId → issue number, or "not-implementation" / "unfiled". */
@@ -186,6 +188,7 @@ function emptyState(): PersistedState {
   return {
     prompts: [],
     window: null,
+    nextScanAt: null,
     seen: [],
     judged: {},
     filedSessions: [],
@@ -349,6 +352,10 @@ export class RetroEye {
         state = {
           prompts: Array.isArray(raw.prompts) ? raw.prompts : [],
           window: raw.window ?? null,
+          nextScanAt:
+            typeof raw.nextScanAt === "number" && Number.isFinite(raw.nextScanAt)
+              ? raw.nextScanAt
+              : null,
           seen: Array.isArray(raw.seen) ? raw.seen : [],
           judged: raw.judged ?? {},
           filedSessions: Array.isArray(raw.filedSessions) ? raw.filedSessions : [],
@@ -365,7 +372,16 @@ export class RetroEye {
     }
     const eye = new RetroEye(options, state);
     if (!state.primed) await eye.prime();
+    else if (state.nextScanAt === null) {
+      eye.scheduleNextScan();
+      await eye.persist();
+    }
     return eye;
+  }
+
+  private scheduleNextScan(): void {
+    this.state.nextScanAt =
+      this.now() + this.options.cadence.maxWaitSeconds * 1_000;
   }
 
   /**
@@ -382,6 +398,7 @@ export class RetroEye {
     this.state.seen = scan.seen;
     this.cursorWorkingTrees(scan);
     this.state.primed = true;
+    this.scheduleNextScan();
     await this.persist();
   }
 
@@ -408,8 +425,9 @@ export class RetroEye {
   }
 
   /** A session was seen running in a checkout (session-meta `cwd`). */
-  observeSession(observation: SessionObservation): void {
+  async observeSession(observation: SessionObservation): Promise<void> {
     this.state.sessionDirs[observation.sessionId] = observation.cwd;
+    await this.persist();
   }
 
   /** Johan-authored turns arrive as retro evidence; nothing else is kept. */
@@ -434,12 +452,16 @@ export class RetroEye {
 
   /** Epoch ms of the next due scan, or null when nothing is pending. */
   dueAt(): number | null {
-    return this.coalescer.dueAt();
+    const transcriptDue = this.coalescer.dueAt();
+    if (transcriptDue === null) return this.state.nextScanAt;
+    if (this.state.nextScanAt === null) return transcriptDue;
+    return Math.min(transcriptDue, this.state.nextScanAt);
   }
 
   /** Run a scan if the cadence says it is due. */
   async tick(): Promise<RetroFiling[]> {
-    if (!this.coalescer.shouldFire(this.now())) return [];
+    const due = this.dueAt();
+    if (due === null || this.now() < due) return [];
     return this.scan();
   }
 
@@ -503,6 +525,7 @@ export class RetroEye {
       this.coalescer.flush();
 
       if (signals.length === 0 && drifts.length === 0) {
+        this.scheduleNextScan();
         await this.persist();
         return [];
       }
@@ -515,6 +538,7 @@ export class RetroEye {
       if (drifts.length > 0) {
         filings.push(...(await this.judgeDrift(drifts, tracker, digests)));
       }
+      this.scheduleNextScan();
       await this.persist();
       return filings;
     } finally {

@@ -320,7 +320,7 @@ export function rogueSessionScenario(
     ]);
     await runDigest(sandbox, records);
     for (const [sessionId, cwd] of sessionDirs) {
-      eye.observeSession({ sessionId, cwd });
+      await eye.observeSession({ sessionId, cwd });
     }
     await eye.ingest(records);
 

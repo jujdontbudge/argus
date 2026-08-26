@@ -141,7 +141,7 @@ async function openEye(
         resource,
         async tick() {
           await ingest(async (batch) => {
-            for (const session of batch.sessions) resource.observeSession(session);
+            for (const session of batch.sessions) await resource.observeSession(session);
             await resource.ingest(batch.records);
           });
           await resource.tick();
