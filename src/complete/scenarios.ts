@@ -13,14 +13,16 @@
  * base, the merge, the durable event file, the signal consumption, and
  * `completeReadyTickets` itself — the same function `argus complete` calls.
  * Faked: `gh` (SPEC §13 forbids a test run from writing to a tracker), the
- * review brain, the worker process, and the gate commands. So what it proves is
- * that the production loop closes a ticket end to end against a tracker double
- * — not that a live agent's work survives a live review. The live half belongs
- * to #63's acceptance gates, and claiming it here would be the "ten pass"
+ * review brain and the worker process. The default gate commands are real and
+ * run in the production-created worktree. So what this proves is that the
+ * production loop closes a ticket end to end against a tracker double — not
+ * that a live agent's work survives a live review. The live half belongs to
+ * #63's acceptance gates, and claiming it here would be the "ten pass"
  * overclaim AUDIT.md §4 item 10 records.
  */
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { completeReadyTickets } from "./complete.ts";
 import { deployWorker, worktreeForTicket } from "../deploy";
@@ -32,6 +34,7 @@ import type { ScenarioHandler, ScenarioRegistry } from "../harness/index.ts";
 
 const TICKET = "7";
 const LOGIN = "argus-bot";
+const CHECKOUT = fileURLToPath(new URL("../../", import.meta.url));
 const MAP_BODY = ["## Destination", "", "A closed loop.", "", "## Decisions so far", ""].join(
   "\n",
 );
@@ -84,6 +87,19 @@ export function batchClosureScenario(brain?: Brain): ScenarioHandler {
     });
     gh.seed({ body: MAP_BODY, labels: ["wayfinder:map"], number: 900, title: "Map" });
 
+    // Scenario 1 is a TypeScript project for the same reason production is:
+    // its default gates require the lockfile's dependencies. Before #87 this
+    // exact setup made the completion loop refuse every freshly created
+    // ticket worktree at typecheck.
+    await Promise.all([
+      writeFile(join(repo, "package.json"), await readFile(join(CHECKOUT, "package.json"))),
+      writeFile(join(repo, "tsconfig.json"), await readFile(join(CHECKOUT, "tsconfig.json"))),
+      writeFile(join(repo, "bun.lock"), await readFile(join(CHECKOUT, "bun.lock"))),
+      writeFile(join(repo, ".gitignore"), await readFile(join(CHECKOUT, ".gitignore"))),
+    ]);
+    await git(["add", "package.json", "tsconfig.json", "bun.lock", ".gitignore"], repo);
+    await git(["commit", "--quiet", "-m", "seed locked TypeScript project"], repo);
+
     const deployed = await deployWorker(
       {
         agent: "claude",
@@ -102,7 +118,16 @@ export function batchClosureScenario(brain?: Brain): ScenarioHandler {
 
     await mkdir(join(worktree, "src"), { recursive: true });
     await writeFile(join(worktree, "src/batch.ts"), "export const batch = 7;\n");
-    await git(["add", "src/batch.ts"], worktree);
+    await writeFile(
+      join(worktree, "src/batch.test.ts"),
+      [
+        'import { expect, test } from "bun:test";',
+        'import { batch } from "./batch.ts";',
+        'test("ticket 7 implements the batch", () => expect(batch).toBe(7));',
+        "",
+      ].join("\n"),
+    );
+    await git(["add", "src/batch.ts", "src/batch.test.ts"], worktree);
     await git(["commit", "--quiet", "-m", `feat: ticket ${TICKET}`], worktree);
 
     // The §6 push signal a finished session leaves behind — the only channel.
@@ -116,7 +141,6 @@ export function batchClosureScenario(brain?: Brain): ScenarioHandler {
     const report = await completeReadyTickets({
       base,
       ...(brain !== undefined && { brain }),
-      gates: [{ command: ["git", "rev-parse", "HEAD"], name: "gate" }],
       gh: gh.run,
       repo,
       ...(brain === undefined && {

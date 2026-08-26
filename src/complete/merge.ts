@@ -203,13 +203,12 @@ export async function mergeTicketBranch(request: {
  * Retire a merged ticket's worktree and branch. Returns null on success, or
  * the reason it could not be done.
  *
- * Deliberately unlike recovery's disposal (`src/dispatch/recover.ts`), which
- * removes a worktree that produced NOTHING and therefore uses `--force` and
- * `branch -D`. Here the work exists and is already in the base, so the safe
- * forms are the correct ones: a plain `worktree remove` refuses if the dead
- * session left anything uncommitted, and `branch -d` refuses if the branch is
- * somehow not merged after all. Both refusals are degradations, never merges
- * undone — the merge already happened and is not in question.
+ * Unlike recovery's disposal (`src/dispatch/recover.ts`), this path first
+ * proves the checkout has no tracked or untracked work left. It then uses a
+ * forced worktree removal only to permit deletion of ignored provisioning
+ * artifacts such as `node_modules/`; `branch -d` still refuses if the branch
+ * is somehow not merged after all. Both refusals are degradations, never
+ * merges undone — the merge already happened and is not in question.
  */
 export async function retireWorktree(request: {
   branch: string;
@@ -219,7 +218,17 @@ export async function retireWorktree(request: {
 }): Promise<string | null> {
   const { branch, git, repo, worktree } = request;
   if (await directoryExists(worktree)) {
-    const removed = await git(["worktree", "remove", worktree], repo);
+    const status = await git(
+      ["status", "--porcelain", "--untracked-files=all"],
+      worktree,
+    );
+    if (status.exitCode !== 0) {
+      return `the worktree status could not be read (${detail(status)})`;
+    }
+    if (status.stdout.trim() !== "") {
+      return "the worktree has uncommitted tracked or untracked files and was not removed";
+    }
+    const removed = await git(["worktree", "remove", "--force", worktree], repo);
     if (removed.exitCode !== 0) {
       return `the worktree could not be removed (${detail(removed)})`;
     }
