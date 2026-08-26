@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { lstat, mkdtemp, mkdir, readlink, rm } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, readlink, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
   convergeAgentBindings,
   HttpHonchoClient,
+  type HermesCronRun,
   type HonchoClient,
   type HonchoPeerInput,
   type HonchoWorkspaceInput,
@@ -306,6 +307,71 @@ curator:
   enabled: false
 `,
     );
+  });
+
+  test("provisions one repo-scoped Hermes slow-poll cron job idempotently", async () => {
+    const { repo, root } = await scratchRepo("Signal Consumer");
+    const canonicalRepo = await realpath(repo);
+    const hermesRoot = join(root, "hermes");
+    const calls: Array<{ args: readonly string[]; hermesHome: string }> = [];
+    const cron: HermesCronRun = async (args, env) => {
+      calls.push({ args, hermesHome: env.HERMES_HOME! });
+      const cronDirectory = join(env.HERMES_HOME!, "cron");
+      await mkdir(cronDirectory, { recursive: true });
+      await Bun.write(
+        join(cronDirectory, "jobs.json"),
+        `${JSON.stringify({
+          jobs: [
+            {
+              id: "argus-test-job",
+              name: "argus-signal-poll",
+              script: "argus-signal-poll.sh",
+              schedule: { kind: "interval", minutes: 5 },
+              schedule_display: "every 5m",
+              workdir: canonicalRepo,
+              enabled: true,
+            },
+          ],
+        })}\n`,
+      );
+      return { exitCode: 0, stderr: "", stdout: "Created cron job\n" };
+    };
+    const options = {
+      argusCli: "/opt/argus/src/cli.ts",
+      bunExecutable: "/opt/bun/bin/bun",
+      hermesCron: cron,
+      hermesRoot,
+      honcho: new FakeHoncho(),
+      honchoUrl: "http://honcho.test:8000",
+      repo,
+    };
+
+    const first = await convergeAgentBindings(options);
+    const second = await convergeAgentBindings(options);
+
+    const profile = join(hermesRoot, "profiles", "argus-signal-consumer");
+    const script = join(profile, "scripts", "argus-signal-poll.sh");
+    expect(first.cron).toBe("created");
+    expect(second.cron).toBe("existing");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.hermesHome).toBe(profile);
+    expect(calls[0]!.args).toEqual([
+      "cron",
+      "create",
+      "every 5m",
+      "Act on each Argus terminal signal from the script output. Use the repo's argus-orchestrator skill; never implement worker tickets yourself.",
+      "--name",
+      "argus-signal-poll",
+      "--script",
+      "argus-signal-poll.sh",
+      "--workdir",
+      canonicalRepo,
+    ]);
+    expect(await Bun.file(script).text()).toBe(
+      "#!/bin/sh\nexec '/opt/bun/bin/bun' '/opt/argus/src/cli.ts' signals --repo '" +
+        `${canonicalRepo}'\n`,
+    );
+    expect((await lstat(script)).mode & 0o111).not.toBe(0);
   });
 
   test("fills only missing settings in an existing profile and repairs its memories directory", async () => {

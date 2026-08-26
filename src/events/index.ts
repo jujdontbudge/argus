@@ -11,6 +11,13 @@ export {
   type HookRuntime,
 } from "./hooks.ts";
 export {
+  consumePushedEvent,
+  pollHermesSignals,
+  type HermesSignal,
+  type HermesSignalPollOptions,
+  type TerminalSignalStatus,
+} from "./consumer.ts";
+export {
   createCmuxResolve,
   createCmuxSend,
   listedRefs,

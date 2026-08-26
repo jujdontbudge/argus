@@ -8,8 +8,9 @@ import {
   registryPaths,
   type ProvenanceScenarioDriver,
 } from "../provenance";
+import { pollHermesSignals } from "./consumer.ts";
 import { handleClaudeStop, handleCodexNotify } from "./hooks.ts";
-import type { CmuxSend } from "./notify.ts";
+import type { CmuxRun } from "./notify.ts";
 import { parseArgusEvent } from "./schema.ts";
 
 /** §13 scenario 7 — retain the digest poll half, then add the push half. */
@@ -21,6 +22,19 @@ export function eventSignalPathsScenario(
     await digestHalf(context);
     const { assert, sandbox } = context;
     const paths = registryPaths(sandbox.repo);
+
+    const polledWithoutPush = await pollHermesSignals(sandbox.repo);
+    assert(
+      polledWithoutPush.map(({ status }) => status).sort().join(",") ===
+        "blocked,done" &&
+        polledWithoutPush.every(({ source }) => source === "poll"),
+      "the production slow poll delivered finish and block when no push arrived",
+    );
+    assert(
+      (await pollHermesSignals(sandbox.repo)).length === 0,
+      "the slow poll cursor delivered each terminal status once",
+    );
+
     await appendFile(
       paths.sessionsFile,
       `${JSON.stringify({
@@ -34,25 +48,39 @@ export function eventSignalPathsScenario(
 
     let registryWasAhead = true;
     let cmuxCalls = 0;
-    const send: CmuxSend = async (request) => {
+    const cmux: CmuxRun = async (args) => {
+      if (args[0] === "list-workspaces") {
+        return {
+          exitCode: 0,
+          stderr: "",
+          stdout: "  workspace:scenario-7  argus/mission\n",
+        };
+      }
+      if (args[0] === "send-key") {
+        return { exitCode: 0, stderr: "", stdout: "" };
+      }
+      if (args[0] !== "send") {
+        return { exitCode: 2, stderr: `unexpected cmux call: ${args.join(" ")}`, stdout: "" };
+      }
       const sends = (await Bun.file(paths.sendsFile).text())
         .split("\n")
         .filter(Boolean)
         .map((line) => JSON.parse(line) as { text?: unknown });
+      const text = args.at(-1);
       cmuxCalls += 1;
       registryWasAhead =
-        registryWasAhead && sends.some(({ text }) => text === request.text);
-      return { ok: true };
+        registryWasAhead && sends.some((row) => row.text === text);
+      return { exitCode: 0, stderr: "", stdout: "" };
     };
     const runtime = {
+      cmux,
       now: () => new Date("2026-08-25T12:00:01.000Z"),
-      send,
     };
     const [finished, blocked] = await Promise.all([
       handleClaudeStop(
         {
           hook_event_name: "Stop",
-          session_id: "sess-finisher",
+          session_id: "sess-push-finisher",
           cwd: sandbox.repo,
           last_assistant_message: "Implemented ticket #8, gates green. DONE.",
         },
@@ -61,7 +89,7 @@ export function eventSignalPathsScenario(
       handleCodexNotify(
         {
           type: "agent-turn-complete",
-          "thread-id": "sess-blocker",
+          "thread-id": "sess-push-blocker",
           cwd: sandbox.repo,
           "last-assistant-message":
             "BLOCKED: I need the production API key from Johan to continue.",
@@ -91,7 +119,11 @@ export function eventSignalPathsScenario(
     );
     assert(
       registryWasAhead && cmuxCalls === 2,
-      "every mission-control send was logged before cmux",
+      "every guarded mission-control send was logged before cmux",
+    );
+    assert(
+      (await pollHermesSignals(sandbox.repo, { cmux })).length === 0,
+      "successful pushes were not delivered again by the slow poll",
     );
   };
 }

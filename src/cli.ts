@@ -14,6 +14,7 @@ Commands:
   status   inspect this repo's eyes
   watch    run one eye
   dispatch run one AFK ticket-dispatch pass (SPEC §7.3)
+  signals  consume push events and run one slow-poll fallback sweep
   search   search the transcript archive
   install  install argus from this checkout
 `;
@@ -166,6 +167,34 @@ async function search(args: string[]): Promise<number> {
   }
 }
 
+async function signals(args: string[]): Promise<number> {
+  const repoFlag = args.indexOf("--repo");
+  if (repoFlag !== -1 && !args[repoFlag + 1]) {
+    console.error("Usage: argus signals [--repo <path>]");
+    return 1;
+  }
+  const unknown = args.filter(
+    (argument, index) => argument !== "--repo" && index !== repoFlag + 1,
+  );
+  if (unknown.length > 0) {
+    console.error(`argus signals: unknown argument '${unknown[0]}'`);
+    return 1;
+  }
+
+  const { pollHermesSignals, resolveArgusRepo, runCmux } = await import(
+    "./events/index.ts"
+  );
+  const requestedRepo = repoFlag === -1 ? process.cwd() : args[repoFlag + 1]!;
+  const repo = await resolveArgusRepo(requestedRepo);
+  if (repo === null) {
+    console.error(`argus signals: no Argus repository contains ${requestedRepo}`);
+    return 1;
+  }
+  const pending = await pollHermesSignals(repo, { cmux: runCmux });
+  for (const { prompt } of pending) console.log(prompt);
+  return 0;
+}
+
 export async function main(args: string[]): Promise<number> {
   const bunVersion = process.versions.bun;
   if (!bunVersion || !isVersionAtLeast(bunVersion, MINIMUM_BUN_VERSION)) {
@@ -206,6 +235,10 @@ export async function main(args: string[]): Promise<number> {
 
   if (args[0] === "search") {
     return search(args.slice(1));
+  }
+
+  if (args[0] === "signals") {
+    return signals(args.slice(1));
   }
 
   if (args[0] === "watch") {

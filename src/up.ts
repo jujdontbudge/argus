@@ -8,6 +8,7 @@ import {
   symlink,
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   convergeAgentBindings,
@@ -522,6 +523,8 @@ export async function convergeUp(cwd = process.cwd()): Promise<number> {
   const url = configuredHonchoUrl(await config.text());
   const apiKey = await honchoApiKey(home);
   const bindings = await convergeAgentBindings({
+    argusCli: join(dirname(fileURLToPath(import.meta.url)), "cli.ts"),
+    bunExecutable: process.execPath,
     hermesRoot: process.env.HERMES_HOME ?? join(home, ".hermes"),
     honcho: apiKey
       ? new HttpHonchoClient(url, apiKey)
@@ -537,6 +540,11 @@ export async function convergeUp(cwd = process.cwd()): Promise<number> {
     );
   } else {
     console.log(`Honcho binding: ${bindings.workspace} (${bindings.honcho})`);
+  }
+  if (bindings.cron === "unavailable") {
+    console.error(`HERMES POLL DEGRADED: ${bindings.cronError}`);
+  } else {
+    console.log(`Hermes slow poll: ${bindings.cron} (every 5m)`);
   }
   console.log(`Hermes profile: ${bindings.profile}`);
   console.log("Push hooks: Claude Stop + Codex notify");

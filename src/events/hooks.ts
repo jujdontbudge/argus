@@ -3,9 +3,12 @@ import { dirname, join, parse } from "node:path";
 
 import type { EventAgent, EventKind } from "./schema.ts";
 import {
+  createCmuxSend,
   notifyMissionControl,
+  type CmuxRun,
   type MissionNotificationOptions,
 } from "./notify.ts";
+import { consumePushedEvent } from "./consumer.ts";
 import { writeEvent } from "./writer.ts";
 
 export interface ClaudeStopPayload {
@@ -31,6 +34,7 @@ export type HookResult =
     };
 
 export interface HookRuntime extends MissionNotificationOptions {
+  cmux?: CmuxRun;
   resolveRepo?: (cwd: string) => Promise<string | null>;
 }
 
@@ -141,14 +145,13 @@ async function handle(
     { agent, kind, message, sessionId },
     { ...(runtime.now !== undefined && { now: runtime.now }) },
   );
-  if (written.status === "duplicate") {
-    return {
-      status: "emitted",
-      eventPath: written.path,
-      notification: { status: "sent" },
-    };
-  }
-  const notification = await notifyMissionControl(repo, written.event, runtime);
+  const { cmux, resolveRepo: _resolveRepo, ...notificationOptions } = runtime;
+  const notification = await consumePushedEvent(repo, written.event, {
+    ...notificationOptions,
+    ...(notificationOptions.send === undefined && cmux !== undefined
+      ? { send: createCmuxSend(cmux) }
+      : {}),
+  });
   return { status: "emitted", eventPath: written.path, notification };
 }
 

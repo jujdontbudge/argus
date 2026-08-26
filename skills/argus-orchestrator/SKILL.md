@@ -82,6 +82,11 @@ cap is absent.
    ticket branch from its worktree, close the ticket, and update the wayfinder map.
    Own these GitHub state transitions; never assume the worker closed its ticket.
 
+`argus up` installs a repo-scoped Hermes cron job that runs `argus signals` every five
+minutes. The command emits only unseen terminal prompts and stays silent on an empty
+sweep. Do not create a second poll job or manually replay a signal: push and poll share
+the durable consumer cursor specifically to prevent double delivery.
+
 ## Launch and observe Hermes
 
 Run Hermes for an Argus repository with a repo-scoped profile:

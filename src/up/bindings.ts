@@ -1,4 +1,5 @@
 import {
+  chmod,
   copyFile,
   lstat,
   mkdir,
@@ -11,6 +12,8 @@ import {
   symlink,
 } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
+
+import { resolveArgusRepo } from "../events/hooks.ts";
 
 export interface HonchoWorkspaceInput {
   id: string;
@@ -143,6 +146,9 @@ export class HttpHonchoClient implements HonchoIngestionClient {
 }
 
 export interface AgentBindingOptions {
+  argusCli?: string;
+  bunExecutable?: string;
+  hermesCron?: HermesCronRun;
   hermesRoot: string;
   honcho: HonchoClient;
   honchoUrl: string;
@@ -150,11 +156,38 @@ export interface AgentBindingOptions {
 }
 
 export interface AgentBindingReport {
+  cron: "created" | "existing" | "not-configured" | "unavailable" | "updated";
+  cronError: string | null;
   honcho: "created" | "existing" | "unavailable";
   honchoError: string | null;
   profile: string;
   workspace: string;
 }
+
+export interface HermesCronRunResult {
+  exitCode: number;
+  stderr: string;
+  stdout: string;
+}
+
+export type HermesCronRun = (
+  args: readonly string[],
+  env: Readonly<Record<string, string | undefined>>,
+) => Promise<HermesCronRunResult>;
+
+export const runHermesCron: HermesCronRun = async (args, env) => {
+  const child = Bun.spawn(["hermes", ...args], {
+    env: { ...Bun.env, ...env },
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [exitCode, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  return { exitCode, stderr, stdout };
+};
 
 const PEERS: readonly HonchoPeerInput[] = [
   { id: "johan" },
@@ -370,10 +403,122 @@ async function ensureHermesProfile(
   }
 }
 
+const SIGNAL_CRON_NAME = "argus-signal-poll";
+const SIGNAL_CRON_SCHEDULE = "every 5m";
+const SIGNAL_CRON_SCRIPT = "argus-signal-poll.sh";
+const SIGNAL_CRON_PROMPT =
+  "Act on each Argus terminal signal from the script output. Use the repo's " +
+  "argus-orchestrator skill; never implement worker tickets yourself.";
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\"'\"'`)}'`;
+}
+
+interface StoredCronJob {
+  enabled?: unknown;
+  id?: unknown;
+  name?: unknown;
+  schedule_display?: unknown;
+  script?: unknown;
+  workdir?: unknown;
+}
+
+async function storedCronJobs(profile: string): Promise<StoredCronJob[]> {
+  try {
+    const value = (await Bun.file(join(profile, "cron", "jobs.json")).json()) as {
+      jobs?: unknown;
+    };
+    return Array.isArray(value.jobs)
+      ? value.jobs.filter(
+          (job): job is StoredCronJob =>
+            typeof job === "object" && job !== null && !Array.isArray(job),
+        )
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+async function ensureHermesSignalCron(
+  profile: string,
+  repo: string,
+  argusCli: string,
+  bunExecutable: string,
+  run: HermesCronRun,
+): Promise<{ status: "created" | "existing" | "unavailable" | "updated"; error: string | null }> {
+  const scripts = join(profile, "scripts");
+  await mkdir(scripts, { recursive: true });
+  const script = join(scripts, SIGNAL_CRON_SCRIPT);
+  const contents =
+    `#!/bin/sh\nexec ${shellQuote(bunExecutable)} ${shellQuote(argusCli)} signals --repo ${shellQuote(repo)}\n`;
+  if (!(await exists(script)) || (await readFile(script, "utf8")) !== contents) {
+    await Bun.write(script, contents);
+  }
+  await chmod(script, 0o755);
+
+  const existing = (await storedCronJobs(profile)).find(
+    ({ name }) => name === SIGNAL_CRON_NAME,
+  );
+  if (
+    existing?.enabled !== false &&
+    existing?.schedule_display === SIGNAL_CRON_SCHEDULE &&
+    existing?.script === SIGNAL_CRON_SCRIPT &&
+    existing?.workdir === repo
+  ) {
+    return { error: null, status: "existing" };
+  }
+
+  const common = [
+    "--name",
+    SIGNAL_CRON_NAME,
+    "--script",
+    SIGNAL_CRON_SCRIPT,
+    "--workdir",
+    repo,
+  ] as const;
+  const updating = typeof existing?.id === "string" && existing.id !== "";
+  const args = updating
+    ? [
+        "cron",
+        "edit",
+        existing.id as string,
+        "--schedule",
+        SIGNAL_CRON_SCHEDULE,
+        "--prompt",
+        SIGNAL_CRON_PROMPT,
+        ...common,
+        "--agent",
+      ]
+    : [
+        "cron",
+        "create",
+        SIGNAL_CRON_SCHEDULE,
+        SIGNAL_CRON_PROMPT,
+        ...common,
+      ];
+  try {
+    const result = await run(args, { HERMES_HOME: profile });
+    if (result.exitCode !== 0) {
+      return {
+        error: result.stderr.trim() || `hermes cron exited ${result.exitCode}`,
+        status: "unavailable",
+      };
+    }
+    return { error: null, status: updating ? "updated" : "created" };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : String(error),
+      status: "unavailable",
+    };
+  }
+}
+
 export async function convergeAgentBindings(
   options: AgentBindingOptions,
 ): Promise<AgentBindingReport> {
   const workspace = `argus-${repoSlug(options.repo)}`;
+  const canonicalRepo =
+    (await resolveArgusRepo(options.repo)) ?? (await realpath(options.repo));
   await mkdir(join(options.repo, ".argus"), { recursive: true });
   await Bun.write(
     join(options.repo, ".argus", "honcho.yaml"),
@@ -384,6 +529,20 @@ export async function convergeAgentBindings(
     workspace,
     join(options.repo, ".argus", "memory"),
   );
+
+  let cron: AgentBindingReport["cron"] = "not-configured";
+  let cronError: string | null = null;
+  if (options.argusCli !== undefined && options.bunExecutable !== undefined) {
+    const result = await ensureHermesSignalCron(
+      join(options.hermesRoot, "profiles", workspace),
+      canonicalRepo,
+      options.argusCli,
+      options.bunExecutable,
+      options.hermesCron ?? runHermesCron,
+    );
+    cron = result.status;
+    cronError = result.error;
+  }
 
   let honcho: AgentBindingReport["honcho"];
   let honchoError: string | null = null;
@@ -400,5 +559,5 @@ export async function convergeAgentBindings(
     honchoError = error instanceof Error ? error.message : String(error);
   }
 
-  return { honcho, honchoError, profile: workspace, workspace };
+  return { cron, cronError, honcho, honchoError, profile: workspace, workspace };
 }
