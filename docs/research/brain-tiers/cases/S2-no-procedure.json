@@ -1,0 +1,62 @@
+{
+  "id": "S2-no-procedure",
+  "eye": "skills",
+  "what": "A scheduling question, a progress report and a check-in. Nothing repeatable.",
+  "prompt": "You are the Argus Reviewer eye. The blocks below are transcript turns\nfrom agent sessions in this repo, each tagged with its registry-verified\nauthor. Decide whether anything DURABLE happened. Do not run any\ncommands; judge only from the blocks.\n\nEmit findings (possibly none) as JSON matching the output schema:\n- kind \"user-preference\": something about Johan himself (how he works,\n  what he wants). Derive ONLY from blocks with author=johan and cite\n  exactly those uuids in sources.\n- kind \"project-fact\": a durable fact about this project, from any author.\n- kind \"procedure\": a repeatable procedure worth a reusable skill.\nUse a stable kebab-case slug per finding so repeats converge.\nCite the uuid(s) each finding derives from in sources.\n\n[uuid=b7cbbcf0-95a8-4d38-a9b1-53f625f0b5d9 author=johan session=0a3ac707-b3db-412d-9744-0260a0ba08ff role=user ts=2026-08-25T04:33:23.383Z]\ndo i have to upgrade cmux now or can this be odne at end\n[uuid=05a8b12e-dec2-402f-a010-6af5efc90f91 author=claude-code session=0a3ac707-b3db-412d-9744-0260a0ba08ff role=assistant ts=2026-08-25T18:08:50.511Z]\n**Nearly there: 17 of 18 build tickets are done.** #35 (curator pass) closed, and the only ticket left is **#36 — the v1 live acceptance run**, which is executing right now as a healthy headless worker (PID alive, 4 minutes in). The dispatcher smartly pre-loaded its brief with already-verified facts so it spends its time proving rather than re-deriving.\n[uuid=22a0c52d-e9a7-4050-90af-29f2a5212cfc author=johan session=0a3ac707-b3db-412d-9744-0260a0ba08ff role=user ts=2026-08-26T03:58:01.831Z]\ni will od hta lter forget. now get the rest of theis thing fully built nothing needs me right?",
+  "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "findings"
+    ],
+    "properties": {
+      "findings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "slug",
+            "title",
+            "content",
+            "sources"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "user-preference",
+                "project-fact",
+                "procedure"
+              ]
+            },
+            "slug": {
+              "type": "string",
+              "description": "kebab-case identity, stable across repeats"
+            },
+            "title": {
+              "type": "string"
+            },
+            "content": {
+              "type": "string"
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "uuids of the transcript messages this derives from"
+            }
+          }
+        }
+      }
+    }
+  },
+  "cwd": "/Users/johansardar/argus-worktrees/brain-tiers",
+  "groundTruth": {
+    "mustFind": [],
+    "maxProcedures": 0,
+    "notes": "OVER-GENERALISATION test: inventing a skill from one-off status chatter."
+  }
+}

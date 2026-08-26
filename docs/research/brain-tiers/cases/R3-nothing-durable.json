@@ -1,0 +1,62 @@
+{
+  "id": "R3-nothing-durable",
+  "eye": "reviewer",
+  "what": "Four real Johan turns, all transient questions. The correct verdict is silence.",
+  "prompt": "You are the Argus Reviewer eye. The blocks below are transcript turns\nfrom agent sessions in this repo, each tagged with its registry-verified\nauthor. Decide whether anything DURABLE happened. Do not run any\ncommands; judge only from the blocks.\n\nEmit findings (possibly none) as JSON matching the output schema:\n- kind \"user-preference\": something about Johan himself (how he works,\n  what he wants). Derive ONLY from blocks with author=johan and cite\n  exactly those uuids in sources.\n- kind \"project-fact\": a durable fact about this project, from any author.\n- kind \"procedure\": a repeatable procedure worth a reusable skill.\nUse a stable kebab-case slug per finding so repeats converge.\nCite the uuid(s) each finding derives from in sources.\n\n[uuid=9f860666-a5a2-43d3-b989-26fcebc7f40d author=johan session=0a3ac707-b3db-412d-9744-0260a0ba08ff role=user ts=2026-08-24T19:03:10.523Z]\nso evyer tick will start in a cleared context new sesion right?\n[uuid=b7cbbcf0-95a8-4d38-a9b1-53f625f0b5d9 author=johan session=0a3ac707-b3db-412d-9744-0260a0ba08ff role=user ts=2026-08-25T04:33:23.383Z]\ndo i have to upgrade cmux now or can this be odne at end\n[uuid=22a0c52d-e9a7-4050-90af-29f2a5212cfc author=johan session=0a3ac707-b3db-412d-9744-0260a0ba08ff role=user ts=2026-08-26T03:58:01.831Z]\ni will od hta lter forget. now get the rest of theis thing fully built nothing needs me right?\n[uuid=3bf8f630-088c-4b8a-b186-b8b9b52c222e author=johan session=0a3ac707-b3db-412d-9744-0260a0ba08ff role=user ts=2026-08-24T22:23:22.854Z]\ndamm are you sure that it? this inlud building test amkin sure it works edges tdd making evyerhting asplguins making sure allcopamdn and steupst work live test etc?",
+  "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "findings"
+    ],
+    "properties": {
+      "findings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "slug",
+            "title",
+            "content",
+            "sources"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "user-preference",
+                "project-fact",
+                "procedure"
+              ]
+            },
+            "slug": {
+              "type": "string",
+              "description": "kebab-case identity, stable across repeats"
+            },
+            "title": {
+              "type": "string"
+            },
+            "content": {
+              "type": "string"
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "uuids of the transcript messages this derives from"
+            }
+          }
+        }
+      }
+    }
+  },
+  "cwd": "/Users/johansardar/argus-worktrees/brain-tiers",
+  "groundTruth": {
+    "mustFind": [],
+    "maxUserPreferences": 0,
+    "notes": "FABRICATION test — the expensive failure. Any user-preference here is invented and lands in USER.md permanently."
+  }
+}

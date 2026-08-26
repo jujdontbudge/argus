@@ -1,0 +1,64 @@
+{
+  "id": "D3-running",
+  "eye": "digest",
+  "what": "The opening turns of the same #38 build session.",
+  "prompt": "You are the Argus Digest eye. The blocks below are transcript turns from\nagent sessions in this repo, each tagged with its logical session id and\nregistry-verified author. Maintain each session's running narrative. Do\nnot run any commands; judge only from the blocks.\n\nEmit JSON matching the output schema: for EVERY distinct session id in\nthe blocks, one entry with\n- narrative: markdown for what happened in these turns (appended to the\n  session's digest — write it to be read after the earlier entries).\n- summary: ONE line describing where the session stands now.\n- status: \"done\" when the work concluded, \"blocked\" when it waits on a\n  human, otherwise \"running\".\n\n[session=603b50b3-f6c2-4de4-b17d-aebb1ae33b81 author=hermes role=user ts=2026-08-25T19:10:15.385Z]\nYou are an Opus BUILD worker for the Argus v1 build map — repo JohanSardar/argus, build map issue #18. You implement EXACTLY ONE ticket, then stop: ticket #38 \"build: retro scope-drift signal (SPEC §14 in-ticket case)\" (already claimed for you).\n\nThis ticket exists because Johan decided it: the SPEC §14 harder case is IN SCOPE for v1 (\"build it for v1\"). It was raised as #37 and cut into #38.\n\nYour working tree is ~/argus-worktrees/scope-drift on branch build/scope-drift, branched off main @ 6fa86ec. Work ONLY in this worktree. Read first: your ticket, the closed #37 for the reasoning behind the decision, SPEC.md §14 and §12, and — most importantly — `src/eyes/retro/` IN FULL. The signal → compose → tracker-filing plumbing already exists. **EXTEND it. Do not duplicate it, and do not add a sixth watcher.**\n[session=603b50b3-f6c2-4de4-b17d-aebb1ae33b81 author=claude-code role=assistant ts=2026-08-25T19:10:22.097Z]\nI'll start by reading the ticket, the decision context, and the existing retro eye code.\n[session=603b50b3-f6c2-4de4-b17d-aebb1ae33b81 author=claude-code role=assistant ts=2026-08-25T19:35:56.598Z]\n**Slice 4 — red:** `decideDrift`, the encoded false-positive policy. Both directions.",
+  "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "sessions"
+    ],
+    "properties": {
+      "sessions": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sessionId",
+            "narrative",
+            "summary",
+            "status"
+          ],
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "description": "the transcript session id the entry digests"
+            },
+            "narrative": {
+              "type": "string",
+              "description": "markdown narrative of what happened since last time"
+            },
+            "summary": {
+              "type": "string",
+              "description": "one line describing the session's current state"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "running",
+                "blocked",
+                "done"
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "cwd": "/Users/johansardar/argus-worktrees/brain-tiers",
+  "groundTruth": {
+    "sessions": [
+      {
+        "sessionId": "603b50b3-f6c2-4de4-b17d-aebb1ae33b81",
+        "status": "running",
+        "narrativeMustMention": [
+          "ticket #38 / the scope-drift signal",
+          "reading before building / TDD slices"
+        ]
+      }
+    ],
+    "notes": "Must not read the ticket brief's confident tone as completion."
+  }
+}

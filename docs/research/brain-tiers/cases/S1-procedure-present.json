@@ -1,0 +1,67 @@
+{
+  "id": "S1-procedure-present",
+  "eye": "skills",
+  "what": "A worker-tab lifecycle recipe stated across a Johan directive, a Hermes clarification and an agent status line.",
+  "prompt": "You are the Argus Reviewer eye. The blocks below are transcript turns\nfrom agent sessions in this repo, each tagged with its registry-verified\nauthor. Decide whether anything DURABLE happened. Do not run any\ncommands; judge only from the blocks.\n\nEmit findings (possibly none) as JSON matching the output schema:\n- kind \"user-preference\": something about Johan himself (how he works,\n  what he wants). Derive ONLY from blocks with author=johan and cite\n  exactly those uuids in sources.\n- kind \"project-fact\": a durable fact about this project, from any author.\n- kind \"procedure\": a repeatable procedure worth a reusable skill.\nUse a stable kebab-case slug per finding so repeats converge.\nCite the uuid(s) each finding derives from in sources.\n\n[uuid=68714bd8-a740-422c-a02d-a077db5beb33 author=johan session=0a3ac707-b3db-412d-9744-0260a0ba08ff role=user ts=2026-08-24T18:17:33.090Z]\nok there is way to much shit going on firts of all when a agent is spawn it need to spawn in teh in the ewn workspace as a new tab. not  new workspace. you are spawning htem in a new worksapce. plase do not do this. second of all the tabs or wokrpxaces need to close fully when done. please mointoir evyerhing going right now. let ones that are currnely going ifnsih. cut all of the rest hat are finisehd pracice and make sure you can spawn in new tab. evreify by screenshoting the acutla screen. then form now on. do that there is jsut ay to many workpasces spawning in.\n[uuid=e2bf6f32-543b-4bfe-b999-a8d144587c6a author=hermes session=878bcaaa-79ca-4c26-8cd2-e735e5dbf249 role=user ts=2026-08-24T18:51:17.816Z]\nJOHAN CLARIFICATION (relayed): a worker tab/session is NEVER reused for a new ticket — when a ticket finishes, close its tab (fresh: you already did this for #11), and every new ticket gets a brand-new tab with a brand-new claude/codex process launched fresh; never type a new ticket prompt into a Claude that already worked a ticket. This matches your current recipe — add the explicit 'never reuse a finished worker session' line to loop-state.md so it can never regress.\n[uuid=c2b83ece-1e62-40b1-886e-817f6c6087aa author=claude-code session=0a3ac707-b3db-412d-9744-0260a0ba08ff role=assistant ts=2026-08-24T23:19:03.613Z]\nBoth lanes are saturated and building — the loop is fully back in motion:\n\n- **18 build tickets** cut under map #18, covering the spec's implementation surface.\n- **Codex lane**: #19 (argus CLI skeleton) — working now.\n- **Fable lane**: #24 (send-matcher implementation, straight from #11's research) — working now.\n- Dispatcher on its 5-minute cadence, watchdog armed, tab hygiene clean (exactly four tabs: monitoring, dispatcher, two workers).",
+  "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "findings"
+    ],
+    "properties": {
+      "findings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "slug",
+            "title",
+            "content",
+            "sources"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "user-preference",
+                "project-fact",
+                "procedure"
+              ]
+            },
+            "slug": {
+              "type": "string",
+              "description": "kebab-case identity, stable across repeats"
+            },
+            "title": {
+              "type": "string"
+            },
+            "content": {
+              "type": "string"
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "uuids of the transcript messages this derives from"
+            }
+          }
+        }
+      }
+    }
+  },
+  "cwd": "/Users/johansardar/argus-worktrees/brain-tiers",
+  "groundTruth": {
+    "mustFind": [
+      {
+        "kind": "procedure",
+        "about": "worker session lifecycle: spawn each ticket into a NEW tab in the existing workspace, never a new workspace; never reuse a finished worker session; close the tab fully when the ticket ends",
+        "statedIn": "68714bd8-a740-422c-a02d-a077db5beb33 + e2bf6f32-543b-4bfe-b999-a8d144587c6a"
+      }
+    ],
+    "notes": "Abstraction test — the steps are in three different turns."
+  }
+}
