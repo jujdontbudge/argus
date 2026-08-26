@@ -696,3 +696,58 @@ skill's follow-up protocol has to be hand-rolled, and it is fragile.
   belongs: it would own the registry row, the environment and the surface the
   same way `argus dispatch` and `argus grill` own theirs. FILED, not fixed —
   it is a new production verb, not a docs correction.
+
+==============================================================================
+10. A TAB THAT WAS NOT THIS RUN'S DISAPPEARED — reported, not explained away
+==============================================================================
+Cleanup accounting by UUID (short refs are positional and remap, so counting
+`surface:NN` across a run is meaningless — this is done by UUID):
+
+  workspaces  8 before, 8 after                       UNCHANGED, as required
+  surfaces   25 before, 24 after                      ONE FEWER THAN BASELINE
+
+All nine tabs Argus opened were closed; none of their UUIDs survive. But one
+surface that existed BEFORE this run started is gone:
+
+  before-tree line 6, under workspace:1 "argus":
+    surface surface:48 67969077-BFC4-4F6D-8129-E33ADEC6643A [terminal] "argus grill" [selected]
+
+This run never named that UUID — `grep -c 67969077 cmux.log` is 0.
+
+THE MECHANISM THAT COULD HAVE DONE IT. Of the ten `close-surface` calls made,
+NINE passed an explicit UUID — those are Argus's, via tab.ts, and they are safe
+by construction. The tenth was Hermes' own, closing the surface it had opened
+to resume ticket #3, and it used a SHORT REF:
+
+  cmux close-surface --workspace workspace:1 --surface surface:60
+
+Short refs remap as surfaces open and close. Between reading `surface:60` and
+closing it, nine worker tabs in that same workspace were opening and closing.
+`tab.ts`'s own docblock documents the consequence exactly: an unresolvable or
+stale handle on 0.62.2 "exits 0 and acts on the FOCUSED workspace ... pointed at
+`close-surface` it CLOSES one of Johan's tabs". The vanished surface was
+`[selected]` — the focused one — in the very workspace that call targeted.
+
+The arithmetic is consistent with a misdirected close: 25 before, 10 surfaces
+created (9 Argus + 1 Hermes), 24 after — 11 closures for 10 logged calls, so one
+surface also went away without a logged call (a terminal whose shell exits takes
+its tab with it, which is the likely eleventh).
+
+WHY I AM NOT CALLING IT PROVEN. Ticket #89 holds the live watcher-fleet lease
+and is running REAL grill sessions on this machine right now; a surface titled
+"argus grill" closing during that work is exactly what #89 doing its own job
+also looks like. I have snapshots at 16:53 and 17:25 and nothing in between, so
+I cannot place the disappearance in time, and I will not assign blame I cannot
+demonstrate.
+
+REPORTED PROMINENTLY BECAUSE THE COST OF BEING WRONG IS ASYMMETRIC: if it was
+this run, a session belonging to Johan or to #89 was destroyed silently. If
+Johan or #89 lost an "argus grill" tab in the 17:00-17:10 window, this is the
+first place to look.
+
+WHAT WAS DONE ABOUT IT. The skill now forbids the pattern outright — read-only
+verbs may use any ref, but anything that destroys state must re-resolve and pass
+a UUID. Note the irony worth keeping: Hermes used a short ref BECAUSE the old
+skill told it to ("Always use typed, prefixed refs such as `workspace:15` and
+`pane:38`"), with no distinction between reading and destroying. That sentence
+is now gone.

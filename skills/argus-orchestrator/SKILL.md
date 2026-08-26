@@ -88,11 +88,19 @@ new-workspace` is not part of any Argus procedure. Outside cmux there is no
 `CMUX_WORKSPACE_ID`, and the deployment simply proceeds without a tab — a
 workspace is context, never a requirement.
 
-The addressable unit for a session is a SURFACE, not a pane. Typed prefixed
-refs (`workspace:1`, `surface:60`) and raw UUIDs both resolve — Argus uses UUIDs
-internally because `CMUX_WORKSPACE_ID` is one — but whichever you use, re-resolve
-it against `cmux --id-format both tree --all --json` before any verb that changes
-something. An unresolvable handle on cmux 0.62.2 does NOT error — it exits 0 and
+The addressable unit for a session is a SURFACE, not a pane. Typed prefixed refs
+(`workspace:1`, `surface:60`) and raw UUIDs both resolve — Argus uses UUIDs
+internally because `CMUX_WORKSPACE_ID` is one — but they are NOT equally safe.
+
+**Never pass a short ref to `close-surface`.** Short refs are positional and
+cmux REMAPS them as surfaces open and close, so the `surface:60` you read a
+moment ago can name a different tab by the time you close it — and closing it
+destroys someone else's session with no error. Hold the UUID from
+`cmux --id-format both tree --all --json`, re-resolve it immediately before the
+call, and close by UUID. Read-only verbs may use whatever ref is convenient;
+anything that destroys state uses a UUID.
+
+An unresolvable handle on cmux 0.62.2 does NOT error — it exits 0 and
 acts on the FOCUSED workspace, which is how a stray handle closes one of Johan's
 own tabs. `list-workspaces` sees only the current window and will miss the
 workspace Argus runs in; `tree --all` is the only whole-machine inventory. Never
