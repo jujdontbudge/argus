@@ -180,6 +180,26 @@ async function gitIn(cwd: string, ...args: string[]): Promise<void> {
 const filedIssue = (gh: FakeGh) =>
   gh.issues.find((issue) => issue.labels.includes("retro"));
 
+describe("the Retro watcher's production tick path", () => {
+  test("startup priming preserves work that lands before the first scheduled tick", async () => {
+    const place = await scratch();
+    const gh = createFakeGh({ repo: "JohanSardar/argus" });
+    let now = 0;
+    try {
+      const { eye } = await openEye(place, gh, { now: () => now });
+      await eye.ingest([johanSays("sess-johan", "Please keep the ticket record complete.")]);
+      await place.commit("src/startup.ts", "export const startup = true;\n", "startup work");
+
+      now = 60_000;
+      const filings = await eye.tick();
+
+      expect(filings.map((filing) => filing.title)).toEqual(["Retro: startup work"]);
+    } finally {
+      await place.cleanup();
+    }
+  }, BUDGET_MS);
+});
+
 describe("the Retro eye files closed retro sub-issues (SPEC §5.5)", () => {
   test("rogue commits become a closed, retro-labeled sub-issue of the nearest parent", async () => {
     const place = await scratch();
@@ -566,25 +586,21 @@ describe("a first scan primes instead of accusing the whole repo", () => {
 });
 
 describe("two eyes in one process never share state", () => {
-  test("priming one repo's eye leaves another repo's eye unprimed", async () => {
+  test("startup priming keeps each repo's cursor independent", async () => {
     const first = await scratch();
     const second = await scratch();
     const gh = createFakeGh({ repo: "JohanSardar/argus" });
     try {
       const one = (await openEye(first, gh)).eye;
-      await one.prime();
-      await first.commit("src/a.ts", "export const a = 1;\n", "first repo work");
-
       const two = (await openEye(second, gh)).eye;
+
+      await first.commit("src/a.ts", "export const a = 1;\n", "first repo work");
       await second.commit("src/b.ts", "export const b = 1;\n", "second repo work");
 
-      // The second eye has never primed: its first scan anchors, files nothing.
-      expect(await two.scan()).toEqual([]);
-      // The first eye's own cursor is untouched by any of that.
-      const filings = await one.scan();
-      expect(filings.map((filing) => filing.title)).toEqual([
-        "Retro: first repo work",
+      expect((await two.scan()).map((filing) => filing.title)).toEqual([
+        "Retro: second repo work",
       ]);
+      expect((await one.scan()).map((filing) => filing.title)).toEqual(["Retro: first repo work"]);
     } finally {
       await first.cleanup();
       await second.cleanup();

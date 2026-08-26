@@ -363,7 +363,9 @@ export class RetroEye {
         // content-derived and `judged` is what stops re-filing).
       }
     }
-    return new RetroEye(options, state);
+    const eye = new RetroEye(options, state);
+    if (!state.primed) await eye.prime();
+    return eye;
   }
 
   /**
