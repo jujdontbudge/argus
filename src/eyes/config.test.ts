@@ -16,6 +16,96 @@ async function withRepo(
 }
 
 describe("eyes config (ADR-0002 values, defaults in code)", () => {
+  test("every eye inherits model and reasoning effort from the global brain", async () => {
+    await withRepo(async (repo) => {
+      await mkdir(join(repo, ".argus"), { recursive: true });
+      await Bun.write(
+        join(repo, ".argus/config.yaml"),
+        "brain:\n  model: gpt-5.6-sol\n  reasoning_effort: medium\n",
+      );
+
+      const config = await loadEyesConfig(repo);
+
+      expect(config.reviewer.brain).toEqual({
+        model: "gpt-5.6-sol",
+        reasoningEffort: "medium",
+      });
+      expect(config.digest.brain).toEqual(config.reviewer.brain);
+      expect(config.retro.brain).toEqual(config.reviewer.brain);
+    });
+  });
+
+  test("each eye can override one brain value while inheriting the other", async () => {
+    await withRepo(async (repo) => {
+      await mkdir(join(repo, ".argus"), { recursive: true });
+      await Bun.write(
+        join(repo, ".argus/config.yaml"),
+        [
+          "brain:",
+          "  model: gpt-5.6-sol",
+          "  reasoning_effort: medium",
+          "reviewer:",
+          "  brain:",
+          "    reasoning_effort: high",
+          "  quiet_window_seconds: 11",
+          "digest:",
+          "  brain:",
+          "    model: gpt-5.6-luna",
+          "retro:",
+          "  brain:",
+          "    model: gpt-5.6-luna",
+          "    reasoning_effort: max",
+          "",
+        ].join("\n"),
+      );
+
+      const config = await loadEyesConfig(repo);
+
+      expect(config.reviewer).toEqual({
+        brain: { model: "gpt-5.6-sol", reasoningEffort: "high" },
+        quietWindowSeconds: 11,
+        maxWaitSeconds: 300,
+      });
+      expect(config.digest.brain).toEqual({
+        model: "gpt-5.6-luna",
+        reasoningEffort: "medium",
+      });
+      expect(config.retro.brain).toEqual({
+        model: "gpt-5.6-luna",
+        reasoningEffort: "max",
+      });
+    });
+  });
+
+  test("a per-eye model outside the ChatGPT subscription fails loudly", async () => {
+    await withRepo(async (repo) => {
+      await mkdir(join(repo, ".argus"), { recursive: true });
+      await Bun.write(
+        join(repo, ".argus/config.yaml"),
+        "reviewer:\n  brain:\n    model: metered-only-model\n",
+      );
+
+      expect(loadEyesConfig(repo)).rejects.toThrow(
+        "reviewer.brain.model 'metered-only-model' is not reachable via codex exec on the ChatGPT subscription",
+      );
+    });
+  });
+
+  test("a model in the ChatGPT subscription catalog remains tunable", async () => {
+    await withRepo(async (repo) => {
+      await mkdir(join(repo, ".argus"), { recursive: true });
+      await Bun.write(
+        join(repo, ".argus/config.yaml"),
+        "digest:\n  brain:\n    model: gpt-5.6-terra\n",
+      );
+
+      expect((await loadEyesConfig(repo)).digest.brain).toEqual({
+        model: "gpt-5.6-terra",
+        reasoningEffort: "low",
+      });
+    });
+  });
+
   test("defaults apply when .argus/config.yaml is absent", async () => {
     await withRepo(async (repo) => {
       const config = await loadEyesConfig(repo);
@@ -25,9 +115,21 @@ describe("eyes config (ADR-0002 values, defaults in code)", () => {
           reasoningEffort: "low",
           maxConcurrency: 2,
         },
-        reviewer: { quietWindowSeconds: 30, maxWaitSeconds: 300 },
-        digest: { quietWindowSeconds: 30, maxWaitSeconds: 120 },
-        retro: { quietWindowSeconds: 60, maxWaitSeconds: 600 },
+        reviewer: {
+          brain: { model: "gpt-5.6-luna", reasoningEffort: "low" },
+          quietWindowSeconds: 30,
+          maxWaitSeconds: 300,
+        },
+        digest: {
+          brain: { model: "gpt-5.6-luna", reasoningEffort: "low" },
+          quietWindowSeconds: 30,
+          maxWaitSeconds: 120,
+        },
+        retro: {
+          brain: { model: "gpt-5.6-luna", reasoningEffort: "low" },
+          quietWindowSeconds: 60,
+          maxWaitSeconds: 600,
+        },
         curator: {
           enabled: true,
           intervalHours: 168,
@@ -58,7 +160,7 @@ describe("eyes config (ADR-0002 values, defaults in code)", () => {
         join(repo, ".argus/config.yaml"),
         [
           "brain:",
-          "  model: gpt-5.7-nova",
+          "  model: gpt-5.6-sol",
           "  max_concurrency: 1",
           "reviewer:",
           "  quiet_window_seconds: 10",
@@ -66,7 +168,7 @@ describe("eyes config (ADR-0002 values, defaults in code)", () => {
         ].join("\n"),
       );
       const config = await loadEyesConfig(repo);
-      expect(config.brain.model).toBe("gpt-5.7-nova");
+      expect(config.brain.model).toBe("gpt-5.6-sol");
       expect(config.brain.maxConcurrency).toBe(1);
       expect(config.brain.reasoningEffort).toBe("low");
       expect(config.reviewer.quietWindowSeconds).toBe(10);
@@ -83,6 +185,7 @@ describe("eyes config (ADR-0002 values, defaults in code)", () => {
       );
       const config = await loadEyesConfig(repo);
       expect(config.reviewer).toEqual({
+        brain: { model: "gpt-5.6-luna", reasoningEffort: "low" },
         quietWindowSeconds: 30,
         maxWaitSeconds: 300,
       });

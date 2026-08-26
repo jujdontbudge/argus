@@ -172,6 +172,11 @@ describe("argus up", () => {
     }
     const scaffolded = await Bun.file(join(repo, ".argus/config.yaml")).text();
     expect(scaffolded).toContain("# brain:");
+    for (const eye of ["reviewer", "digest", "retro"]) {
+      expect(scaffolded).toContain(
+        `# ${eye}:\n#   brain:\n#     model: gpt-5.6-luna\n#     reasoning_effort: low`,
+      );
+    }
     // SPEC §7.3.3's cap is a knob a human is meant to find and raise (#56).
     expect(scaffolded).toContain("# dispatch:");
     expect(scaffolded).toContain("#   max_concurrency: 3");

@@ -35,12 +35,21 @@ const DEFAULT_CONFIG = `# Argus per-repo overrides. Uncomment only values that d
 #   reasoning_effort: low
 #   max_concurrency: 2
 # reviewer:
+#   brain:
+#     model: gpt-5.6-luna
+#     reasoning_effort: low
 #   quiet_window_seconds: 30
 #   max_wait_seconds: 300
 # digest:
+#   brain:
+#     model: gpt-5.6-luna
+#     reasoning_effort: low
 #   quiet_window_seconds: 30
 #   max_wait_seconds: 120
 # retro:
+#   brain:
+#     model: gpt-5.6-luna
+#     reasoning_effort: low
 #   quiet_window_seconds: 60
 #   max_wait_seconds: 600
 # dispatch:

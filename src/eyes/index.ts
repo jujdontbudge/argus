@@ -47,7 +47,9 @@ export {
   type BrainConfig,
   type CadenceConfig,
   type CuratorConfig,
+  type EyeBrainConfig,
   type EyesConfig,
+  type JudgmentEyeConfig,
 } from "./config";
 export {
   archiveFact,
