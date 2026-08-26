@@ -208,17 +208,18 @@ describe("argus up", () => {
       /external_dirs:\n\s+- ("(?:[^"\\]|\\.)*")/,
     )?.[1];
     expect(configuredDirectory).toBeDefined();
+    const configuredSkillsDirectory = JSON.parse(configuredDirectory!);
 
-    const skill = await Bun.file(
-      join(
-        JSON.parse(configuredDirectory!),
-        "argus-orchestrator",
-        "SKILL.md",
-      ),
-    ).text();
+    const skillPath = join(
+      configuredSkillsDirectory,
+      "argus-orchestrator",
+      "SKILL.md",
+    );
+    const skill = await Bun.file(skillPath).text();
     expect(skill).toContain("name: argus-orchestrator");
+    expect((await lstat(skillPath)).isSymbolicLink()).toBe(false);
     expect(await realpath(join(repo, ".claude", "skills"))).toBe(
-      await realpath(JSON.parse(configuredDirectory!)),
+      await realpath(configuredSkillsDirectory),
     );
   });
 
