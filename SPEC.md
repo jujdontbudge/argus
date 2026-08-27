@@ -547,7 +547,11 @@ not evidence that memory use is flat.
 - `argus signals [--repo <path>]` — consume unseen durable events and run one bounded
   INDEX/digest/read-screen fallback sweep; normally invoked by the installed Hermes
   cron job.
-- `argus search "<query>"` — FTS query over `archive.db`.
+- `argus search "<query>"` — FTS query over `archive.db`. Cost is linear in the
+  number of rows a query *matches* (~0.7–0.9 ms per 1,000 matched rows, measured);
+  there is deliberately no stated latency budget here, because no consumer in the
+  tree states a tolerance. See ADR-0003 for the constant, the consumers, and the
+  threshold pre-registered against it.
 
 ---
 
