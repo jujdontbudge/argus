@@ -36,14 +36,17 @@ import {
   type ShapeFact,
 } from "../../src/tailing/shape/contract.ts";
 
-const MAX_FILES = Number(process.env.ARGUS_SHAPE_MAX_FILES ?? 500);
+// Default to the WHOLE corpus. A thin baseline is not a safer baseline — it
+// is a noisier one, because every shape it failed to sample becomes a false
+// alarm on the day it is next written. Capping is for the drift probe only.
+const MAX_FILES = Number(process.env.ARGUS_SHAPE_MAX_FILES ?? 100_000);
 /**
  * Newest-first by default. `ARGUS_SHAPE_ORDER=oldest` is what makes the drift
  * probe possible: capture from the oldest corpus, then run the canary over the
  * newest, and every fact it reports is real drift that really happened.
  */
 const OLDEST_FIRST = process.env.ARGUS_SHAPE_ORDER === "oldest";
-const MAX_BYTES_PER_FILE = 8 * 1024 * 1024;
+const MAX_BYTES_PER_FILE = 96 * 1024 * 1024;
 
 interface Collected {
   facts: Set<string>;
