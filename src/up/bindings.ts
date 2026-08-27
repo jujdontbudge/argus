@@ -150,6 +150,7 @@ export interface AgentBindingOptions {
   argusCli?: string;
   bunExecutable?: string;
   hermesCron?: HermesCronRun;
+  hermesProfile?: HermesCronRun;
   hermesRoot: string;
   honcho: HonchoClient;
   honchoUrl: string;
@@ -162,6 +163,13 @@ export interface AgentBindingReport {
   honcho: "created" | "existing" | "unavailable";
   honchoError: string | null;
   profile: string;
+  /**
+   * Whether the profile just written is actually reachable through the name it
+   * was written under. "unavailable" means the `hermes` binary could not be
+   * run at all, which is not evidence either way.
+   */
+  profileVerified: "failed" | "ok" | "unavailable";
+  profileError: string | null;
   workspace: string;
 }
 
@@ -204,10 +212,106 @@ function repoSlug(repo: string): string {
     .replace(/^-|-$/g, "");
 }
 
+/**
+ * Hermes refuses any profile name that does not match
+ * `^[a-z0-9][a-z0-9_-]{0,63}$` (hermes_cli/profiles.py), i.e. 64 characters
+ * total. It is a regex bound, not a length check, so the error it produces
+ * reads "Invalid profile name" rather than "too long" (#102).
+ */
+const HERMES_PROFILE_MAX = 64;
+
+/**
+ * Bytes of the repo digest kept in a profile name. 16 hex characters = 64 bits.
+ *
+ * The digest is what keeps two repos with the same basename apart under one
+ * HOME (SPEC §13.9), so shortening it is a real trade and not a formatting
+ * change. What it has to survive: a user's own repos, on their own disk,
+ * colliding by accident. Two repos collide only if they share BOTH the
+ * 41-character slug and the 64-bit digest prefix; at a thousand same-basename
+ * repos under one HOME that is ~2.7e-14. The input is a local filesystem path
+ * the user chose, not attacker-supplied, so collision resistance against a
+ * chosen-prefix attack is not the property in play here.
+ */
+const REPO_DIGEST_LENGTH = 16;
+
+/** `argus-` + slug + `-` + digest must fit HERMES_PROFILE_MAX. */
+const REPO_SLUG_LENGTH =
+  HERMES_PROFILE_MAX - "argus-".length - 1 - REPO_DIGEST_LENGTH;
+
 function repoIdentity(canonicalRepo: string): string {
+  const digest = createHash("sha256")
+    .update(canonicalRepo)
+    .digest("hex")
+    .slice(0, REPO_DIGEST_LENGTH);
+  const slug = repoSlug(canonicalRepo).slice(0, REPO_SLUG_LENGTH) || "repo";
+  const identity = `argus-${slug}-${digest}`;
+  /* c8 ignore start -- arithmetic above makes this unreachable; it is here so
+     that a future edit to either constant fails loudly at the write instead of
+     silently at some later `hermes profile use`. */
+  if (identity.length > HERMES_PROFILE_MAX) {
+    throw new Error(
+      `argus up: generated profile name ${identity} is ${identity.length} characters, over Hermes' ${HERMES_PROFILE_MAX}-character limit`,
+    );
+  }
+  /* c8 ignore stop */
+  return identity;
+}
+
+/**
+ * The over-long name `argus up` generated before #102: the full 64-hex digest
+ * and an 80-character slug, so 72 characters at the shortest. Hermes refuses
+ * it, which is why every profile written under this scheme is inert — present
+ * on disk, absent from `hermes profile list`, and rejected by
+ * `hermes profile use`. Recomputed here only so those profiles can be found
+ * and renamed rather than left as a trap for whoever looks next.
+ */
+function legacyRepoIdentity(canonicalRepo: string): string {
   const digest = createHash("sha256").update(canonicalRepo).digest("hex");
   const slug = repoSlug(canonicalRepo).slice(0, 80) || "repo";
   return `argus-${slug}-${digest}`;
+}
+
+/**
+ * Rename an inert over-long profile onto the name Hermes will accept.
+ *
+ * Deleting it was the alternative and it is worse: the directory holds the
+ * `memories` symlink plus whatever config.yaml/.env/SOUL.md were copied in, and
+ * on an adopted repo it is the only record that a binding was ever made.
+ * Leaving it is worse still — that is precisely the trap this ticket describes.
+ * We rename only when the profile proves it belongs to this repo by its
+ * `memories` symlink, the same ownership proof the legacy-adoption path already
+ * relies on; anything else is left untouched and reported, never clobbered.
+ */
+async function migrateOverlongProfile(
+  hermesRoot: string,
+  staleName: string,
+  freshName: string,
+  memoryDirectory: string,
+): Promise<void> {
+  if (staleName === freshName) return;
+  const stale = join(hermesRoot, "profiles", staleName);
+  if (!(await exists(stale))) return;
+  const owner = await profileOwner(stale, memoryDirectory);
+  if (owner.status !== "owned") {
+    const detail =
+      owner.status === "other"
+        ? `it points at ${owner.target}`
+        : owner.status === "missing"
+          ? "it has no memories symlink to prove ownership"
+          : owner.reason;
+    throw new Error(
+      `argus up: cannot rename the inert profile ${staleName} onto ${freshName}: ${detail}; refusing to touch it`,
+    );
+  }
+  const fresh = join(hermesRoot, "profiles", freshName);
+  if (await exists(fresh)) {
+    // The usable name is already populated — the stale copy is redundant, and
+    // merging two profile directories is not something we can do safely.
+    throw new Error(
+      `argus up: both ${staleName} and ${freshName} exist under ${hermesRoot}/profiles; remove the inert ${staleName} by hand`,
+    );
+  }
+  await rename(stale, fresh);
 }
 
 interface StoredRepoIdentity {
@@ -305,10 +409,39 @@ async function resolveRepoIdentity(
       }
       throw error;
     }
-    if (stored.canonicalRepo !== canonicalRepo || stored.identity !== identity) {
+    if (stored.canonicalRepo !== canonicalRepo) {
       throw new Error(
         `argus up: repo identity at ${identityPath} belongs to ${stored.canonicalRepo}; refusing to create a second binding`,
       );
+    }
+    if (stored.identity !== identity) {
+      // The only identity drift we know how to absorb is #102's: a record
+      // written under the over-long scheme, for this same repo. Anything else
+      // is a genuine mismatch and still refuses. Without this branch the
+      // shortening would turn every previously-adopted repo into a hard
+      // "belongs to" error against itself.
+      if (stored.identity !== legacyRepoIdentity(canonicalRepo)) {
+        throw new Error(
+          `argus up: repo identity at ${identityPath} does not match this repo's identity; refusing to create a second binding`,
+        );
+      }
+      await migrateOverlongProfile(
+        hermesRoot,
+        stored.profile,
+        stored.profile === stored.identity ? identity : stored.profile,
+        join(argusDirectory, "memory"),
+      );
+      return {
+        ...stored,
+        identity,
+        // A legacy short profile name (`argus-<slug>`) was always valid and is
+        // left alone; only the over-long identity-shaped one is renamed.
+        profile: stored.profile === stored.identity ? identity : stored.profile,
+        // Honcho workspaces cannot be renamed without abandoning their derived
+        // memory, so the workspace id stays whatever it was — the same reason
+        // the legacy-adoption path below keeps its own.
+        workspace: stored.workspace,
+      };
     }
     return stored;
   }
@@ -366,6 +499,17 @@ async function resolveRepoIdentity(
       `argus up: cannot safely migrate legacy binding ${legacy}: ${owner.reason}; refusing to create a second binding`,
     );
   }
+
+  // No identity.json, but a past `argus up` may still have left an inert
+  // over-long profile behind (the record is written after the profile, so a
+  // run that died in between leaves exactly this). Rename it rather than
+  // stranding it next to the usable one.
+  await migrateOverlongProfile(
+    hermesRoot,
+    legacyRepoIdentity(canonicalRepo),
+    identity,
+    join(argusDirectory, "memory"),
+  );
 
   return {
     canonicalRepo,
@@ -774,6 +918,52 @@ async function ensureHermesSignalCron(
   }
 }
 
+/**
+ * Prove the profile is reachable through the name Argus just wrote.
+ *
+ * #94 shipped a binding that was written, looked right in the config, and could
+ * not be used; #102 is the same shape. The fix for both is the same: assert
+ * through the configured path, at write time, rather than trusting that the
+ * write succeeded.
+ *
+ * `hermes profile info` is the probe rather than `hermes profile use`, even
+ * though `use` is the command a human hits. Both run the same validator and
+ * both reject the over-long name with the same message, but `use` also writes
+ * `active_profile` — a sticky, global, cross-repo default. `argus up` in one
+ * repo silently repointing the user's default Hermes profile is a side effect
+ * we should not trade for a check. `info` additionally 404s on a profile that
+ * is absent, so it covers "never written" as well as "unusable name".
+ * (`profile show` and `profile describe` were the other candidates and are
+ * useless here — neither validates the name, so both succeed on the broken one.)
+ *
+ * On failure this degrades with a readable reason instead of failing the
+ * command, matching #96 and #85. A wrong or missing profile binding does not
+ * make the rest of `argus up` wrong, and hard-failing would mean a Hermes
+ * version bump could brick adoption entirely. The reason is carried on the
+ * report so the caller can surface it — silence is what let this survive.
+ */
+async function verifyHermesProfile(
+  hermesRoot: string,
+  profile: string,
+  run: HermesCronRun,
+): Promise<{ error: string | null; status: AgentBindingReport["profileVerified"] }> {
+  let result: HermesCronRunResult;
+  try {
+    result = await run(["profile", "info", profile], { HERMES_HOME: hermesRoot });
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : String(error),
+      status: "unavailable",
+    };
+  }
+  if (result.exitCode === 0) return { error: null, status: "ok" };
+  const detail = `${result.stderr}${result.stdout}`.trim().split("\n")[0] ?? "";
+  return {
+    error: `hermes profile info ${profile} exited ${result.exitCode}${detail === "" ? "" : `: ${detail}`}`,
+    status: "failed",
+  };
+}
+
 export async function convergeAgentBindings(
   options: AgentBindingOptions,
 ): Promise<AgentBindingReport> {
@@ -800,6 +990,12 @@ export async function convergeAgentBindings(
   await Bun.write(
     join(argusDirectory, "identity.json"),
     `${JSON.stringify(binding, null, 2)}\n`,
+  );
+
+  const verified = await verifyHermesProfile(
+    options.hermesRoot,
+    profile,
+    options.hermesProfile ?? runHermesCron,
   );
 
   let cron: AgentBindingReport["cron"] = "not-configured";
@@ -831,5 +1027,14 @@ export async function convergeAgentBindings(
     honchoError = error instanceof Error ? error.message : String(error);
   }
 
-  return { cron, cronError, honcho, honchoError, profile, workspace };
+  return {
+    cron,
+    cronError,
+    honcho,
+    honchoError,
+    profile,
+    profileError: verified.error,
+    profileVerified: verified.status,
+    workspace,
+  };
 }

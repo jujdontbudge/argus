@@ -8,6 +8,7 @@ import {
   rm,
   symlink,
 } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -153,7 +154,7 @@ peers:
       await Bun.file(join(canonicalRepo, ".argus", "identity.json")).json(),
     ).toEqual({
       canonicalRepo,
-      identity: expect.stringMatching(/^argus-legacy-repo-[a-f0-9]{64}$/),
+      identity: expect.stringMatching(/^argus-legacy-repo-[a-f0-9]{16}$/),
       profile: legacy,
       version: 1,
       workspace: legacy,
@@ -370,7 +371,7 @@ peers:
 
     expect(first.honcho).toBe("created");
     expect(second.honcho).toBe("existing");
-    expect(workspace).toMatch(/^argus-widget-kit-[a-f0-9]{64}$/);
+    expect(workspace).toMatch(/^argus-widget-kit-[a-f0-9]{16}$/);
     expect(second.workspace).toBe(workspace);
     expect(honcho.workspaces.get(workspace)).toEqual({
       id: workspace,
@@ -457,7 +458,7 @@ skills:
     });
 
     const profile = join(hermesRoot, "profiles", report.profile);
-    expect(report.profile).toMatch(/^argus-widget-kit-[a-f0-9]{64}$/);
+    expect(report.profile).toMatch(/^argus-widget-kit-[a-f0-9]{16}$/);
     expect(
       (await lstat(join(await realpath(repo), ".argus", "skills"))).isDirectory(),
     ).toBe(true);
@@ -680,5 +681,239 @@ skills:
     - ${JSON.stringify(join(await realpath(repo), ".argus", "skills"))}
 `,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #102 — the profile Argus writes must be USABLE through the name it writes.
+//
+// #94's lesson, applied literally. A test that asserts "a profile name was
+// generated" or "a directory was created" passes for a broken binding: `argus
+// up` mkdir's the profile directly and never calls `hermes profile create`, so
+// Hermes' own name validation is bypassed at write time and the name is only
+// refused later, at USE time, by a caller who has no idea Argus produced it.
+//
+// So this asserts the round trip: converge a binding, then hand the name it
+// reports to the real `hermes profile use` against a scratch HERMES_HOME. No
+// auth, no model, no network — a local argv validation path — so it belongs in
+// the default gate rather than behind ARGUS_LIVE_HERMES. Skipped only when the
+// binary is absent, because then there is nothing to round-trip against.
+// ---------------------------------------------------------------------------
+
+const hermesBinary = Bun.which("hermes");
+
+describe.skipIf(hermesBinary === null)("hermes profile round trip (#102)", () => {
+  test("the profile argus up writes can be selected by the name it writes", async () => {
+    const { repo, root } = await scratchRepo("Widget Kit");
+    const hermesRoot = join(root, "home", ".hermes");
+    const honcho = new FakeHoncho();
+
+    const report = await convergeAgentBindings({
+      hermesRoot,
+      honcho,
+      honchoUrl: "http://honcho.test:8000",
+      repo,
+    });
+
+    // The profile directory exists on disk — this much has always been true,
+    // and asserting only this is exactly the test that would have shipped the
+    // bug. The name being usable is the claim that matters.
+    expect(
+      (await lstat(join(hermesRoot, "profiles", report.profile))).isDirectory(),
+    ).toBe(true);
+
+    const child = Bun.spawn([hermesBinary as string, "profile", "use", report.profile], {
+      env: { ...Bun.env, HERMES_HOME: hermesRoot },
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [exitCode, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+
+    expect({ exitCode, output: `${stdout}${stderr}`.trim() }).toMatchObject({
+      exitCode: 0,
+    });
+  });
+});
+
+describe("profile names fit what Hermes accepts (#102)", () => {
+  test("a pathological repo basename still produces a selectable name", async () => {
+    // The slug cap is load-bearing, not cosmetic: before #102 the slug alone
+    // was allowed 80 characters. A repo named like this is what turns a
+    // "looks fine locally" name into one Hermes refuses.
+    const root = await mkdtemp(join(tmpdir(), "argus-bindings-long-"));
+    scratchDirectories.push(root);
+    const repo = join(root, "A Very Long Repository Name That Nobody Would Ever Choose But Which Is Legal Anyway");
+    await mkdir(join(repo, ".argus", "memory"), { recursive: true });
+    const hermesRoot = join(root, "home", ".hermes");
+
+    const report = await convergeAgentBindings({
+      hermesRoot,
+      honcho: new FakeHoncho(),
+      honchoUrl: "http://honcho.test:8000",
+      repo,
+    });
+
+    expect(report.profile.length).toBeLessThanOrEqual(64);
+    expect(report.profile).toMatch(/^[a-z0-9][a-z0-9_-]{0,63}$/);
+  });
+
+  test("two same-basename repos still get different profiles after shortening", async () => {
+    // The digest was shortened from 64 hex to 16. SPEC §13.9 is the reason it
+    // exists at all, so the shortening has to keep doing the one job it had.
+    const root = await mkdtemp(join(tmpdir(), "argus-bindings-short-"));
+    scratchDirectories.push(root);
+    const hermesRoot = join(root, "home", ".hermes");
+    const honcho = new FakeHoncho();
+    const bindings = [];
+    for (const parent of ["first", "second"]) {
+      const repo = join(root, parent, "shared-name");
+      await mkdir(join(repo, ".argus", "memory"), { recursive: true });
+      bindings.push(
+        await convergeAgentBindings({
+          hermesRoot,
+          honcho,
+          honchoUrl: "http://honcho.test:8000",
+          repo,
+        }),
+      );
+    }
+    expect(bindings[0]!.profile).not.toBe(bindings[1]!.profile);
+  });
+});
+
+describe("inert over-long profiles are migrated, not stranded (#102)", () => {
+  test("a profile written by the old scheme is renamed onto the usable name", async () => {
+    const { repo, root } = await scratchRepo("Widget Kit");
+    const canonicalRepo = await realpath(repo);
+    const hermesRoot = join(root, "home", ".hermes");
+    const digest = createHash("sha256").update(canonicalRepo).digest("hex");
+    const stale = `argus-widget-kit-${digest}`;
+    const staleDirectory = join(hermesRoot, "profiles", stale);
+    await mkdir(staleDirectory, { recursive: true });
+    await symlink(
+      join(canonicalRepo, ".argus", "memory"),
+      join(staleDirectory, "memories"),
+    );
+    await Bun.write(join(staleDirectory, "SOUL.md"), "carried across the rename");
+    await Bun.write(
+      join(canonicalRepo, ".argus", "identity.json"),
+      `${JSON.stringify(
+        {
+          canonicalRepo,
+          identity: stale,
+          profile: stale,
+          version: 1,
+          workspace: stale,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const report = await convergeAgentBindings({
+      hermesRoot,
+      honcho: new FakeHoncho(),
+      honchoUrl: "http://honcho.test:8000",
+      repo,
+    });
+
+    expect(report.profile).not.toBe(stale);
+    expect(report.profile.length).toBeLessThanOrEqual(64);
+    // The old directory is gone rather than left beside the new one, and its
+    // contents came with it.
+    expect(await Bun.file(join(staleDirectory, "SOUL.md")).exists()).toBe(false);
+    expect(
+      await Bun.file(
+        join(hermesRoot, "profiles", report.profile, "SOUL.md"),
+      ).text(),
+    ).toBe("carried across the rename");
+    // The Honcho workspace is deliberately NOT renamed — it cannot be, without
+    // abandoning the memory Honcho derived under it.
+    expect(report.workspace).toBe(stale);
+  });
+
+  test("an over-long profile belonging to another repo is refused, not clobbered", async () => {
+    const { repo, root } = await scratchRepo("Widget Kit");
+    const canonicalRepo = await realpath(repo);
+    const hermesRoot = join(root, "home", ".hermes");
+    const digest = createHash("sha256").update(canonicalRepo).digest("hex");
+    const stale = join(hermesRoot, "profiles", `argus-widget-kit-${digest}`);
+    const foreign = join(root, "somebody-else");
+    await mkdir(foreign, { recursive: true });
+    await mkdir(stale, { recursive: true });
+    await symlink(foreign, join(stale, "memories"));
+
+    await expect(
+      convergeAgentBindings({
+        hermesRoot,
+        honcho: new FakeHoncho(),
+        honchoUrl: "http://honcho.test:8000",
+        repo,
+      }),
+    ).rejects.toThrow(/refusing to touch it/);
+  });
+});
+
+describe("write-time profile verification (#102)", () => {
+  test("a failing round trip degrades with a readable reason", async () => {
+    const { repo, root } = await scratchRepo("Widget Kit");
+    const hermesRoot = join(root, "home", ".hermes");
+
+    const report = await convergeAgentBindings({
+      hermesProfile: async () => ({
+        exitCode: 1,
+        stderr: "Error: Invalid profile name 'x'. Must match [a-z0-9][a-z0-9_-]{0,63}\n",
+        stdout: "",
+      }),
+      hermesRoot,
+      honcho: new FakeHoncho(),
+      honchoUrl: "http://honcho.test:8000",
+      repo,
+    });
+
+    // Degrades rather than throwing — a bad profile binding does not make the
+    // Honcho workspace or the cron job wrong (#96, #85).
+    expect(report.profileVerified).toBe("failed");
+    expect(report.profileError).toContain("Invalid profile name");
+    expect(report.workspace).not.toBe("");
+  });
+
+  test("an unrunnable hermes is reported as unavailable, not as a failure", async () => {
+    const { repo, root } = await scratchRepo("Widget Kit");
+    const report = await convergeAgentBindings({
+      hermesProfile: async () => {
+        throw new Error("spawn hermes ENOENT");
+      },
+      hermesRoot: join(root, "home", ".hermes"),
+      honcho: new FakeHoncho(),
+      honchoUrl: "http://honcho.test:8000",
+      repo,
+    });
+    expect(report.profileVerified).toBe("unavailable");
+    expect(report.profileError).toContain("ENOENT");
+  });
+
+  test("the probe never writes a sticky active_profile", async () => {
+    // `hermes profile use` would have been the obvious probe and it mutates a
+    // global default. Assert the probe we chose does not.
+    const { repo, root } = await scratchRepo("Widget Kit");
+    const hermesRoot = join(root, "home", ".hermes");
+    const calls: string[][] = [];
+    await convergeAgentBindings({
+      hermesProfile: async (args) => {
+        calls.push([...args]);
+        return { exitCode: 0, stderr: "", stdout: "" };
+      },
+      hermesRoot,
+      honcho: new FakeHoncho(),
+      honchoUrl: "http://honcho.test:8000",
+      repo,
+    });
+    expect(calls).toEqual([["profile", "info", expect.any(String)]]);
+    expect(await Bun.file(join(hermesRoot, "active_profile")).exists()).toBe(false);
   });
 });

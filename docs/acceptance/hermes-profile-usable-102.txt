@@ -1,0 +1,52 @@
+#102 — the Hermes profile `argus up` generates is usable through the name it writes
+
+WHY THIS FILE EXISTS
+  Before #102, no evidence under docs/acceptance/ demonstrated the GENERATED
+  profile working. The last two Hermes drives (#82, #99) both ran against a
+  default profile that had been bound BY HAND, because the generated one could
+  not be selected. This file closes that gap: a real `argus up`, then the real
+  `hermes` binary listing and selecting the name Argus produced.
+
+THE LIMIT, AS MEASURED (not as remembered)
+  hermes_cli/profiles.py:35
+    _PROFILE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+  So: 64 characters, enforced as a REGEX BOUND, not a length check. The error
+  says "Invalid profile name ... Must match ...", never "too long".
+  Measured against hermes 0.16.0 with a scratch HERMES_HOME:
+    len=63  rc=0  listed=1  Switched to: ...
+    len=64  rc=0  listed=1  Switched to: ...
+    len=65  rc=1  listed=0  Error: Invalid profile name ...
+  Enforced at `profile use` (rc=1) and `profile info` (rc=1); `profile list`
+  SILENTLY OMITS the profile at rc=0; `profile show` and `profile describe` do
+  NOT validate at all and succeed on a name Hermes will not select.
+  A second, unrelated 251-char limit lives in service_manager.py (s6 name_max)
+  and is NOT the one that bites here.
+
+DRIVE — real `argus up` in a scratch HOME (HOME/HERMES_HOME/CODEX_HOME/CLAUDE_CONFIG_DIR all scratch)
+  $ cd <scratch>/Widget Kit && bun run src/cli.ts up
+    Hermes profile: argus-widget-kit-1bb6189a3f642fbe
+    length: 33  (limit 64)
+
+PROOF 1 — `hermes profile list` SHOWS it (it never did before)
+    
+     Profile          Model                        Gateway      Alias        Distribution
+     ───────────────    ───────────────────────────    ───────────    ───────────    ────────────────────
+      default         —                            stopped      —            —
+     ◆argus-widget-kit-1bb6189a3f642fbe —                            stopped      —            —
+    
+PROOF 2 — `hermes profile use` SELECTS it
+    $ hermes profile use argus-widget-kit-1bb6189a3f642fbe
+    Switched to: argus-widget-kit-1bb6189a3f642fbe
+    rc=0
+
+PROOF 3 — the memory binding resolves THROUGH the profile
+    lrwxr-xr-x  1 johansardar  wheel  60 Aug 26 21:17 <scratch>/memories -> <scratch>/Widget Kit/.argus/memory
+
+WHAT THIS DOES NOT SHOW
+  No agent turn was driven here — this is the binding, not a Hermes drive.
+  #82's and #99's transcripts remain drives against a hand-bound default
+  profile; they are not retroactively re-evidenced by this file. What changes
+  is that the generated profile is now demonstrably selectable, so the next
+  drive no longer needs the hand binding.
+  Honcho was DEGRADED during this drive (no local instance); the profile path
+  under test does not depend on it.
