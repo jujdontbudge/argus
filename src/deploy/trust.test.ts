@@ -88,6 +88,51 @@ describe("pre-trusting a directory", () => {
     });
   });
 
+  test("keeps a project written concurrently after its snapshot was read", async () => {
+    const { configDir, project } = await scratch();
+    const path = join(configDir, ".claude.json");
+    const concurrentProject = "/written/by/claude";
+    const initial = {
+      projects: {
+        "/already/present": { hasTrustDialogAccepted: true },
+      },
+    };
+    await Bun.write(path, JSON.stringify(initial));
+
+    const write = Bun.write;
+    Object.assign(Bun, {
+      write: async (...args: Parameters<typeof Bun.write>) => {
+        const written = await write(...args);
+        if (String(args[0]).startsWith(`${path}.argus.`)) {
+          await write(
+            path,
+            JSON.stringify({
+              ...initial,
+              projects: {
+                ...initial.projects,
+                [concurrentProject]: { allowedTools: ["Read"] },
+              },
+            }),
+          );
+        }
+        return written;
+      },
+    });
+
+    try {
+      const result = await trustDirectory(project, {
+        env: { CLAUDE_CONFIG_DIR: configDir },
+      });
+      expect(result.status).toBe("trusted");
+    } finally {
+      Object.assign(Bun, { write });
+    }
+
+    const config = await readConfig(configDir);
+    expect(config.projects[concurrentProject]).toEqual({ allowedTools: ["Read"] });
+    expect(config.projects[project].hasTrustDialogAccepted).toBe(true);
+  });
+
   test("an already-trusted directory is reported, and the file is not rewritten", async () => {
     const { configDir, project } = await scratch();
     const path = join(configDir, ".claude.json");
