@@ -1,0 +1,773 @@
+==============================================================================
+HERMES RE-DRIVE AGAINST THE CORRECTED SKILL — ticket #99
+==============================================================================
+Run date        2026-08-26
+checkout        /Users/johansardar/argus-worktrees/hermes-redrive (build/hermes-redrive)
+base commit     bad5f5c (merge: dispatch the form the session can actually
+                invoke (#97))
+sandbox root    /private/tmp/argus-99-run
+isolation       scratch HOME, HERMES_HOME, CODEX_HOME, CLAUDE_CONFIG_DIR;
+                `env -i` builds every child environment from an explicit list
+credentials     ~/.hermes/auth.json and ~/.codex/auth.json COPIED (never moved)
+                into the scratch homes — this ticket's one sanctioned touchpoint
+drive window    20:02:52 -> 20:16:33 local (13m41s), unattended
+gate state      run
+
+WHY A SIBLING FILE AND NOT AN EXTENSION.
+`hermes-orchestrator-e2e.txt` is #82's record: a complete, internally
+self-consistent account of a drive that graded the OLD skill and then halted on
+a credential stop condition. This is a different drive, against a different
+skill, answering a different question. Extending that file would make every
+measurement in it ambiguous about which drive it belongs to — and the whole
+value of this run is the comparison BETWEEN the two. They are kept separate and
+cross-referenced. #82's file is unmodified by this run.
+
+------------------------------------------------------------------------------
+0. Credential checksums — the non-negotiable gate
+------------------------------------------------------------------------------
+Baselines given in ticket #99, verified BEFORE anything ran:
+
+  hermes  da742362b9e49833760e31672d012dd9e894389617a965074a3244eb2b349220
+  codex   670a91106a15b04c48f5504375c448c3115ed3ade0aa3cef083a4fc603233e3a
+
+Both matched exactly. Re-verified AFTER the drive: both UNCHANGED.
+
+Note for the record: #99's codex baseline (670a9110...) is the value #82's file
+records as the POST-rotation checksum. #82 halted because the file moved from
+ab81a7c7... to 670a9110... mid-run. The ticket carried the new value forward,
+the real file still holds it, and it did not move again during this run. The
+stop condition was not reached.
+
+~/.claude/.credentials.json was NEVER read or copied. No `claude setup-token`,
+`/login`, `/logout` or `claude auth`.
+
+Johan's live ~/.codex/config.toml was never written:
+  $ grep -c "argus:notify" ~/.codex/config.toml   -> 0
+
+------------------------------------------------------------------------------
+1. The harness, and the two places it is not production
+------------------------------------------------------------------------------
+Same rigour as #82, same shape. `argus`, `cmux`, `gh` and `codex` all resolve to
+PATH shims in $SANDBOX/bin that log every call before running the real thing, so
+who issued a call is provable rather than asserted. `argus` runs THIS worktree's
+`src/cli.ts`.
+
+THE TRACKER IS A SHIM, and that is a limit of this run, exactly as it was of
+#82's. The sandbox repo has no GitHub remote and must never get one, so
+$SANDBOX/bin/gh is a local issue store implementing exactly the `gh` surface
+Argus uses (issue list/view/edit/close/comment/create, api user, api
+.../dependencies/blocked_by, api .../sub_issues, repo view, label list/create).
+It FAILS LOUDLY (exit 64) on any verb it does not implement, so a gap shows up
+as an error and not as a plausible empty result. Sub-issue graphs and dependency
+edges are stubbed to the empty case; this run does not prove Argus against real
+GitHub semantics.
+
+THE cmux SHIM IS STRICTER THAN PRODUCTION, DELIBERATELY. #98 is an open incident
+about a tab that plausibly vanished during #82's drive, and this run opens its
+tabs in Johan's real `argus` workspace — the same workspace that holds
+`argus-dispatcher` and `Argus loop monitoring`. So the shim refuses, and
+records, four things:
+
+  new-workspace / close-workspace       -> refused unconditionally (Directive 14)
+  close-surface with no --surface       -> refused (it would close the FOCUSED surface)
+  close-surface with a SHORT REF        -> refused (the #90 fail-open path)
+  close-surface on a surface this run did not create -> refused
+
+All four were smoke-tested before the drive and all four fired correctly,
+including refusing to close the `argus-dispatcher` surface. The effect is that
+"Hermes constructed a handle that would have destroyed Johan's state" is
+MEASURED without being SUFFERED. Across the whole drive the count of refusals
+triggered was ZERO — the guard never had to fire on a real call.
+
+Two harness repairs the ticket author made, both stated because the drive
+depended on them:
+
+  a) The Hermes profile `argus up` created could not be selected. See §5,
+     FINDING A — this is a production bug, not a harness quirk. The skills
+     directory was bound into the usable default profile by hand so the session
+     could load the skill at all.
+  b) `bun install` in the sandbox evicted `@types/bun` from the shared install;
+     restored with `bun install` in the worktree before the gates were run.
+
+------------------------------------------------------------------------------
+2. Setup, and #94 verified again
+------------------------------------------------------------------------------
+Sandbox repo: a real bun+TypeScript kit whose two gates are the two
+`argus complete` actually runs (`DEFAULT_GATES`, src/complete/gates.ts). Green
+before the batch: `bun x tsc --noEmit` OK, `bun test` 4 pass / 0 fail / 2 files.
+
+The same three tickets #82 used, so the two runs compare directly:
+
+  #1  Add a clamp helper to src/numbers.ts
+  #2  Add a wordCount helper to src/text.ts
+  #3  Add a median helper to src/numbers.ts
+
+#94 — `argus up` installs the orchestrator skill. VERIFIED:
+  $ ls .argus/skills/            -> argus-orchestrator
+  $ diff .argus/skills/argus-orchestrator/SKILL.md skills/argus-orchestrator/SKILL.md
+      (identical)
+The session loaded the CORRECTED skill. That is the precondition of this whole
+ticket and it is established by byte comparison, not by assumption.
+
+------------------------------------------------------------------------------
+3. The drive
+------------------------------------------------------------------------------
+The mission prompt gives Hermes the JOB, never the steps. Identical to #82's
+except for the path, and launched from OUTSIDE the repo exactly as #82's was —
+that is what makes the skill's new "run argus from inside the repository"
+section testable:
+
+  You are mission control for the Argus repository at /private/tmp/argus-99-run/repo.
+  Use the repo's argus-orchestrator skill. Never implement worker tickets yourself.
+  Three tickets are open on this repo's tracker. Deploy, monitor and close that batch.
+  `argus`, `gh`, `cmux` and `git` are on PATH.
+  When you are done, report exactly what you did and what, if anything, stopped you.
+
+  $ hermes -z "$(cat mission.txt)" -s argus-orchestrator --yolo
+
+  hermes 0.16.0 (2026.6.5), provider openai-codex, model gpt-5.6-sol,
+  reasoning_effort high. No API key: `env -i` builds the child environment from
+  an explicit list that contains none. Subscription only, both vendors.
+
+HOW FAR IT GOT UNAIDED: all the way. 3/3 tickets implemented, merged and closed,
+with no intervention from the ticket author at any point after launch.
+
+------------------------------------------------------------------------------
+4. THE ANSWER TO THE TICKET'S QUESTION
+------------------------------------------------------------------------------
+"Did correcting the skill actually change Hermes' behaviour, or did it comply
+with the old sentence for reasons the skill does not control?"
+
+BOTH, and the run separates them cleanly. Four behaviours changed and are
+attributable to specific corrected sentences. Two did not change, and one of
+those is the run's most useful negative result.
+
+=== CHANGED, AND ATTRIBUTABLE ===
+
+  D1. THE `--help` TRAP IS GONE FROM HERMES' BEHAVIOUR.
+
+      #82's argus call sequence began:
+        $ argus --help
+        $ argus dispatch --help      <- FINDING 4: this silently DISPATCHES
+        $ argus status
+        $ argus dispatch
+
+      #99's begins:
+        $ argus status
+        $ argus dispatch
+
+      Across 18 Hermes-issued argus calls this run, the count of subcommand
+      `--help` probes is ZERO:
+        $ grep -c 'argus.*--help' argus.log   -> 0
+
+      The corrected skill added: "`argus dispatch --help` does NOT print help —
+      the flag is ignored and a real dispatch pass runs... Never probe a
+      subcommand with `--help`." Hermes did not probe. This is the cleanest
+      single attribution in the run: a hazard that #82 walked into on its second
+      call, closed by one paragraph, with the counter-evidence being an absence
+      that is directly countable.
+
+      Worth noting against overclaiming: Hermes DID probe `codex exec --help`
+      and `codex exec resume --help`. So it has not stopped using `--help` as a
+      discovery tool in general — it stopped using it on `argus`, which is
+      exactly and only what the skill told it.
+
+  D2. THE cwd FAILURE DID NOT RECUR.
+
+      #82's first real dispatch attempt failed on:
+        argus dispatch: current directory is not inside a git repository
+      #82 graded this "MISSING ENTIRELY: where to run argus from ---- GAP".
+
+      #99's Hermes was launched from the same place — outside the repo — and
+      that error never appears, in the call log or in Hermes' own closing
+      report, which lists its blockers explicitly and does not include it. The
+      corrected skill opens with a section titled "Run every argus command from
+      inside the repository". It was read and acted on.
+
+  D3. THE FOLLOW-UP INTO A LIVE WORKER WORKED FIRST TIME, BY A BETTER ROUTE.
+
+      This is the largest behavioural difference in the run.
+
+      #82 hand-built a resume: `cmux new-surface`, wrote a `resume-ticket-3.sh`,
+      `cmux send` the script path, one `Enter`, read the screen back. It did NOT
+      land. The cause was a wrong `CODEX_HOME` in the hand-rolled environment.
+      It took an audit event, a notify, a second registry row and a retry.
+
+      #99 issued ZERO `cmux send` calls — the string `send` does not appear in
+      cmux.log at all. Instead:
+        $ codex exec resume --help
+        $ codex exec resume --json 01a040c2-e7f1-73d0-90ea-a870c7eb7e5b "Ticket #3 passed its gates but conflicted..."
+      One call, correct environment, worked first time, produced commit c6655cf
+      resolving the conflict with both helpers and both test suites intact.
+
+      ATTRIBUTION, stated carefully. `codex exec resume` is a Codex CLI verb;
+      the skill does not name it and cannot take credit for Hermes finding it.
+      What the skill DOES contain is the paragraph written out of #82's exact
+      failure: "There is no `argus resume`... a resume launched under the wrong
+      `CODEX_HOME` looks like a send that did not land, and you will debug the
+      wrong layer." Hermes carried the environment deliberately and did not
+      debug the wrong layer. The skill did not supply the verb; it supplied the
+      warning that made the verb be used correctly on the first attempt.
+
+  D4. THE READ-ONLY-SANDBOX LOOP WAS BROKEN IN ONE CYCLE INSTEAD OF THREE.
+
+      #82: 3 cycles, 9 deployments, 6 blocked-on-human events before Hermes
+      diagnosed the read-only Codex sandbox and fixed it.
+      #99: 1 cycle, 3 deployments, 3 blocked-on-human events.
+
+        registry sessions        #82: 9+     #99: 6
+        blocked-on-human events  #82: 6      #99: 3
+
+      Both runs reached the same conservative fix — `sandbox_mode =
+      "workspace-write"` plus a `trust_level = "trusted"` project entry, in the
+      SCRATCH codex config, never Johan's. Hermes chose workspace-write over the
+      `danger-full-access` in Johan's personal config both times.
+
+      ATTRIBUTION, and this one is partial. The corrected skill added: "If the
+      same ticket blocks for the same reason on consecutive passes, stop
+      redeploying it... Answer the block instead." Hermes stopped after one
+      repeat rather than three, which is what that sentence asks for. But one
+      run against one run is not a rate, and a faster diagnosis is also just
+      what a second encounter with a known failure shape looks like. Recorded as
+      consistent with the correction, not proven by it.
+
+=== DID NOT CHANGE ===
+
+  S1. `argus status` — Hermes used it either way.
+
+      #82 graded this "MISSING: `argus status` ---- GAP", noting Hermes reached
+      for it three times unprompted although the skill never mentioned it. The
+      corrected skill now names it first in its monitoring order. #99's Hermes
+      used it four times.
+
+      THIS IS THE RUN'S MOST USEFUL NEGATIVE RESULT, and it is the direct answer
+      to the second half of the ticket's question. Adding `argus status` to the
+      skill changed NOTHING about what Hermes did, because Hermes was already
+      going to do it: it is the obvious monitoring verb and it is discoverable
+      from `argus --help`. The correction made the skill TRUE, which is worth
+      doing, but it bought no behaviour. A grade that counted this as a win
+      would be crediting the skill for something it does not control.
+
+  S2. Provenance step 1 — Hermes did not hand-write a registry row, either time.
+
+      The OLD skill ordered Hermes to write the sessions.jsonl row itself before
+      starting a session. #82 graded that WRONG and IMPOSSIBLE, and recorded
+      that Hermes ignored it. The corrected skill now says the opposite — that
+      `argus dispatch` writes the row and Hermes must not.
+
+      #99's Hermes also did not hand-write a row. Same observable behaviour,
+      opposite instruction. Under the old skill it was DISOBEYING a wrong rule;
+      under the new one it is OBEYING a right one. There is no behavioural delta
+      to point at, and the honest reading is that Hermes never had a way to
+      write that row — a Codex session id does not exist until Codex announces
+      it — so the outcome was overdetermined in both runs. The correction
+      removed a trap for a more literal-minded agent. It did not change this one.
+
+------------------------------------------------------------------------------
+5. THE REF-SHAPED HANDLE — reported because the ticket asked, even though
+   nothing broke
+------------------------------------------------------------------------------
+Hermes constructed a ref-shaped handle and persisted it. Here is the row, from
+.argus/registry/sends.jsonl, in full:
+
+  {"ts":"2026-08-27T01:12:32.573643Z",
+   "sessionId":"01a040c2-e7f1-73d0-90ea-a870c7eb7e5b","agent":"codex",
+   "workspace":"workspace:1",
+   "surface":"surface:B56BDD1F-3094-41D7-A405-D3DBDAF4DB9C",
+   "kind":"prompt","text":"Ticket #3 passed its gates but conflicted...",
+   "sha256":"3e4db74f3698b5b92d74961249045100bd69e67b027bc3de8b035a556739eae4"}
+
+Two separate problems in one row.
+
+  (a) `surface:B56BDD1F-3094-41D7-A405-D3DBDAF4DB9C` is a MALFORMED HYBRID.
+      Hermes took the surface UUID Argus recorded and prefixed it with
+      `surface:`. That is neither a short ref nor a UUID.
+
+      MEASURED against the real 0.62.2 binary, with a bogus UUID so nothing real
+      was touched:
+
+        cmux read-screen --surface surface:00000000-0000-0000-0000-000000000000
+          -> exit 1  "Error: Invalid surface handle: surface:0000... (expected
+                      UUID, ref like surface:1, or index)"
+        cmux list-pane-surfaces --workspace workspace:<a real workspace UUID>
+          -> exit 1  "Error: Invalid workspace handle: ... (expected UUID, ref
+                      like workspace:1, or index)"
+
+      The hybrid FAILS CLOSED. It is rejected at parse time, before resolution,
+      so it can never be redirected onto a focused surface. It is a bug in the
+      record, not a hazard. If it had ever been passed to `close-surface` it
+      would have closed nothing.
+
+  (b) `"workspace":"workspace:1"` IS the fail-open shape, and it is now durable.
+
+      This is the one worth Johan's attention. `workspace:1` is a plain numeric
+      short ref, and #90's measurement of what those do was re-confirmed live
+      during this run, independently:
+
+        cmux list-pane-surfaces --workspace workspace:9999   -> exit 0, answered
+        cmux read-screen        --surface   surface:9999     -> exit 0, and it
+            RETURNED THE CONTENTS OF ANOTHER SURFACE'S SCREEN
+        cmux list-pane-surfaces --workspace 00000000-...     -> exit 1, not_found
+        cmux read-screen        --surface   00000000-...     -> exit 1
+
+      A ref that resolves to nothing exits 0 and acts on the focused surface.
+      A UUID that resolves to nothing exits 1 and acts on nothing.
+
+      The corrected skill states this correctly and even states this exact
+      consequence: "a ref persisted in a registry row outlives the process that
+      gave it meaning." Hermes then persisted one, into sends.jsonl, which is
+      the durable provenance file the same skill tells it to write. The skill
+      names the hazard and does not forbid the act that creates it.
+
+WHAT SAVED THIS RUN, and it was not the skill. Hermes never passed either handle
+to cmux. It issued ZERO `cmux send` calls, because it resumed ticket #3 through
+`codex exec resume` instead (D3). The registry row's workspace and surface
+fields were decorative — written to satisfy the provenance rule, never used to
+address anything. Had Hermes taken the `cmux send` route the skill describes,
+`workspace:1` is what it would have sent to.
+
+  RECOMMENDATION (not made here — it is a skill change, and this run's job was
+  to grade, not to rewrite the thing it was grading a second time): the
+  provenance section should require the UUID in the registry row, not the
+  prefixed ref, and should say that the ref forms named in the cmux section are
+  for interactive convenience only. Filed for its own ticket.
+
+ALL SIX PRODUCTION CLOSES USED UUIDs. Every `close-surface` Argus issued via
+tab.ts passed a raw UUID and a raw workspace UUID:
+
+  cmux close-surface --surface 6130FEFA-321E-4712-9BD2-70354F417D22 --workspace 2D3B8B38-...
+  cmux close-surface --surface 4BE45F34-39BB-4B95-8D36-7C541088B12D --workspace 2D3B8B38-...
+  cmux close-surface --surface B56BDD1F-3094-41D7-A405-D3DBDAF4DB9C --workspace 2D3B8B38-...
+  cmux close-surface --surface 7A2BEE26-BD34-4A31-8F61-6AA3BDBEC3B6 --workspace 2D3B8B38-...
+  cmux close-surface --surface 50D6DEA1-D4AA-4B7B-9842-C860409B1838 --workspace 2D3B8B38-...
+  cmux close-surface --surface 8622E06E-599C-4818-BCC5-CA309F8876D1 --workspace 2D3B8B38-...
+
+The harness guard that refuses short-ref closes never fired. Contrast #82, where
+the tenth close was Hermes' own and used `--surface surface:60`.
+
+------------------------------------------------------------------------------
+6. #98 DID NOT RECUR — checked by UUID, not by count
+------------------------------------------------------------------------------
+#82's §10 reported a pre-existing surface — `67969077-BFC4-4F6D-8129-E33ADEC6643A`,
+titled "argus grill", and `[selected]` — that was present before its drive and
+gone after, with a short-ref `close-surface` as the plausible mechanism.
+
+This run took a full `tree --all` snapshot before and after and diffed the
+SURFACE UUID SETS, because counting is not enough — an equal count can hide one
+surface dying and another being born.
+
+  workspaces   8 before, 8 after                  UNCHANGED
+  surfaces    25 before, 25 after                 UNCHANGED
+  pre-existing surface UUIDs missing after:  NONE
+  surface UUIDs present after but not before: NONE
+
+Every surface that existed before this run still exists, by UUID. Six tabs were
+opened and six were closed, and the set closed is exactly the set opened. This
+run did not lose a tab and did not lose one of Johan's.
+
+That is evidence about THIS run. It is not a resolution of #98, which is about
+#82's drive, and nothing here can retroactively exonerate that one.
+
+------------------------------------------------------------------------------
+7. #89 — the cwd took
+------------------------------------------------------------------------------
+The concern #89 fixed: before it, a session dispatched for a sandbox repo ran in
+Johan's REAL ~/argus.
+
+  MECHANISM. `spawnWorker` (src/deploy/spawn.ts:81) passes `cwd: request.cwd`
+  into `Bun.spawn`, and `spawnRequest` (src/deploy/deploy.ts:332-348) threads the
+  deployment's cwd into it.
+
+  OBSERVED. Argus's own reviewer-brain invocations carry the worktree on the
+  command line explicitly, and the shim log proves it per ticket:
+
+    codex exec ... -C /private/tmp/argus-99-run/repo-worktrees/ticket-1 ...
+    codex exec ... -C /private/tmp/argus-99-run/repo-worktrees/ticket-2 ...
+    codex exec ... -C /private/tmp/argus-99-run/repo-worktrees/ticket-3 ...
+
+  NEGATIVE CONTROL, the one that actually matters:
+
+    $ find ~/argus -newermt "2026-08-26 20:02" ! -path '*/.git/*' -type f
+      (no output)
+
+  Not one file in Johan's real ~/argus was modified during the drive window.
+  The three workers wrote to their own worktrees; their commits (80ddd01,
+  14fa855, 508e0cf) are on the ticket branches and reached main through
+  `argus complete`. The cwd took.
+
+------------------------------------------------------------------------------
+8. #95, #96, #97 — what this run can and cannot say
+------------------------------------------------------------------------------
+#95 (a deployed session is a TAB) — CONFIRMED, second live run. Per worker,
+in order, every handle re-resolved against `tree --all --json` first:
+
+    cmux --id-format both tree --all --json
+    cmux new-surface --type terminal --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10
+    cmux --id-format both tree --all --json
+    cmux rename-tab --workspace 2D3B8B38-... --surface <UUID> "argus #<n>"
+
+  and on reap, `cmux close-surface --surface <UUID> --workspace <UUID>`.
+
+  cmux verb totals for the drive, ALL issued by Argus under Hermes:
+
+      24  cmux --id-format both tree --all --json
+       6  cmux new-surface
+       6  cmux rename-tab
+       6  cmux close-surface
+       2  cmux --version
+       0  cmux new-workspace          <- ZERO. Directive 14 held.
+       0  cmux send / send-key        <- see D3
+      44  total
+
+#96 — NOT EXERCISED, both halves, and this is stated rather than glossed.
+  - The pre-trust path (src/deploy/trust.ts) is the CLAUDE CODE path. All three
+    tickets were unlabelled and routed to Codex by the documented default, so
+    trust.ts never ran. #92 further bounds it to the interactive TUI path; this
+    drive was headless. A section this run did not reach is not a section that
+    passed.
+  - The "deployment that archives zero messages is visibly degraded" half also
+    did not fire: this run started no eyes (`argus status` shows reviewer,
+    archiver, honcho, digest, retro all `stopped` throughout), so nothing
+    archived and nothing had cause to report a degraded archive.
+
+#97 (grill dispatch reads the invocation form off SKILL.md) — NOT EXERCISED.
+  There was no grill in this batch. The skill's grill section went untested for
+  the second drive running.
+
+------------------------------------------------------------------------------
+9. FINDINGS
+------------------------------------------------------------------------------
+******************************************************************************
+FINDING A (NEW, production bug) — every Hermes profile `argus up` creates is
+too long for Hermes to accept, so `argus up`'s own binding is unusable.
+******************************************************************************
+
+  `argus up` reported success and created:
+
+    $HERMES_HOME/profiles/argus-repo-6c21a5f2ecd2b5a0eb29edbc3ec17fc6e16eeb8d325feba0f82ddefce5f281c5
+
+  Selecting it fails:
+
+    $ hermes profile use argus-repo-6c21a5f2...f281c5
+      Error: Invalid profile name 'argus-repo-6c21a5f2...'.
+             Must match [a-z0-9][a-z0-9_-]{0,63}
+
+    $ hermes profile list
+      Profile     Model         Gateway   Alias   Distribution
+      ◆default    gpt-5.6-sol   stopped   —       —
+
+  Hermes does not list it and will not select it. The directory exists and is
+  correctly populated — its config.yaml carries the right
+  `skills.external_dirs` — and none of that is reachable.
+
+  THE ARITHMETIC, and it is universal, not a property of this sandbox:
+  `repoIdentity` (src/up/bindings.ts:206-211) returns `argus-${slug}-${digest}`
+  where digest is a full 64-hex SHA-256. That is 6 + slug + 1 + 64 characters:
+  at least 73 for a one-character slug, 75 here. Hermes' limit is 64. EVERY
+  profile `argus up` has ever created, for every repo, exceeds it.
+
+  WHAT THIS COSTS. #82 graded the old skill's launch instruction WRONG and
+  rewrote it. The corrected text now reads: "Read the profile name from
+  `$HERMES_HOME/profiles/` rather than guessing it; the digest is not
+  reconstructable by eye." That instruction is followable and still does not
+  work — you can read the name and Hermes will still refuse it. #82 fixed the
+  sentence; the binding underneath it was broken the whole time and no drive had
+  ever tried to USE the profile, so no grade caught it.
+
+  This run only proceeded because the ticket author bound the skills directory
+  into the default profile by hand (§1b). A Hermes actually told to "run under
+  the repo's profile" would be stuck here.
+
+  Not fixed here: the fix is a production change to profile naming (truncate the
+  digest, or use a short hash), it has migration consequences for any existing
+  binding and for the Honcho workspace name checked against the same identity,
+  and it belongs to Johan and its own ticket. FILED, not fixed.
+
+******************************************************************************
+FINDING B (#82's FINDING 1, UNFIXED, re-confirmed) — every Codex worker Argus
+deploys is READ-ONLY unless the machine's personal codex config grants write.
+******************************************************************************
+
+  `CODEX_ROUTE.command` (src/deploy/routes.ts:112-124) still spawns exactly:
+
+    codex exec --json -c model_reasoning_effort=high <dispatchPrompt>
+
+  Reasoning effort and nothing about sandbox or approval policy. `codex exec`
+  defaults to a read-only sandbox. All three first-cycle workers blocked in
+  well under a minute having written nothing:
+
+    "Blocked by the workspace's read-only sandbox: the test-first patch was
+     rejected, so I couldn't modify files or create a commit. No repository
+     changes were made."
+        -- .argus/events/v1-blocked-on-human-38419d26....json
+
+  Invisible on Johan's machine because his live config says
+  `sandbox_mode = "danger-full-access"`. Unchanged since #82 filed it. The
+  one-line fix (`-c sandbox_mode=workspace-write`) is a policy call about what
+  an unattended worker may touch. FILED again, not fixed.
+
+******************************************************************************
+FINDING C (#82's FINDING 3, UNFIXED, re-confirmed) — `blocked-on-human` still
+leaves NO trace on the ticket.
+******************************************************************************
+
+  Three blocked sessions this run. Final ticket comment counts:
+
+    #1 CLOSED assignees=["argus-dispatcher"] comments=1
+    #2 CLOSED assignees=["argus-dispatcher"] comments=1
+    #3 CLOSED assignees=["argus-dispatcher"] comments=1
+
+  The single comment on each is `argus complete`'s merge notice. Not one of the
+  three blocks produced a comment. The reason exists only as JSON under
+  `.argus/events/`. The corrected skill now warns the READER about this — "a
+  `blocked-on-human` worker currently writes its reason ONLY to an event file"
+  — which is honest documentation of a defect rather than a fix for it.
+
+******************************************************************************
+FINDING D (NEW, minor) — Hermes' sandbox fix lands INSIDE Argus's managed block
+and the next `argus up` will silently eat it.
+******************************************************************************
+
+  After Hermes fixed the read-only sandbox, the scratch $CODEX_HOME/config.toml
+  read:
+
+    model = "gpt-5.6-sol"
+    model_reasoning_effort = "high"
+    sandbox_mode = "workspace-write"
+
+    # argus:notify:begin
+    notify = ["/Users/.../bun","/Users/.../scripts/codex-notify.ts"]
+
+    [projects."/private/tmp/argus-99-run/repo"]
+    trust_level = "trusted"
+    # argus:notify:end
+
+  The `[projects...]` table with `trust_level = "trusted"` sits BETWEEN
+  `# argus:notify:begin` and `# argus:notify:end`. That region is Argus's, and
+  `argus up` rewrites it wholesale. The next converge would drop the trust
+  entry without saying so.
+
+  This is a consequence of TOML section semantics rather than of anyone's
+  mistake: a `[table]` header captures every key after it until the next header,
+  so appending a table before the end-marker swallows the marker's own scope.
+  It is worth a guard — either Argus refusing to rewrite a block whose contents
+  it did not write, or placing its markers so a trailing table cannot be
+  captured. FILED, not fixed.
+
+------------------------------------------------------------------------------
+10. HERMES' CLOSING REPORT, AND EVERY CLAIM IN IT CHECKED
+------------------------------------------------------------------------------
+Verbatim from $SANDBOX/log/hermes-drive.out, abridged to its claims:
+
+  - Loaded and followed the repository's `argus-orchestrator` skill.
+  - Ran `argus dispatch`, deploying all three tickets to separate Codex workers.
+  - Detected that the first worker run was blocked because Codex defaulted to a
+    read-only sandbox.
+  - Set the sandbox-local Codex configuration to sandbox_mode = "workspace-write".
+  - Ran `argus dispatch` again; Argus recovered the failed sessions and redeployed.
+  - Ran `argus complete`: #1 merged as ad7f4fa, #2 as be3711e, #3 refused
+    (conflicted with #1 in numbers).
+  - Logged a provenance-preserving follow-up in .argus/registry/sends.jsonl and
+    resumed ticket #3's original Codex worker with the correct CODEX_HOME,
+    HERMES_HOME and worktree.
+  - The worker merged main, resolved conflicts retaining both clamp and median,
+    ran both gates, committed c6655cf.
+  - Ran `argus complete` again: #3 merged and closed as 0edbc72.
+  - Final gates: bun test 10 passed 0 failed; bun run typecheck passed.
+
+VERIFIED INDEPENDENTLY, not taken on trust:
+
+  tracker    #1 CLOSED   #2 CLOSED   #3 CLOSED
+  main log   0edbc72 merge: Add a median helper to src/numbers.ts (#3)
+             c6655cf merge main and preserve number helpers
+             be3711e merge: Add a wordCount helper to src/text.ts (#2)
+             ad7f4fa merge: Add a clamp helper to src/numbers.ts (#1)
+             508e0cf feat: add median helper
+             80ddd01 feat: add clamp helper
+             14fa855 Add wordCount text helper
+  code       src/numbers.ts:5 clamp, :9 median; src/text.ts:5 wordCount
+  gates on the merged main
+             bun x tsc --noEmit  -> OK
+             bun test            -> 10 pass, 0 fail (baseline was 4)
+  worktrees  only the main worktree remains; only `main` remains as a branch
+
+All three named merge SHAs exist and are the merges they claim to be. Hermes did
+not overstate anything. It also did not claim the skill was good, and correctly
+reported the read-only sandbox and the conflict as temporary blockers it cleared
+itself.
+
+ONE CLAIM WORTH FLAGGING, not an overstatement but a gap between words and
+mechanism: "resumed ticket #3's original Codex worker" via a
+"provenance-preserving follow-up". The provenance row WAS written first, and its
+content hash is correct. But the resume went through `codex exec resume`, not
+through the `cmux send` protocol the row's `workspace`/`surface` fields describe,
+so those two fields record a route that was never taken (§5).
+
+------------------------------------------------------------------------------
+11. THE CALL LOG — the proof of who acted
+------------------------------------------------------------------------------
+Committed verbatim below because a GitHub comment does not survive a clone.
+The first THREE argus lines are the ticket author's setup (§2). Everything from
+`argus status` down was issued by Hermes, or by Argus running under Hermes.
+
+  $ argus init          <- ticket author
+  $ argus up            <- ticket author
+  $ argus up            <- ticket author (re-run once hermes was on PATH)
+  $ argus status        <- Hermes from here down
+  $ argus dispatch
+  $ argus signals
+  $ argus complete
+  $ argus status
+  $ argus dispatch
+  $ argus dispatch
+  $ argus status
+  $ argus dispatch
+  $ argus signals
+  $ argus status
+  $ argus complete
+  $ argus dispatch
+  $ argus complete
+  $ argus complete
+  $ argus dispatch
+  $ argus complete
+  $ argus signals
+
+  totals: 6 dispatch, 5 complete, 4 status, 3 signals, 0 `--help` probes
+  gh calls: 84   codex invocations: 13   cmux calls: 44
+
+  codex invocations break down as:
+    6  codex exec --json -c model_reasoning_effort=high <dispatchPrompt>
+         (the deployed workers: 3 blocked, 3 succeeded)
+    4  codex exec --ignore-user-config -m gpt-5.6-luna
+         -c model_reasoning_effort=low -s read-only --ephemeral
+         -C <the ticket's worktree> ... --output-schema ... --json -
+         (Argus's own reviewer brains under `argus complete` — luna@low,
+          read-only, per #54. No default, model or effort was changed.)
+    1  codex exec --help                 (Hermes, discovery)
+    1  codex exec resume --help          (Hermes, discovery)
+    1  codex exec resume --json <session-id> <follow-up>   (the #3 resume, D3)
+
+The full logs are at $SANDBOX/log/{argus,cmux,gh,codex}.log during the run; the
+sandbox is removed at §12, so the verb-level accounting above is the surviving
+record, together with the before/after `tree --all` snapshots quoted in §6.
+
+------------------------------------------------------------------------------
+12. CLEANUP AND THE FIVE CHECKS
+------------------------------------------------------------------------------
+Results are reproduced in §13 and in the ticket comment.
+
+WATCHERS: this run started NONE. `argus up` on the sandbox installed no
+supervisor LaunchAgent (#86's scratch-HOME refusal held, ARGUS_ALLOW_SCRATCH_LAUNCHD
+unset), all five eyes read `stopped` in every `argus status` during the drive,
+and no watcher process ever referenced the sandbox path. The machine had ZERO
+`cli.ts watch` processes before, during and after.
+
+  Note on the pgrep self-match (#82 §1, and the standing lesson): `pgrep -f
+  '...watch'` matches the invoking shell. The checks below use
+  `ps -eo args | grep ... | grep -v grep` for that reason.
+
+PROCESSES: no `hermes -z` or `codex exec` process from this run survives. Johan's
+own Codex session in ~/recovi-content (pids 39414/39417) was running throughout
+and was NOT touched — it was identified by its command line and cwd and left
+alone. Never kill a process you did not spawn.
+
+THE HERMES POLL JOB: `argus up` created a repo-scoped slow-poll job. It landed in
+the SCRATCH profile — $SANDBOX/home/.hermes/profiles/argus-repo-<digest>/cron —
+and is removed with the sandbox. Johan's real ~/.hermes/cron/jobs.json contains
+no reference to this sandbox:
+  $ grep -rl 'argus-99-run' ~/.hermes/cron/   -> (no matches)
+
+WORKSPACES AND SURFACES: 8 and 25 before, 8 and 25 after, checked by UUID set
+and not by count (§6).
+
+LOAD: `uptime` read 11.67 at the start and 4.47 at the end, both well under the
+20 at which a failure is a load artifact. No test failure in this run needed
+re-running alone.
+
+------------------------------------------------------------------------------
+13. WHAT THIS RUN REFUSED TO DO
+------------------------------------------------------------------------------
+- Did not read or copy `~/.claude/.credentials.json`. Checksummed only. No
+  `claude setup-token`, `/login`, `/logout` or `claude auth`.
+- Did not write the real `~/.hermes`, `~/.claude`, `~/argus`, or any real
+  project. Verified for ~/argus by mtime scan over the drive window (§7).
+- Did not write Johan's live `~/.codex/config.toml`; `grep -c "argus:notify"` on
+  it is still 0. Argus's notify hook went into the scratch CODEX_HOME.
+- Did not switch the machine-wide active Hermes profile. The one profile
+  selection attempted was inside the scratch HERMES_HOME, and it failed anyway
+  (FINDING A).
+- Did not use an API key on either vendor. `env -i` built every child
+  environment from an explicit list containing none. Subscription only, SPEC §1
+  items 7 and 8.
+- Did not change any default, model or effort (#54). The only model pins
+  observed are Argus's own: gpt-5.6-sol/high for workers, gpt-5.6-luna/low for
+  reviewer brains.
+- Did not create a cmux workspace. The shim would have refused one; it never had
+  to.
+- Did not close a surface it did not create, and built a guard that made doing so
+  impossible rather than merely unlikely.
+- Did not kill a process it did not spawn — specifically not Johan's live Codex
+  session in ~/recovi-content.
+- Did not fix FINDING A, B, C or D. Each is a production change with a policy or
+  migration consequence that belongs to Johan and to its own ticket, not to an
+  acceptance run.
+- Did not rewrite the skill it was grading. #82 graded and then corrected in one
+  pass, which is why nothing had ever exercised the result. Correcting the skill
+  again in the run that grades the correction would recreate exactly that
+  problem. §5 states the recommended change and leaves it unmade.
+- Did not claim #98 resolved. §6 shows this run lost no tab; it says nothing
+  about #82's.
+
+------------------------------------------------------------------------------
+14. THE FIVE CHECKS AS RUN, INCLUDING THE TWO THAT DID NOT READ CLEAN FIRST TIME
+------------------------------------------------------------------------------
+  $ ps -eo args | grep 'cli\.ts watch' | grep -v grep | wc -l     -> 0
+  $ launchctl list | grep -ci argus                               -> 0
+  $ cmux --id-format both tree --all | grep -c "workspace "        -> 8   UNCHANGED
+  $ cmux --id-format both tree --all | grep -c "surface "          -> 26  (see below)
+  $ ls -d /private/tmp/argus-* 2>/dev/null                          -> (none; removed)
+
+TWO OF THOSE DID NOT READ CLEAN ON THE FIRST ATTEMPT. Both are reported with
+what they actually were, because a check that is explained away is not a check.
+
+  THE WATCHER COUNT FIRST READ 1. It was the self-match, in the `ps` form rather
+  than the `pgrep` form: the check ran inside a compound shell command whose own
+  command line contains the string `cli.ts watch`, so `ps -eo args` listed that
+  shell and the grep counted it. Re-run so the pattern is not in the invoking
+  shell's arguments, it reads 0, and the process list contains no `cli.ts watch`
+  entry at all. This run started no watchers and the machine had none before it.
+
+  THE SURFACE COUNT READS 26, NOT 25. This is a real +1 against the pre-drive
+  baseline and it is NOT this run's. The accounting:
+
+    pre-drive baseline                       25
+    immediately post-drive (20:18)           25   equal, and equal by UUID SET
+    at final cleanup                         26
+    pre-existing surfaces LOST                0
+    the extra surface
+      ACA7B63C-88CD-4904-9CA8-D69DA09E3E67 [terminal] "~/regen-content"
+
+  It appeared after the 20:18 snapshot, it is in Johan's `~/regen-content`
+  workspace, and it is not one of this run's — all six of those were titled
+  `argus #<n>` and all six were closed by UUID (§5). Someone else opened a tab.
+
+  THE CHECK THAT MATTERS IS THE THIRD LINE, NOT THE FIRST TWO. A raw count can
+  hide one surface dying while another is born, which is precisely the failure
+  mode #98 is about. Zero pre-existing surfaces were lost, by UUID set
+  comparison against the pre-drive snapshot. The workspace count never moved off
+  8 at any point.
+
+GATE (this repo, build/hermes-redrive, run alone at load 4.47):
+  $ bun x tsc --noEmit   -> PASS, 0 errors
+  $ bun test             -> 997 pass, 21 skip, 0 fail, 3498 expect() calls,
+                            1018 tests across 138 files
+  The 21 skips are the standing opt-in live suites (e.g.
+  ARGUS_LIVE_WATCHER_BRAINS); none were newly skipped by this run.
+
+  One transient: the first `bun x tsc` run reported TS2688 "Cannot find type
+  definition file for 'bun'". `@types/bun` had been evicted from the worktree's
+  node_modules by the sandbox's own `bun install` sharing the store. `bun
+  install` restored it and the typecheck passes. It was a dependency artifact,
+  not a type error, and the working tree is clean.
+
+GATE STATE REACHED: run.
