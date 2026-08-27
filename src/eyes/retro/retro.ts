@@ -21,6 +21,7 @@
  * composed retro is written into the session's digest (or, with no digest, to
  * `.argus/eyes/retro/unfiled/`) and the degradation is audited LOUDLY.
  */
+import { randomUUID } from "node:crypto";
 import { mkdir, rename } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { hashText } from "../../matching";
@@ -965,7 +966,7 @@ export class RetroEye {
   /** Atomic (temp + rename): a crash can never tear the cursor or the ledger. */
   private async persist(): Promise<void> {
     await mkdir(dirname(this.statePath), { recursive: true });
-    const temporary = `${this.statePath}.tmp`;
+    const temporary = `${this.statePath}.argus.${process.pid}.${randomUUID()}.tmp`;
     await Bun.write(
       temporary,
       JSON.stringify(
