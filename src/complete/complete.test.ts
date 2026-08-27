@@ -8,7 +8,11 @@ import type { WorkerProcess } from "../deploy";
 import { dispatchFrontier } from "../dispatch";
 import { writeEvent } from "../events";
 import type { Brain } from "../eyes/brain";
-import { createFakeGh, type FakeGh } from "../eyes/retro/fake-gh";
+import {
+  createFakeGh,
+  type FakeGh,
+  type FakeGhOptions,
+} from "../eyes/retro/fake-gh";
 import { completeReadyTickets, type CompleteOptions } from "./complete.ts";
 import { listVerifications } from "./queue.ts";
 
@@ -128,11 +132,14 @@ async function pushSignal(
   repo: string,
   sessionId: string,
   kind: "end-of-session" | "blocked-on-human",
+  message?: string,
 ): Promise<void> {
   await writeEvent(repo, {
     agent: "claude-code",
     kind,
-    message: kind === "end-of-session" ? "Done: ticket implemented." : "Need a human.",
+    message:
+      message ??
+      (kind === "end-of-session" ? "Done: ticket implemented." : "Need a human."),
     sessionId,
   });
 }
@@ -158,8 +165,12 @@ function options(
 }
 
 /** A tracker with the ticket open and a wayfinder map to keep up to date. */
-function seedTracker(ticket: number, title: string): FakeGh {
-  const gh = createFakeGh({ login: LOGIN, repo: REPO });
+function seedTracker(
+  ticket: number,
+  title: string,
+  extra: Partial<FakeGhOptions> = {},
+): FakeGh {
+  const gh = createFakeGh({ login: LOGIN, repo: REPO, ...extra });
   gh.seed({ assignees: [LOGIN], body: `Do ${ticket}.`, number: ticket, title });
   gh.seed({
     body: [
@@ -394,8 +405,8 @@ describe("completeReadyTickets (#57): finished is not the same as died", () => {
         const report = await completeReadyTickets(
           options(repo, gh, {
             signals: async () => [
-              { prompt: "", sessionId: "sess-70", source: "event", status: "done" },
-              { prompt: "", sessionId: "sess-71", source: "poll", status: "dead" },
+              { prompt: "", reason: "", sessionId: "sess-70", source: "event", status: "done" },
+              { prompt: "", reason: "", sessionId: "sess-71", source: "poll", status: "dead" },
             ],
           }),
         );
@@ -408,6 +419,111 @@ describe("completeReadyTickets (#57): finished is not the same as died", () => {
         expect(gh.find("70")!.state).toBe("closed");
         expect(gh.find("71")!.state).toBe("open");
         expect(await listVerifications(repo)).toEqual([]);
+      } finally {
+        await cleanup(repo);
+      }
+    },
+    BUDGET_MS,
+  );
+
+  /**
+   * #104 finding 2 — the class is A SESSION THAT BLOCKED AND SAID NOTHING.
+   *
+   * #82 and #99 both measured it the same way and neither looked at a string:
+   * three tickets, three blocked sessions, `comments=0`. So these assert that
+   * SOMETHING carrying the worker's reason reached the ticket, and drive it
+   * with two unrelated reasons — today's sandbox complaint and a wholly
+   * different one — because the defect is the silence, not the wording. A test
+   * pinned to "read-only sandbox" would pass a worker that blocked for any
+   * other reason and said nothing about it.
+   */
+  for (const [ticket, sessionId, reason] of [
+    [
+      "74",
+      "sess-74",
+      "Blocked by the workspace's read-only sandbox: the test-first patch was rejected.",
+    ],
+    ["75", "sess-75", "The ticket contradicts SPEC §4; I need Johan to pick one."],
+  ] as const) {
+    test(
+      `a blocked session leaves its reason on ticket #${ticket}, whatever the reason is`,
+      async () => {
+        const repo = await scratchRepo();
+        try {
+          const gh = seedTracker(Number(ticket), "Waiting on Johan");
+          await deployAndCommit(repo, ticket, sessionId);
+          await pushSignal(repo, sessionId, "blocked-on-human", reason);
+
+          const report = await completeReadyTickets(options(repo, gh));
+
+          // The verdict is unchanged: still never merged, never closed.
+          expect(report.completed[0]?.status).toBe("blocked-on-human");
+          expect(gh.find(ticket)!.state).toBe("open");
+
+          // The fix: the tracker is no longer silent about it. This is the
+          // assertion that fails on the pre-#104 code, where comments was [].
+          const comments = gh.find(ticket)!.comments;
+          expect(comments.length).toBe(1);
+          // The worker's own words reached the ticket, not a generic placeholder.
+          expect(comments[0]).toContain(reason);
+          // And a human can tell WHY it is here and that nothing will resume it.
+          expect(comments[0]).toContain("BLOCKED ON A HUMAN");
+          expect(report.degraded).toEqual([]);
+        } finally {
+          await cleanup(repo);
+        }
+      },
+      BUDGET_MS,
+    );
+  }
+
+  test(
+    "the block is commented ONCE, not once per `argus complete` pass",
+    async () => {
+      const repo = await scratchRepo();
+      try {
+        const gh = seedTracker(76, "Waiting on Johan");
+        await deployAndCommit(repo, "76", "sess-76");
+        await pushSignal(repo, "sess-76", "blocked-on-human", "Need a decision.");
+
+        // Three passes over an unchanged repo: the event file is still sitting
+        // in `.argus/events/`, which is precisely the shape that would spam.
+        const first = await completeReadyTickets(options(repo, gh));
+        await completeReadyTickets(options(repo, gh));
+        await completeReadyTickets(options(repo, gh));
+
+        expect(first.completed[0]?.status).toBe("blocked-on-human");
+        // One FACT — this session blocked — so one comment, held by the signal
+        // consumer's durable delivered set rather than by a second dedup here.
+        expect(gh.find("76")!.comments.length).toBe(1);
+      } finally {
+        await cleanup(repo);
+      }
+    },
+    BUDGET_MS,
+  );
+
+  test(
+    "a block whose comment cannot be posted degrades loudly instead of going quiet",
+    async () => {
+      const repo = await scratchRepo();
+      try {
+        // `gh issue comment` exits nonzero — it does not throw — which is the
+        // failure a try/catch alone would report as a successful post.
+        const gh = seedTracker(77, "Waiting on Johan", { failComment: "rate limited" });
+        await deployAndCommit(repo, "77", "sess-77");
+        await pushSignal(repo, "sess-77", "blocked-on-human", "Need a decision.");
+
+        const report = await completeReadyTickets(options(repo, gh));
+
+        expect(report.completed[0]?.status).toBe("blocked-on-human");
+        expect(gh.find("77")!.comments).toEqual([]);
+        // #96's shape: degraded, with a reason an operator can act on — it
+        // names the ticket and says where the reason still lives.
+        const degraded = report.degraded.join("\n");
+        expect(degraded).toContain("77");
+        expect(degraded).toContain("blocked on a human");
+        expect(degraded).toContain(".argus/events");
       } finally {
         await cleanup(repo);
       }

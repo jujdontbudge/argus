@@ -1,0 +1,70 @@
+# A blocked worker's reason reaches the ticket — mutation-verified
+
+Ticket #104 finding 2. Verified 2026-08-26 on `build/deploy-posture`, second
+pass. Nothing live here: this finding is verified by MUTATION — reverting the
+fix and confirming each test goes red — because a test that cannot fail is the
+only way a defect like this survives a green gate.
+
+**The defect.** A blocked worker wrote its reason to `.argus/events/*.json` and
+nowhere else. #82 measured six blocked sessions across three cycles against
+tickets showing `comments=0`; #99 re-measured three blocks whose tickets carried
+only `argus complete`'s merge notice. The tracker is Johan's whole interface to
+an AFK batch (SPEC §7.3's premise is that he can walk away), so a block that is
+invisible there is a worker that has silently stopped.
+
+## Does it assert the CLASS, or today's wording?
+
+The class. The two class tests are driven with two unrelated reasons — a sandbox
+complaint and "the ticket contradicts SPEC §4; I need Johan to pick one" — and
+assert that the worker's OWN reason, whatever it is, reached the ticket. A test
+pinned to "read-only sandbox" would pass a worker that blocked for any other
+reason and said nothing about it. #82 and #99 both measured this defect without
+looking at a string, and the tests measure it the way it was measured.
+
+## Can the tests fail?
+
+Reverting `complete.ts` to the pre-#104 state — the `comment()` call in the
+blocked branch removed, the detail string restored — and re-running:
+
+    (fail) a blocked session leaves its reason on ticket #74, whatever the
+           reason is                       Expected: 1  Received: 0
+    (fail) a blocked session leaves its reason on ticket #75, whatever the
+           reason is                       Expected: 1  Received: 0
+    (fail) the block is commented ONCE, not once per `argus complete` pass
+                                           Expected: 1  Received: 0
+    (fail) a block whose comment cannot be posted degrades loudly instead of
+           going quiet     Expected to contain: "77"  Received: ""
+
+All four go red on the broken code. The source was restored afterwards and the
+tree confirmed clean.
+
+## Can it spam?
+
+A comment per poll is worse than silence, so this was checked rather than
+assumed. The no-spam test runs THREE `completeReadyTickets` passes over an
+unchanged repo with the `blocked-on-human` event file still sitting in
+`.argus/events/` — precisely the shape that would spam — and asserts exactly one
+comment.
+
+It is a real test, not a stubbed one: `options()` in `complete.test.ts` does not
+override `signals`, so all three passes drive the REAL `pollHermesSignals`
+against a real on-disk `.argus/registry/signal-consumer.json`. The dedup being
+relied on is therefore the one that ships. That is #100's "one alarm per FACT,
+deduped", the fact being "this session blocked", and it holds across passes and
+restarts rather than within one sweep. No second dedup was added here, which is
+the right call — a second one is a second thing to get wrong.
+
+## Two things the fix had to get right on the way
+
+- `HermesSignal.prompt` is a DISPATCH instruction naming the event file, not the
+  worker's words. Commenting it would have sent Johan to a JSON path on a machine
+  he may not be at — the same invisibility relocated rather than fixed. Signals
+  now carry `reason` beside `prompt`, and the comment uses `reason`.
+- `comment()` discarded gh's exit code, and `gh` exits nonzero rather than
+  throwing, so a rejected post read as a successful one. It now reports failure,
+  and a failed post degrades loudly (#96's shape) naming the ticket and saying
+  the reason survives only in `.argus/events`. The `failComment` hook this is
+  tested through already existed in `fake-gh`; it was not added for the test.
+
+The verdict is unchanged throughout: a blocked ticket is still never merged and
+never closed.

@@ -259,10 +259,15 @@ Zoom into work in this order: `argus status` for the eyes and any outstanding
 audits, then `.argus/sessions/INDEX.md`, then the selected session digest, then
 `argus search "<query>"`. Keep routine monitoring at the lowest useful resolution.
 
-Watch `.argus/events/` as well as the tickets. A `blocked-on-human` worker
-currently writes its reason ONLY to an event file — the ticket itself stays open,
-claimed and silent — so a tracker that looks quiet is not evidence that anything
-is well. If the same ticket blocks for the same reason on consecutive passes,
+Watch `.argus/events/` as well as the tickets. A `blocked-on-human` worker writes
+its reason to an event file, and since #104 `argus complete` also comments that
+reason on the ticket — once per block, not once per pass — so a block is visible
+where you already look. The ticket still stays open and claimed, and nothing
+resumes it on its own. If a block ever reaches the report as `degraded` saying
+the comment could not be posted, the tracker IS silent about that one and the
+reason is only in `.argus/events/`.
+
+If the same ticket blocks for the same reason on consecutive passes,
 stop redeploying it: the next `argus dispatch` will recover the dead session and
 deploy it again, and it will fail the same way, at the cost of a fresh agent
 session each pass. Answer the block instead, or say plainly that it needs Johan.

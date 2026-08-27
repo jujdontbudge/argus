@@ -1,0 +1,108 @@
+# The deployed Codex worker's sandbox posture — measured, not assumed
+
+Ticket #104 finding 1. Measured 2026-08-26 on `build/deploy-posture` against
+codex-cli 0.149.1, second pass (the first pass implemented the fix and died on
+an expired Claude OAuth session before recording any of this).
+
+**Why this file exists.** The claim being verified is "a deployed `codex exec`
+worker spawns READ-ONLY and cannot write the worktree it was handed". That claim
+is untestable on Johan's machine by construction: his `~/.codex/config.toml` says
+`sandbox_mode = "danger-full-access"`, so a worker writes happily whether or not
+Argus asked for anything. A test that observes a successful write here observes
+Johan's personal config, not Argus's behaviour. So the premise was re-measured
+under a scratch `CODEX_HOME` that says nothing about sandboxing.
+
+## Method
+
+Scratch `CODEX_HOME` (never the real one), `auth.json` copied in, config carrying
+model + effort and DELIBERATELY no `sandbox_mode`:
+
+    model = "gpt-5.6-sol"
+    model_reasoning_effort = "medium"
+
+A scratch git repo holding `target.txt` containing `BEFORE`, and one prompt:
+overwrite `target.txt` so its contents are exactly `AFTER`.
+
+`CODEX_HOME` was confirmed respected, not assumed: every session rollout landed
+under the scratch home and `~/.codex/sessions` gained nothing in the window.
+
+Argv A/B is the real thing — exactly what `CODEX_ROUTE.command` builds either
+side of the fix (`src/deploy/routes.ts`).
+
+## Result
+
+| run | project trust | argv | effective sandbox | target.txt |
+| --- | --- | --- | --- | --- |
+| A | untrusted | pre-fix | `read-only` | `BEFORE` — write REJECTED |
+| B | untrusted (2nd session, same home) | pre-fix | `read-only` | `BEFORE` — write REJECTED |
+| C | untrusted | post-fix | `workspace-write` | `AFTER` — write succeeded |
+| D | `trust_level = "trusted"` | pre-fix | `workspace-write` | `AFTER` — write succeeded |
+
+`effective sandbox` is read from the session rollout's own `sandbox_policy`
+record, matched to each run by `thread_id` — not inferred from the outcome.
+
+A and B failed with the exact error the fix's commit message quotes:
+
+    ERROR codex_core::tools::router: error=patch rejected: writing is blocked
+    by read-only sandbox; rejected by user approval settings
+
+and the agent said so in its own words: "Unable to overwrite `target.txt`: the
+workspace is read-only, and the patch was rejected. The file remains `BEFORE`."
+
+**The premise reproduces.** A deployed Codex worker on a machine whose config
+does not grant write access could read its worktree and not write it. B shows it
+is not a first-run artefact: the second session in the same home fails the same
+way.
+
+## The second hiding mechanism (new in this pass)
+
+Run D is the one the first pass did not have. `codex` records
+`[projects."<path>"] trust_level = "trusted"` in config.toml for a directory it
+has been trusted in once, and a trusted project silently starts `codex exec` at
+`workspace-write` with no `sandbox_mode` anywhere. D is C's argv minus the fix,
+plus that one stanza — and it writes.
+
+This was found by accident and is worth the retelling: an earlier scratch home
+of this same investigation showed the pre-fix argv WRITING, which contradicted
+the premise. It was not a refutation. That home had picked up a `trust_level`
+stanza from a run of mine that was killed at a trust prompt. Diffing the two
+homes' config.toml is what found it.
+
+So TWO independent things hide this bug on a developed machine, not one:
+`danger-full-access`, and per-project trust accumulated by hand-driving. A repo
+Argus has been driven in by hand looks fine; a freshly adopted one does not.
+That is the same trap one layer down, and it is why the fix pins the posture in
+argv rather than trusting any config to be silent.
+
+## Can the test fail?
+
+Verified by mutation, not by reading it. Removing `...CODEX_SANDBOX_POSTURE`
+from `CODEX_ROUTE.command` — the exact pre-#104 state — and re-running:
+
+    (fail) #104 finding 1 ... > STRONG: write access is granted by argv ...
+           Expected to contain: "sandbox_mode=workspace-write"
+           Received: [ "model_reasoning_effort=high" ]
+    (pass) #104 finding 1 ... > WEAK, and passes on the broken code ...
+    3 pass, 2 fail
+
+The STRONG test fails on the broken code and the WEAK one passes, which is
+exactly what each is labelled as doing. The source was restored afterwards and
+the tree confirmed clean.
+
+## What is granted
+
+`sandbox_mode=workspace-write`, `sandbox_workspace_write.network_access=false`,
+`approval_policy=never`. Not `danger-full-access` (an unattended worker holding
+Johan's attended-session posture can write anywhere), not network (the dispatch
+prompt forbids push/merge/close and `bun install --frozen-lockfile` has already
+run in the worktree before the worker spawns), not interactive approval (no
+human is attached to a headless dispatch; an escalation prompt there is a hang,
+not a safeguard).
+
+## Housekeeping
+
+Scratch homes and repos under `/private/tmp/p104-repro/` only. The real
+`~/.codex/config.toml` was read and never written; its `argus:notify` count was
+0 before and 0 after. Credential checksums for hermes, codex and claude matched
+their baselines at the start of this pass. No process was killed but the ones
+this pass spawned.

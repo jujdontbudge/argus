@@ -162,16 +162,78 @@ function refusalComment(ticket: string, headline: string, body: string): string 
   ].join("\n");
 }
 
+/**
+ * #104 finding 2: the comment a BLOCK leaves on the ticket.
+ *
+ * A blocked worker used to write its reason to `.argus/events/*.json` and
+ * nowhere else. #82 measured six blocked sessions across three cycles against
+ * three tickets showing `comments=0`; #99 re-measured three blocks against
+ * three tickets whose only comment was `argus complete`'s merge notice. The
+ * tracker is Johan's whole interface to an AFK batch — SPEC §7.3's premise is
+ * that he can walk away — so a block that is invisible there is a worker that
+ * has silently stopped.
+ *
+ * This is adjacent to #96 and not the same. #96 covers a deployment that never
+ * produced a transcript at all, and measures it from outside by its silence.
+ * This one ran, reached a decision point, and had a reason to give; it simply
+ * had nowhere to say it. So the fix is not another detector — it is giving the
+ * existing reason a destination.
+ *
+ * WHY A COMMENT AND NOT ONLY A STATUS ROW. The row already exists: this pass
+ * returns `status: "blocked-on-human"` and `argus complete` prints it. What a
+ * row cannot do is survive the process that printed it. A comment is durable,
+ * it is attached to the ticket the block is about, and it is where Johan is
+ * already looking. The row stays too — it is what an operator watching a live
+ * pass sees — so this is both, each doing the thing the other cannot.
+ *
+ * HOW THIS AVOIDS A COMMENT PER POLL. It does not need its own dedup, and
+ * deliberately does not add one: `pollHermesSignals` already delivers each
+ * `(sessionId, status)` pair exactly once, persisting the delivered set to
+ * `.argus/registry/signal-consumer.json` under a lock. That is #100's "one
+ * alarm per FACT, deduped" with the fact being "this session blocked", and it
+ * holds across passes and restarts, not just within one sweep. Commenting here
+ * — inside the loop over freshly-delivered signals, not in the queue loop that
+ * re-runs every pass — inherits that guarantee rather than duplicating it.
+ */
+function blockedComment(ticket: string, reason: string): string {
+  const trimmed = reason.trim();
+  return [
+    `[argus] ticket #${ticket} is BLOCKED ON A HUMAN: the worker stopped and is`,
+    "waiting on you. It did not merge and it did not close the ticket.",
+    "",
+    "The worker's reason:",
+    "",
+    trimmed === "" ? "(the session reported blocked-on-human without a reason)" : trimmed,
+    "",
+    "The ticket stays open and stays claimed. Nothing further happens on it until",
+    "you answer — no later `argus complete` pass will retry it on its own.",
+  ].join("\n");
+}
+
 async function comment(
   gh: GhRunner,
   cwd: string,
   tracker: string,
   ticket: string,
   text: string,
-): Promise<void> {
+): Promise<{ ok: boolean; detail: string }> {
   // Best effort by design: a comment that cannot be posted must not change
-  // what the pass decided about the work.
-  await gh(["issue", "comment", ticket, "--repo", tracker, "--body", text], cwd);
+  // what the pass decided about the work. It IS reported, though — `gh` exits
+  // nonzero rather than throwing, so a caller that only guarded against a
+  // thrown error would treat a rejected post as a successful one.
+  try {
+    const result = await gh(
+      ["issue", "comment", ticket, "--repo", tracker, "--body", text],
+      cwd,
+    );
+    if (result.exitCode === 0) return { ok: true, detail: "" };
+    return {
+      ok: false,
+      detail: `gh exited ${result.exitCode}: ${result.stderr.trim().slice(0, 500)}`,
+    };
+  } catch (error) {
+    return { ok: false, detail: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 export async function completeReadyTickets(
@@ -220,10 +282,35 @@ export async function completeReadyTickets(
       const ticket = ticketFor(registry.sessions, signal.sessionId);
       if (ticket === null) continue; // an ad hoc session: not this loop's business
       if (signal.status === "blocked") {
+        // #104 finding 2: say so ON THE TICKET. The signal is already spent —
+        // `pollHermesSignals` marked it delivered — so this is the only moment
+        // the reason has a destination, and a comment that fails to post is a
+        // block that goes back to being invisible. That is worth degrading
+        // loudly about (#96's shape: degraded with a readable reason), even
+        // though, like every other comment here, it cannot change the verdict.
+        const posted = await comment(
+          gh,
+          repo,
+          tracker.repo,
+          ticket,
+          // `signal.reason` and NOT `signal.prompt`: the prompt is a dispatch
+          // instruction pointing at `.argus/events/<file>.json`, so commenting
+          // it would send Johan to a JSON file on a machine he may not be at —
+          // the same invisibility relocated rather than fixed.
+          blockedComment(ticket, signal.reason),
+        );
+        if (!posted.ok) {
+          report.degraded.push(
+            `ticket #${ticket} is blocked on a human and the comment saying so could ` +
+              `not be posted (${posted.detail}); the reason survives only in ` +
+              `.argus/events for session ${signal.sessionId}`,
+          );
+        }
         report.completed.push({
           detail:
             "the session reported blocked-on-human; a ticket waiting on Johan is " +
-            "not a ticket to merge",
+            "not a ticket to merge" +
+            (posted.ok ? " (the reason was commented on the ticket)" : ""),
           sessionId: signal.sessionId,
           status: "blocked-on-human",
           ticket,
