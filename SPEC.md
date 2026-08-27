@@ -265,6 +265,13 @@ records the watcher-brain defaults and cadence). Decides whether anything durabl
 happened, with two possible destinations (memory-vs-skills split — one watcher, two
 outputs):
 
+**Live brain attempt budget (ticket #114).** Every watcher `codex exec` attempt has
+a hard **120-second wall-time deadline**. Expiry kills the child, reports a retryable
+failure, and releases the machine-wide brain slot; it does not drop the pending
+content. Daemon shutdown may abort the same wait sooner. The measured basis and the
+never-drop tradeoff are recorded in
+[ADR-0002](docs/adr/0002-watcher-brain-defaults.md).
+
 - **A fact** →
   - `USER.md`: **only** from registry-verified Johan-authored messages, in any
     session type. During fully autonomous runs this destination naturally goes

@@ -25,6 +25,10 @@ fixed overhead per call).
   buffer keeps absorbing new turns, so recovery calls carry everything missed. A
   watcher more than 15 min behind raises an alert (event file + `cmux notify`)
   instead of lagging silently.
+- **Per-attempt deadline:** 120 s of wall time. The deadline is composed with daemon
+  shutdown, kills the `codex exec` child, and turns the attempt into an ordinary
+  retryable failure. `createCodexBrain` owns the production default;
+  `Brain.evaluate` and `openRetro` expose shorter overrides for callers and tests.
 - **Concurrency:** machine-wide semaphore of 2 concurrent `codex exec` calls across
   all repos and eyes.
 - **Curator:** `interval_days: 7` — SPEC §5.1's "weekly" and the `should_run_now()`
@@ -50,6 +54,14 @@ N config files — consistent with ADR-0001's run-from-checkout philosophy.
   yet on a single-user, single-machine tool.
 - **Give-up-after-N retries** — rejected: dropping content breaks the §5.1
   no-turn-skipped invariant; quota windows pass on their own.
+- **No per-attempt deadline** — rejected by #114. #8 measured a ~5.3 s median and
+  #113 measured the exact live Retro scan at 8.1 s, while #112 observed the same
+  call still running after two minutes. A 120 s deadline is therefore about 23×
+  the benchmark median and 15× the healthy live scan: broad headroom for a slow
+  answer, but the already-observed tail is a failed attempt rather than an
+  unbounded new operating mode. #86's 512 MiB in-process ceiling and #109's
+  30-second RSS sampling / 5-minute floor buckets both require the watcher loop to
+  regain control; two minutes bounds that blind interval below one #109 bucket.
 - **Concurrency cap 4 (the measured-clean number)** — rejected in favor of 2:
   watchers never need speed, the quota is shared with Johan's interactive Codex
   sessions, and exec-mode 429 semantics are unverified (#8).
@@ -59,8 +71,10 @@ N config files — consistent with ADR-0001's run-from-checkout philosophy.
 - A chatty session is seen at worst every 5 min (Reviewer) / 2 min (Digest), not
   per-turn — accepted for the fixed overhead saved per avoided call.
 - Retry-forever can lag arbitrarily during a long outage; the 15-min alert makes
-  that loud rather than fixing it. Accepted: the no-skip invariant outranks
-  freshness.
+  that loud rather than fixing it. One attempt cannot lag forever: its timeout
+  reaches the normal failure path, releases the machine-wide slot, and contributes
+  to the 15-min alert episode. Accepted: the no-skip invariant outranks freshness,
+  so the original content remains pending and retries after backoff.
 - The model slug is a churn risk (docs migration, 5.4-mini deprecation noted in #8);
   it lives in one place in the checkout, so re-verification before release and any
   later swap is a one-line change.
