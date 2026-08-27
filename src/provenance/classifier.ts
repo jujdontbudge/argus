@@ -105,6 +105,28 @@ export type ProvenanceAuditEvent =
       sessionId: string;
       ts: string;
       kind: string;
+    }
+  /**
+   * The record-shape canary (#100): a source read a record exhibiting a shape
+   * fact its captured contract has never seen. DEGRADED, not refused — the
+   * record was still parsed and classified by today's rules. Every attribution
+   * bug this project has had (#36, #50, and both of #78's) was an agent CLI
+   * changing what it writes, and every one was silent; this is the alarm that
+   * was missing. `severity: "decision-bearing"` means the drift sits on a field
+   * an attribution verdict is derived from, so the verdict may already be
+   * wrong; `"notice"` means the CLI is writing something we do not model.
+   */
+  | {
+      type: "record-shape-drift";
+      source: string;
+      severity: "decision-bearing" | "notice";
+      dimension: string;
+      path: string;
+      token: string;
+      reason: string;
+      sessionId?: string;
+      ts?: string;
+      file: string;
     };
 
 export interface ClassifyOutput {
@@ -247,6 +269,26 @@ export class ProvenanceClassifier {
     if (event.type === "lifecycle") {
       this.handleLifecycle(event);
       return { record: null, audits: [] };
+    }
+    if (event.type === "shape-drift") {
+      const { dimension, path, reason, severity, token } = event.drift;
+      return {
+        record: null,
+        audits: [
+          {
+            type: "record-shape-drift",
+            source: event.source,
+            severity,
+            dimension,
+            path,
+            token,
+            reason,
+            ...(event.sessionId !== undefined && { sessionId: event.sessionId }),
+            ...(event.ts !== undefined && { ts: event.ts }),
+            file: event.file,
+          },
+        ],
+      };
     }
     if (event.type !== "message") return { record: null, audits: [] };
     return this.classifyMessage(event);
