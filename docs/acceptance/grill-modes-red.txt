@@ -1,0 +1,14 @@
+RED — ticket #97, the same tests against pre-#97 behaviour.
+`resolveGrillDispatch` temporarily shimmed to do what `resolveGrillSkill` did:
+resolve the id, hand it back, say nothing about whether a session can invoke it.
+
+(fail) resolveGrillDispatch (#97): the form, not the existence > a slash-only skill is dispatched as a slash command, not as a skill [4.22ms]
+(fail) resolveGrillDispatch (#97): the form, not the existence > the form follows the frontmatter, in both directions, with no table edit [3.05ms]
+(fail) resolveGrillDispatch (#97): the form, not the existence > a skill reachable by neither surface is refused, naming mode, id and reason [3.08ms]
+(fail) resolveGrillDispatch (#97): the form, not the existence > a renamed skill is refused with the id that no longer resolves [3.22ms]
+(fail) resolveGrillDispatch (#97): the form, not the existence > the canonical store decides the form, and the id is its bare name [2.73ms]
+(fail) startGrill (#62): SPEC §7.2, registered before a key is typed > a mode no session could invoke is refused before a tab or a row exists [6.57ms]
+(fail) startGrill (#62): SPEC §7.2, registered before a key is typed > a slash-only mode is dispatched, and the launch line carries /<id> [6.35ms]
+ 27 pass
+ 7 fail
+Ran 34 tests across 5 files. [163.00ms]

@@ -31,6 +31,15 @@
  * which is the exact sentence the hazard was written as. So invocability is
  * resolved and reported beside existence, and a caller that only checks the
  * first learns nothing about the failure that actually happens.
+ *
+ * BOTH SURFACES, not one (#97). `claude` has exactly two ways in — the Skill
+ * tool and the `/<id>` command — and the frontmatter closes them with two
+ * INDEPENDENT keys, both of which are in use on this machine:
+ * `disable-model-invocation: true` (`pocock-plus:to-spec`) and
+ * `user-invocable: false` (`codex:codex-cli-runtime`). Reporting only the
+ * first would let a caller route a mode to a slash command that is not there.
+ * This module still only REPORTS; `./dispatch.ts` is what turns the report
+ * into the invocation a session gets, or into a refusal.
  */
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -54,6 +63,16 @@ export interface InstalledSkill {
    * A dispatch prompt that says "Use the X skill" cannot be honoured then.
    */
   modelInvocable: boolean;
+  /**
+   * False when the frontmatter carries `user-invocable: false` — the OTHER
+   * axis, and an independent one (#97). `disable-model-invocation` closes the
+   * Skill tool; `user-invocable: false` closes the `/<id>` command surface.
+   * This machine carries live examples of each on its own (`pocock-plus`'s
+   * `to-spec` is slash-only; `codex`'s `codex-cli-runtime` is model-only), so
+   * a skill reachable by NEITHER is a state a plugin can ship, not a
+   * hypothetical — and it is the one a caller must refuse rather than route.
+   */
+  userInvocable: boolean;
 }
 
 export type SkillResolution =
@@ -222,6 +241,7 @@ async function parseSkill(path: string): Promise<InstalledSkill | null> {
   if (match === null) return null;
   let name: string | null = null;
   let disabled = false;
+  let userInvocable = true;
   for (const line of match[1]!.split(/\r?\n/)) {
     const pair = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line);
     if (pair === null) continue;
@@ -229,7 +249,13 @@ async function parseSkill(path: string): Promise<InstalledSkill | null> {
     if (pair[1] === "disable-model-invocation") {
       disabled = pair[2]!.trim().toLowerCase() === "true";
     }
+    // Default TRUE, and only an explicit `false` closes it: the key is absent
+    // from 30 of this machine's 36 pocock-plus skills, and reading absence as
+    // "not reachable" would refuse every grill on the machine.
+    if (pair[1] === "user-invocable") {
+      userInvocable = pair[2]!.trim().toLowerCase() !== "false";
+    }
   }
   if (name === null || name === "") return null;
-  return { modelInvocable: !disabled, name, path };
+  return { modelInvocable: !disabled, name, path, userInvocable };
 }

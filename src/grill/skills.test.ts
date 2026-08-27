@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
-import { GRILL_MODES, resolveGrillSkill, type GrillMode } from "./index.ts";
+import { GRILL_MODES } from "./index.ts";
 
 /**
  * Ticket #62 — skill routing, SPEC §1 ("`grilling`, `spec`, `review`,
@@ -18,18 +15,17 @@ import { GRILL_MODES, resolveGrillSkill, type GrillMode } from "./index.ts";
  * canonical `.argus/skills/` carries the skill, that copy wins, because it is
  * the one the Reviewer updates and the curator retires. The plugin id is the
  * fallback, never the override.
+ *
+ * #97 moved the RESOLUTION cases out of this file. They asserted
+ * `resolveGrillSkill`, a second implementation of §8.2's precedence that could
+ * not read frontmatter and therefore answered "resolved: pocock-plus:to-spec"
+ * for a skill no session could invoke. The function is gone and the three
+ * assertions live in `dispatch.test.ts` against `resolveGrillDispatch` — the
+ * resolver production actually dispatches through — where each one now also
+ * has to say what FORM the session is given. What stays here is the TABLE:
+ * the one thing this module still owns.
  */
-async function repoWithCanonicalSkill(name: string): Promise<string> {
-  const repo = await mkdtemp(join(tmpdir(), "argus-grill-skills-"));
-  await mkdir(join(repo, ".argus/skills", name), { recursive: true });
-  await writeFile(
-    join(repo, ".argus/skills", name, "SKILL.md"),
-    `---\nname: ${name}\ndescription: canonical\n---\n`,
-  );
-  return repo;
-}
-
-describe("resolveGrillSkill (#62): §8.2 canonical store first, plugin second", () => {
+describe("GRILL_MODES (#62): SPEC §1's routing table and §7.1's chain", () => {
   test("every routed mode names a real pocock-plus skill and routes to Claude", () => {
     for (const [mode, route] of Object.entries(GRILL_MODES)) {
       expect(route.agent).toBe("claude");
@@ -44,40 +40,4 @@ describe("resolveGrillSkill (#62): §8.2 canonical store first, plugin second", 
     expect(GRILL_MODES.tickets.skill).toBe("pocock-plus:to-tickets");
   });
 
-  test("the repo's canonical .argus/skills copy wins over the plugin id", async () => {
-    const repo = await repoWithCanonicalSkill("grilling");
-    try {
-      expect(await resolveGrillSkill(repo, "grilling")).toEqual({
-        mode: "grilling",
-        skill: "grilling",
-        source: "argus-canonical",
-      });
-    } finally {
-      await rm(repo, { force: true, recursive: true });
-    }
-  });
-
-  test("without a canonical copy the plugin id is used, and said out loud", async () => {
-    const repo = await mkdtemp(join(tmpdir(), "argus-grill-skills-"));
-    try {
-      expect(await resolveGrillSkill(repo, "grilling")).toEqual({
-        mode: "grilling",
-        skill: "pocock-plus:grilling",
-        source: "pocock-plus",
-      });
-    } finally {
-      await rm(repo, { force: true, recursive: true });
-    }
-  });
-
-  test("an unknown mode is refused rather than routed to a guessed skill", async () => {
-    const repo = await mkdtemp(join(tmpdir(), "argus-grill-skills-"));
-    try {
-      await expect(
-        resolveGrillSkill(repo, "sudo-make-me-a-sandwich" as GrillMode),
-      ).rejects.toThrow(/unknown grill mode/);
-    } finally {
-      await rm(repo, { force: true, recursive: true });
-    }
-  });
 });

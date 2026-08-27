@@ -190,7 +190,7 @@ async function grill(args: string[]): Promise<number> {
   const usage =
     'Usage: argus grill "<topic>" [--mode <grilling|spec|tickets|review|diagnosis>]' +
     " [--model <model>] [--dry-run]";
-  const { isGrillMode, resolveGrillSkill, grillPrompt, startGrill } = await import(
+  const { isGrillMode, resolveGrillDispatch, grillPrompt, startGrill } = await import(
     "./grill/index.ts"
   );
 
@@ -237,11 +237,21 @@ async function grill(args: string[]): Promise<number> {
   }
 
   if (dryRun) {
-    const resolved = await resolveGrillSkill(repo, mode);
+    // #97: the dry run resolves the mode the way the real dispatch does, so a
+    // mode no session could invoke is REFUSED here too. A dry run that printed
+    // a prompt the live command would refuse to send would be the same silent
+    // wrong answer one step earlier.
+    const dispatch = await resolveGrillDispatch(repo, mode);
+    if (dispatch.status === "refused") {
+      console.error(`argus grill: ${dispatch.reason}`);
+      return 1;
+    }
+    const { invocation } = dispatch;
     console.log(`repo:  ${repo}`);
-    console.log(`skill: ${resolved.skill} (${resolved.source})`);
+    console.log(`skill: ${invocation.skill} (${invocation.source}, ${invocation.form})`);
+    console.log(`from:  ${invocation.path}`);
     console.log("prompt:");
-    console.log(grillPrompt({ resolved, topic }));
+    console.log(grillPrompt({ invocation, topic }));
     console.log("\nDry run: no cmux workspace, no registry row and no session.");
     return 0;
   }
