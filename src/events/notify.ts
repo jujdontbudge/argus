@@ -7,6 +7,7 @@ import {
   registryPaths,
   type SessionRecord,
 } from "../provenance";
+import { refuseCmuxArgs } from "./handles.ts";
 import type { ArgusEvent } from "./schema.ts";
 
 export interface CmuxSendRequest {
@@ -71,7 +72,21 @@ export interface CmuxRunResult {
 /** The one place this module shells out; injected so the seam is testable. */
 export type CmuxRun = (args: readonly string[]) => Promise<CmuxRunResult>;
 
+/**
+ * The ONLY place in the tree that spawns `cmux` — asserted by
+ * `handles.test.ts`, because #98's defence is a choke point and a second spawn
+ * site would be a hole in it rather than a duplication.
+ *
+ * Being the only one is what lets the UUID-only rule be structural instead of
+ * conventional: `refuseCmuxArgs` sees every state-changing verb this process
+ * ever runs, no matter which module composed the argv, and refuses the ones
+ * carrying a handle form that fails OPEN. The refusal is shaped like cmux's
+ * own fail-closed answer (exit 1, reason on stderr) so that every existing
+ * caller's degrade path already handles it correctly.
+ */
 export const runCmux: CmuxRun = async (args) => {
+  const refusal = refuseCmuxArgs(args);
+  if (refusal !== null) return { exitCode: 1, stderr: refusal, stdout: "" };
   const child = Bun.spawn(["cmux", ...args], { stderr: "pipe", stdout: "pipe" });
   const [exitCode, stdout, stderr] = await Promise.all([
     child.exited,

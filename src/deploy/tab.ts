@@ -54,6 +54,25 @@
  * inventory before they run a verb that changes anything, and refuse when it
  * does not appear.
  *
+ * AND WHY THAT CHECK IS NOT THE DEFENCE — #98, which is the correction this
+ * docblock needed. Resolve-then-act is NOT ATOMIC. Between the `tree --all`
+ * above and the verb below, another session can close the surface just
+ * resolved, and #90 watched `identify.focused` walk `surface:2 -> surface:6 ->
+ * surface:4` with no action by the driver at all. The window cannot be closed
+ * from outside cmux. What CAN be removed is the cost of losing it, and only
+ * the handle form removes it: lose the race holding a UUID and the verb exits
+ * 1 `not_found` and closes nothing; lose it holding a ref and the verb closes
+ * Johan's tab and exits 0.
+ *
+ * So this module no longer passes the CALLER'S handle to anything. It passes
+ * the UUID the resolution PRODUCED — `workspace.id`, `surface.id` — even when
+ * the caller supplied a ref, which a hand-written registry row legitimately
+ * can (#99). And that is now backstopped rather than merely intended:
+ * `refuseCmuxArgs` in `src/events/handles.ts` refuses any state-changing cmux
+ * verb carrying a non-UUID handle, inside `runCmux`, which a test proves is
+ * the only place in the tree that spawns the binary. A future edit here that
+ * reintroduced a ref fails at the gate instead of costing Johan a session.
+ *
  * WHY `tree`, and not `list-workspaces`. `list-workspaces` lists "workspaces
  * in the current window" only — on this machine it omits the argus workspace
  * entirely, because the dispatcher's window is not the focused one. A
@@ -125,10 +144,18 @@ export async function openWorkerTab(
     );
   }
 
+  // THE HANDLE THAT GETS USED IS THE ONE RESOLUTION PRODUCED, NOT THE ONE THE
+  // CALLER SUPPLIED (#98). `findWorkspace` matches a UUID *or* a ref, so
+  // `target` may well be `workspace:1`; passing it through would hand a
+  // state-changing verb the one handle form measured to fail OPEN. Resolving
+  // to `workspace.id` costs nothing and means the guard's OUTPUT is the
+  // defence rather than merely its precondition — which matters because the
+  // guard can lose its race and the handle form cannot.
+  const resolved = workspace.id;
   const held = new Set(workspace.surfaces.flatMap((surface) => [surface.id, surface.ref]));
   let created;
   try {
-    created = await run(["new-surface", "--type", "terminal", "--workspace", target]);
+    created = await run(["new-surface", "--type", "terminal", "--workspace", resolved]);
   } catch (error) {
     return degraded(`cmux new-surface could not run: ${message(error)}`);
   }
@@ -155,13 +182,19 @@ export async function openWorkerTab(
   if (request.title !== undefined) {
     // Cosmetic, so a failure here is not worth losing a resolved tab over.
     try {
-      await run(["rename-tab", "--workspace", target, "--surface", surface.id, request.title]);
+      await run(["rename-tab", "--workspace", resolved, "--surface", surface.id, request.title]);
     } catch {
       /* the tab is open and addressable; its name is not load-bearing */
     }
   }
 
-  return { status: "opened", surface: surface.id, workspace: target };
+  // Both handles returned here are UUIDs, and that is load-bearing rather
+  // than tidy: this return value is what `deployWorker` writes into
+  // `sessions.jsonl`, and that row is what `retireWorkerTab` later reads and
+  // hands to `close-surface`. A ref recorded here would be a ref persisted
+  // across a cmux restart — after which it means nothing, and a handle that
+  // means nothing is #98's redirect.
+  return { status: "opened", surface: surface.id, workspace: resolved };
 }
 
 /**
@@ -185,10 +218,10 @@ export async function closeWorkerTab(
             "surface instead",
         );
   }
-  const present = workspace.surfaces.some(
+  const present = workspace.surfaces.find(
     (surface) => surface.id === request.surface || surface.ref === request.surface,
   );
-  if (!present) {
+  if (present === undefined) {
     // Already gone is the expected second call, not a fault.
     return request.tolerateMissing === true
       ? { status: "closed" }
@@ -198,14 +231,23 @@ export async function closeWorkerTab(
         );
   }
 
+  // #98, and the single most important line in this module: the verb is
+  // pointed at the UUIDs the lookup above PRODUCED, never at the strings the
+  // caller passed in. The membership test accepts either form — a registry row
+  // written by hand can hold `surface:60` — but `close-surface` only ever sees
+  // the form that fails CLOSED. If the race is lost between this lookup and
+  // this call, cmux answers `not_found`, exit 1, and closes nothing. Handed
+  // the ref instead it would have closed whatever Johan is looking at, exit 0.
+  // `runCmux` refuses a non-UUID here too; this makes the refusal unreachable
+  // on the production path instead of relying on it.
   let closed;
   try {
     closed = await run([
       "close-surface",
       "--surface",
-      request.surface,
+      present.id,
       "--workspace",
-      request.workspace,
+      workspace.id,
     ]);
   } catch (error) {
     return degraded(`cmux close-surface could not run: ${message(error)}`);
