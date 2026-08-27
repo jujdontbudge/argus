@@ -3,6 +3,7 @@ import {
   acknowledgeAuditStatus,
   auditStatus,
   formatSupervisorStatus,
+  silentDeploymentStatus,
   stopRepo,
   supervisorStatus,
 } from "./control.ts";
@@ -38,10 +39,18 @@ export async function status(args: string[] = []): Promise<number> {
       return 1;
     }
   }
-  const [rows, audits] = await Promise.all([
+  const [rows, audits, silent] = await Promise.all([
     supervisorStatus(),
     auditStatus(),
+    silentDeploymentStatus(),
   ]);
-  console.log(formatSupervisorStatus(rows, audits).trimEnd());
-  return rows.some(({ state }) => state === "degraded") || audits.length > 0 ? 1 : 0;
+  console.log(formatSupervisorStatus(rows, audits, silent).trimEnd());
+  // A silent deployment exits non-zero for the same reason #85's unreported
+  // watcher does: an operator who only reads the exit code must still learn
+  // that something registered is producing nothing.
+  return rows.some(({ state }) => state === "degraded") ||
+    audits.length > 0 ||
+    silent.length > 0
+    ? 1
+    : 0;
 }

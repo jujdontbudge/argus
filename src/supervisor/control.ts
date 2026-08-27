@@ -12,6 +12,13 @@ import {
 import { readEyeHealth } from "./health.ts";
 import { disableRepo, readEnabledRepos } from "./registry.ts";
 import { EYE_NAMES, type EyeName, type SupervisorStatus } from "./runtime.ts";
+import { readArchivedSessionIds } from "../eyes/archiver/index.ts";
+import { loadRegistry, registryPaths } from "../provenance/index.ts";
+import {
+  silenceThresholdMs,
+  silentDeployments,
+  type SilentDeployment,
+} from "./silence.ts";
 import {
   acknowledgeAudit,
   importLegacyOriginAudits,
@@ -283,6 +290,50 @@ export async function supervisorStatus(
   );
 }
 
+/**
+ * The deployments that are registered, watched, and empty (#96, half 2).
+ *
+ * Deliberately NOT folded into `supervisorStatus`: the watcher rows answer
+ * "are the eyes alive and reporting", and the answer here can be "every eye is
+ * perfectly healthy AND the thing they are watching never said a word", which
+ * is exactly the state #89 hit. Collapsing the two would have to blame an eye
+ * for a deployment's silence.
+ */
+export async function silentDeploymentStatus(
+  configuration = supervisorConfiguration(),
+  now: number = Date.now(),
+): Promise<SilentDeployment[]> {
+  const [repos, status] = await Promise.all([
+    readEnabledRepos(configuration.job.registryPath),
+    cachedStatus(configuration.job.statusPath),
+  ]);
+  const thresholdMs = silenceThresholdMs();
+  const perRepo = await Promise.all(
+    repos.map(async (repo) => {
+      const watcher = status?.watchers.find(
+        (candidate) => candidate.repo === repo && candidate.eye === "archiver",
+      );
+      const archiverAlive = watcher !== undefined && isAlive(watcher.pid);
+      if (!archiverAlive) return [];
+      const [registry, archived] = await Promise.all([
+        loadRegistry(registryPaths(repo)),
+        readArchivedSessionIds(repo),
+      ]);
+      // `null` is "the archive would not open" — no answer, not zero.
+      if (archived === null) return [];
+      return silentDeployments({
+        archivedSessionIds: archived,
+        archiverAlive,
+        now,
+        repo,
+        sessions: registry.sessions,
+        thresholdMs,
+      });
+    }),
+  );
+  return perRepo.flat();
+}
+
 export async function auditStatus(
   configuration = supervisorConfiguration(),
 ): Promise<DurableAudit[]> {
@@ -310,6 +361,7 @@ export async function acknowledgeAuditStatus(
 export function formatSupervisorStatus(
   rows: readonly ProcessStatusRow[],
   audits: readonly DurableAudit[] = [],
+  silent: readonly SilentDeployment[] = [],
 ): string {
   const values = [
     [
@@ -350,7 +402,20 @@ export function formatSupervisorStatus(
         `${id}  ${repo}  ${sourceEye}  ${firstSeenAt}  ${type}  ${JSON.stringify(details)}`,
     )
     .join("\n");
+  const silentRows = silent
+    .map(
+      ({ agent, deployedAt, reason, repo, sessionId, state, ticket }) =>
+        `${sessionId}  ${repo}  ${ticket === null ? "-" : `#${ticket}`}  ${
+          agent ?? "-"
+        }  ${state}  ${deployedAt}  ${reason}`,
+    )
+    .join("\n");
   return `${watchers}\n${
+    silentRows === ""
+      ? ""
+      : "\nSILENT DEPLOYMENTS (registered, watched, and empty — SESSION REPO TICKET " +
+        `AGENT STATE DEPLOYED REASON)\n${silentRows}\n`
+  }${
     durable === ""
       ? ""
       : `\nAUDIT ALERTS (acknowledge one with: argus status --ack <id>)\n${durable}\n`

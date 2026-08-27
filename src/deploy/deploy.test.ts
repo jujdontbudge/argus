@@ -354,3 +354,86 @@ describe("deployWorker checkout modes (#62)", () => {
     }
   });
 });
+
+/**
+ * Ticket #96, half 1 — the trust dialog is answered by the CONFIG, before the
+ * process exists, and the ordering is proven the same way §5 rule 1's is: by
+ * reading the file off disk at the instant spawn() is entered. A pre-trust
+ * that happened after the spawn would be worth nothing — the session reads its
+ * config at startup, so a late write is a write into a session already sitting
+ * on the modal.
+ */
+describe("deployWorker (#96): the first-run trust dialog never gets asked", () => {
+  test("the worktree is trusted in the config BEFORE the claude session starts", async () => {
+    const repo = await scratchRepo();
+    const configDir = await mkdtemp(join(tmpdir(), "argus-deploy-cfg-"));
+    try {
+      const trustAtSpawn: unknown[] = [];
+      const worktree = join(repo, "..", `argus-96-${Date.now()}`);
+      const spawn = async (request: WorkerSpawnRequest): Promise<WorkerProcess> => {
+        const file = Bun.file(join(configDir, ".claude.json"));
+        trustAtSpawn.push(
+          (await file.exists())
+            ? ((await file.json()) as { projects?: Record<string, { hasTrustDialogAccepted?: boolean }> })
+                .projects?.[request.cwd]?.hasTrustDialogAccepted
+            : "no config at all",
+        );
+        return {
+          announcedSessionId: async () => null,
+          exited: Promise.resolve({ exitCode: 0, stderr: "", stdout: "" }),
+          kill: () => {},
+          pid: 4242,
+        };
+      };
+      const result = await deployWorker(
+        { agent: "claude", dispatchPrompt: DISPATCH, repo, ticket: "96", worktree },
+        { env: { CLAUDE_CONFIG_DIR: configDir, HOME: repo }, spawn },
+      );
+      expect(result.status).toBe("deployed");
+      expect(trustAtSpawn).toEqual([true]);
+      if (result.status === "deployed") {
+        expect(result.deployment.trustDegraded).toBeUndefined();
+      }
+    } finally {
+      await rm(repo, { force: true, recursive: true });
+      await rm(configDir, { force: true, recursive: true });
+      await rm(join(repo, "..", "argus-96-worktrees"), { force: true, recursive: true });
+    }
+  }, GIT_BUDGET_MS);
+
+  test("a pre-trust that fails degrades the deployment, it does not stop it", async () => {
+    const repo = await scratchRepo();
+    try {
+      const { witness, spawn } = witnessSpawn(repo);
+      const result = await deployWorker(
+        { agent: "claude", checkout: "repo", dispatchPrompt: DISPATCH, repo },
+        { env: {}, spawn },
+      );
+      expect(result.status).toBe("deployed");
+      if (result.status !== "deployed") return;
+      // The session still runs — the directory may be trusted by an ancestor,
+      // and half 2 is what notices if it is not.
+      expect(witness.calls).toHaveLength(1);
+      expect(result.deployment.trustDegraded).toMatch(/HOME|config/i);
+    } finally {
+      await rm(repo, { force: true, recursive: true });
+    }
+  }, GIT_BUDGET_MS);
+
+  test("codex is not touched: its trust lives in config.toml, not this file", async () => {
+    const repo = await scratchRepo();
+    const configDir = await mkdtemp(join(tmpdir(), "argus-deploy-cfg-"));
+    try {
+      const { spawn } = witnessSpawn(repo, "01a03c64-8acb-7c40-9cf5-68ddcac45e56");
+      const result = await deployWorker(
+        { agent: "codex", checkout: "repo", dispatchPrompt: DISPATCH, repo },
+        { env: { CLAUDE_CONFIG_DIR: configDir, HOME: repo }, spawn },
+      );
+      expect(result.status).toBe("deployed");
+      expect(await Bun.file(join(configDir, ".claude.json")).exists()).toBe(false);
+    } finally {
+      await rm(repo, { force: true, recursive: true });
+      await rm(configDir, { force: true, recursive: true });
+    }
+  }, GIT_BUDGET_MS);
+});
