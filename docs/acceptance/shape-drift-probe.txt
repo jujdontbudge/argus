@@ -1,29 +1,40 @@
 # #100 — record-shape drift probe (live, read-only)
 
-Run: `bun scripts/acceptance/shape-drift-probe.ts`
-Date: 2026-08-27T01:11:28Z   Host load: 8.61 8.99 8.86
+Reproduce: `bun scripts/acceptance/shape-drift-probe.ts`
+
+Captures the shape contract from the OLDEST real transcripts on this machine, then
+reports what the NEWEST ones actually contain. Every line below is a shape an agent
+CLI genuinely started writing between the two — nothing here was invented.
+
+Date: 2026-08-27T01:16:55Z   Load: 6.17 6.86 7.89
 bun 1.3.12 · claude 2.1.247 (Claude Code) · codex codex-cli 0.149.1 · Hermes Agent v0.16.0 (2026.6.5) · upstream 9e484f05
 
 ```
-captured-at        2026-08-27T01:11:40.962Z
-claude-code  oldest 37737 records / newest 21387 records
-codex        oldest 59529 records / newest 32063 records
-hermes       oldest 95336 records / newest 95339 records
+captured-at        2026-08-27T01:17:07.341Z
+claude-code  oldest 60875 records / newest 45295 records
+codex        oldest 160364 records / newest 34891 records
+hermes       oldest 95347 records / newest 95347 records
 claude versions    installed 2.1.247 (Claude Code)
 codex versions     installed codex-cli 0.149.1
 
-=== claude-code: 9 facts the OLD contract had never seen ===
+=== claude-code: 15 facts the OLD contract had never seen ===
   [notice] cli-version||2.1.211
   [notice] cli-version||2.1.221
   [notice] cli-version||2.1.223
   [notice] cli-version||2.1.231
   [notice] cli-version||2.1.233
-  [notice] cli-version||2.1.234
-  [notice] field||imagePasteIds
+  [notice] field||apiRefusalCategory
+  [notice] field||apiRefusalExplanation
+  [notice] field||direction
+  [notice] field||fallbackModel
+  [notice] field||originalModel
+  [notice] field||queueOrigin
+  [notice] field||refusedUserMessageUuid
+  [notice] field||retractedMessageUuids
+  [notice] field||trigger
   [notice] field||userFeedback
-  [decision-bearing] value|origin.kind|coordinator
 
-=== codex: 50 facts the OLD contract had never seen ===
+=== codex: 48 facts the OLD contract had never seen ===
   [notice] cli-version||0.148.0-alpha.9
   [notice] cli-version||0.149.1
   [decision-bearing] envelope|user-text|recommended_plugins
@@ -39,7 +50,6 @@ codex versions     installed codex-cli 0.149.1
   [notice] field|payload:event_msg|client_id
   [notice] field|payload:event_msg|completed_at_ms
   [notice] field|payload:event_msg|event_id
-  [notice] field|payload:event_msg|item
   [notice] field|payload:event_msg|local_audio
   [notice] field|payload:event_msg|num_turns
   [notice] field|payload:event_msg|occurred_at_ms
@@ -68,7 +78,6 @@ codex versions     installed codex-cli 0.149.1
   [notice] field||ordinal
   [decision-bearing] undecomposable|user-text|recommended_plugins
   [decision-bearing] value|payload.content[].type|encrypted_content
-  [decision-bearing] value|payload.type|item_completed
   [decision-bearing] value|payload.type|sub_agent_activity
   [decision-bearing] value|payload.type|thread_rolled_back
   [decision-bearing] value|payload.type|thread_settings_applied
@@ -77,5 +86,5 @@ codex versions     installed codex-cli 0.149.1
 
 === hermes: 0 facts the OLD contract had never seen ===
 
-decision-bearing drift: 10
+decision-bearing drift: 8
 ```

@@ -19,6 +19,17 @@
  * naming the source, the severity, the field path, the unfamiliar token and
  * the session and file it was seen in — enough for an operator to go look.
  *
+ * WHAT THE OPERATOR DOES WITH IT, because an alarm with no next step trains
+ * people to ignore alarms. A `notice` says a CLI is writing a field we do not
+ * model: usually harmless, worth a glance. A `decision-bearing` line says the
+ * unfamiliar token sits on a field an attribution verdict is derived from, so
+ * a verdict may ALREADY be wrong — that is the one to go and read. Either way
+ * the resolution is the same two steps: check the named field against the
+ * parser that reads it, then re-run `scripts/shape/capture-baseline.ts` and
+ * commit, which is what makes the fact known and the alarm stop. An alarm that
+ * has been triaged and needs no code change is retired with
+ * `argus status --ack <id>`, the seam #53 already built.
+ *
  * Deduplication is part of the requirement, not an optimisation: a drifted CLI
  * writes its new field on every record, so one alarm per FACT is the
  * difference between an alarm and a firehose. It happens twice — here, per
