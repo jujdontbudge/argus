@@ -1,80 +1,205 @@
 ==============================================================================
-ARGUS REGISTRY-FIRST WORKER DEPLOYMENT PRIMITIVE — ticket #55
+ARGUS REGISTRY-FIRST WORKER DEPLOYMENT PRIMITIVE — ticket #55, RE-DRIVEN by #107
 ==============================================================================
-Both halves drive `deployWorker` itself: production router, production spawner,
-production registry writer. Nothing below was hand-fed to the primitive except
-the ticket, the repo and the dispatch prompt.
+THIS FILE SUPERSEDES THE #55 RUN. Read this section before anything below it.
 
-  claude 2.1.246          native install, ~/.local/bin/claude
-  codex-cli 0.149.1       scratch CODEX_HOME, NO auth (401 before any model call)
-  cmux 0.62.2             not in the path of either half — a workspace is optional
+The previous contents of this file recorded a real run on 2026-08-26T05:25Z,
+and its central sentence was:
 
-command   ARGUS_LIVE_CLAUDE_SUBSCRIPTION=1 ARGUS_LIVE_CODEX_DEPLOY=1 \
-            bun test src/deploy/live.test.ts
-result    2 pass  0 fail  12 expect() calls  [45.10s]
+    "Both halves drive `deployWorker` itself: production router, production
+     spawner, production registry writer."
+
+That sentence is no longer true of the primitive, and the old file had no way
+to say so. #101's gate × evidence map (`GATE-EVIDENCE-MAP.md`) graded it STALE
+and named why; this is the re-drive that grading implies. What moved:
+
+  #95  a deployed session is a cmux TAB, never a workspace of its own.
+       `src/deploy/workspace.ts` was DELETED; the `workspace: "auto"` path the
+       old file reasoned about (its line 79) now resolves through
+       `openWorkerTab`, not the `createCmuxWorkspace` it named.
+  #96  a PRE-TRUST STEP now sits between the checkout and the row/spawn
+       (`src/deploy/trust.ts`, `deploy.ts` step 2b). #55 drove a primitive
+       that had three steps where this one has four.
+  #96  `Deployment` grew four fields the #55 run could not have observed:
+       `workspace`, `surface`, `workspaceDegraded`, `trustDegraded`
+       (`src/deploy/deploy.ts:131-143`). The live test printed none of them.
+  ---  `claude` is 2.1.247 here; #55 and #96 both measured 2.1.246.
+
+The #55 run's own numbers are not repeated below. They were true of that day
+and that tree, and they are in git history at `bbb317a`.
 
 ------------------------------------------------------------------------------
-1. claude — SPEC §5 rule 1, strictly: Argus names the session, then starts it
+0. Identity of the code this file is a record of
 ------------------------------------------------------------------------------
-Subscription mode: real HOME, sandbox cwd, no token (SPEC §1 item 7). It spends
-one real subscription call.
+  HEAD                5d405c0b87c5db2ae53c681b86bbcacb3f3274c9
+  branch              build/evidence-refresh (worktree evidence-refresh)
+  run date            2026-08-27
+  claude              2.1.247          native install, ~/.local/bin/claude
+  codex-cli           0.149.1
+  cmux                0.62.2 (77)      not in the path of either half below
+  bun                 1.3.12
 
-  preassigned session id   fc3c277c-48c8-4f0e-95db-93583529e3c3
-  branch                   argus/ticket-55
-  worktree                 …/argus-live-deploy-TwTu9W-worktrees/ticket-55
-  transcript session ids   ["fc3c277c-48c8-4f0e-95db-93583529e3c3"]
+Recorded because its absence is half of why this file went stale invisibly:
+the previous version named no commit, so dating it required reading ~25 merges.
 
-  registry row, fsynced BEFORE the process existed:
-    {"agent":"claude",
+------------------------------------------------------------------------------
+1. Gate status, in #43's vocabulary — and one half is NOT RUN
+------------------------------------------------------------------------------
+`gate-unset` = SKIPPED, `not-run` = NOT RUN, `run` = RUN
+(`src/harness/live-gate.ts:52-58`). A gate reaching `run` does not make any
+§13 slot LIVE; #63's STRUCTURAL/LIVE axis is untouched by this file.
+
+  ARGUS_LIVE_CODEX_DEPLOY           run       codex half, below
+  ARGUS_LIVE_CLAUDE_SUBSCRIPTION    not-run   see section 4 — this is a result
+
+------------------------------------------------------------------------------
+2. codex half — RUN
+------------------------------------------------------------------------------
+command   env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
+            ARGUS_LIVE_CODEX_DEPLOY=1 bun test src/deploy/live.test.ts
+result    1 pass  1 skip  0 fail  6 expect() calls  [16.22s]
+
+Free, and the reason is unchanged from #55: a scratch CODEX_HOME has no auth,
+so the run 401s before the model. Everything under test happens before that.
+
+  banner    argus: live Codex deploy integration RUN — gate set and the codex
+            CLI is on PATH
+  banner    argus: subscription-mode Claude drive SKIPPED — set
+            ARGUS_LIVE_CLAUDE_SUBSCRIPTION=1 (or ARGUS_LIVE_AGENTS=1) ...
+
+  announced session id   01a0419b-2f55-7f13-aec6-3198ac3fcb28
+  registry row (verbatim, fsynced BEFORE the process existed):
+    {"agent":"codex",
      "dispatchPrompt":"You are working ticket #55. Reply with exactly the word
        ACKNOWLEDGED and nothing else. Do not run any commands and do not write
        any files.",
-     "sessionId":"fc3c277c-48c8-4f0e-95db-93583529e3c3",
-     "ticket":"55",
-     "ts":"2026-08-26T05:25:33.105Z",
-     "worktree":"…/argus-live-deploy-TwTu9W-worktrees/ticket-55"}
+     "sessionId":"01a0419b-2f55-7f13-aec6-3198ac3fcb28",
+     "ts":"2026-08-27T05:04:44.283Z",
+     "worktree":".../argus-live-codex-oTSc6E-worktrees/ticket-55",
+     "ticket":"55"}
+  rollout   .../argus-codex-home-Whcsle/sessions/2026/08/27/
+              rollout-2026-08-27T00-04-44-01a0419b-2f55-7f13-aec6-3198ac3fcb28.jsonl
 
-  classifier, off that row and the real transcript:
-    author hermes / via dispatch-prompt / ticket 55
-  assistant reply contained ACKNOWLEDGED, claude exited 0.
+  at the instant `deployWorker` returned:  the rollout did NOT carry the prompt
+  after the session ran:                   it carries the prompt AND the id
 
-The id in the row and the id in the transcript are the same string, and the row
-is older than the process. Before #55 the only way to get that row was to read
-the id back OUT of a finished transcript and append afterwards, which is the
-opposite order.
+  THE FOUR POST-#55 FIELDS, observed for the first time:
+    workspace           null
+    surface             null
+    workspaceDegraded   null
+    trustDegraded       null
 
-------------------------------------------------------------------------------
-2. codex — the CLI names the session, so the row follows its announcement
-------------------------------------------------------------------------------
-Free: a scratch CODEX_HOME has no auth, so the run 401s before the model. What
-is under test happens entirely before that point.
-
-  announced session id     01a03c88-1d0e-76f0-b43c-f578c7c19088
-                           (from {"type":"thread.started","thread_id":…},
-                            the FIRST line of `codex exec --json` stdout)
-  registry row             {"agent":"codex", …,
-                            "sessionId":"01a03c88-1d0e-76f0-b43c-f578c7c19088",
-                            "ticket":"55",
-                            "ts":"2026-08-26T05:25:47.562Z", …}
-  rollout file             …/argus-codex-home-3bImJx/sessions/2026/08/26/
-                             rollout-2026-08-26T00-25-48-01a03c88-….jsonl
-
-  at the instant `deployWorker` returned (row already fsynced):
-    the rollout did NOT contain the dispatch prompt
-  after the session ran:
-    the rollout contains the dispatch prompt AND the same session id
-
-Measured CLI facts this route rests on (same scratch, no auth, no spend):
-  - `codex exec --json` prints `thread.started` before `turn.started`;
-  - the rollout's user-message record (ordinal 8) landed ~1.2s later;
-  - `codex exec --json -` reads stdin to EOF BEFORE creating a session — it
-    printed `No prompt provided via stdin` while a writer still held the pipe —
-    so a session id cannot be obtained before handing over the prompt.
+  READ THOSE PER ROUTE. On the codex route all four are null because neither
+  step APPLIES: no tab was requested (`workspace: "none"`, the default), and
+  `deployWorker` only pre-trusts when `route.agent === "claude"`. A null here
+  is NOT the statement "the pre-trust step ran and succeeded". Section 3 is
+  where that statement is made.
 
 ------------------------------------------------------------------------------
-3. What is NOT proven here
+3. the PRE-TRUST step (#96), driven — the gap the old file could not name
 ------------------------------------------------------------------------------
-No frontier read, no claim, no concurrency cap (#56). No verify/merge/close and
-no ticket closure (#57). No cmux workspace was created in either half, so the
-`workspace: "auto"` discovery path and `sendToWorker`'s delivery leg are proven
-only against a scripted cmux, never against the real 0.62.2 app.
+command   bun run scripts/acceptance/deploy-primitive-probe.ts
+result    all checks passed, exit 0
+
+Production `deployWorker`, claude route, scratch HOME and scratch
+CLAUDE_CONFIG_DIR, scratch repo. Written as a committed runner so the next
+audit can repeat it from the tree — the reproducibility gap #101 names in its
+section 4, closed for this gate.
+
+  HEAD                     5d405c0b87c5db2ae53c681b86bbcacb3f3274c9
+  scratch CLAUDE_CONFIG_DIR /private/tmp/argus-107-trust-O9nrZL/cfg
+  config file trust.ts computed
+                           /private/tmp/argus-107-trust-O9nrZL/cfg/.claude.json
+  status                   deployed
+  sessionId                758f8f5c-d521-43e4-9669-da86570635c2
+  branch                   argus/ticket-107
+  worktree                 /private/tmp/argus-107-trust-O9nrZL/repo-worktrees/ticket-107
+
+  THE FOUR FIELDS, on the route where pre-trust applies:
+    workspace           null      by REQUEST — this probe must not open a
+    surface             null      cmux surface (#107 runs under an unchanged-
+    workspaceDegraded   null      surface-count rule). Not a degradation.
+    trustDegraded       null      the pre-trust write did not degrade
+
+  PASS  the config file exists at the path trust.ts computed
+  PASS  trustDegraded is null — the write did not degrade
+  PASS  the deployed worktree is marked hasTrustDialogAccepted
+  PASS  nothing was written to the scratch HOME's own .claude.json
+
+  projects keys in the scratch config, verbatim:
+    ["/private/tmp/argus-107-trust-O9nrZL/repo-worktrees/ticket-107"]
+
+  the row, still registry-first with a fourth step in front of it:
+    {"agent":"claude", ..., "sessionId":"758f8f5c-d521-43e4-9669-da86570635c2",
+     "ts":"2026-08-27T05:05:41.155Z", "ticket":"107"}
+
+  WHERE THE ORACLE STOPS. Under a scratch CLAUDE_CONFIG_DIR the binary is not
+  logged in — measured by #107, see section 4 — so the session exits 1 with
+  `Not logged in · Please run /login` on stdout and writes no transcript.
+  Everything checked above happened strictly before that point. This is the
+  same bargain #55's codex half makes with its 401, and it is stated rather
+  than assumed. It is NOT the subscription drive: nothing here proves the
+  preassigned id reaches a transcript.
+
+------------------------------------------------------------------------------
+4. ARGUS_LIVE_CLAUDE_SUBSCRIPTION — not-run, and WHY (a result, not a failure)
+------------------------------------------------------------------------------
+The Claude half of `src/deploy/live.test.ts` cannot be driven under the house
+rules any more. #96 is what changed that, and nothing recorded it until now.
+
+  1. That half spends a real subscription call, so it needs the real HOME
+     (SPEC §1 item 7: no API access; capability comes from the CLI).
+  2. Since #96 that half also reaches `trustDirectory`, which writes
+     `$CLAUDE_CONFIG_DIR ?? $HOME` + `/.claude.json` — with the real HOME,
+     Johan's own config.
+  3. That file is 340 KB with 1276 project entries and was last written 23
+     seconds before this was measured: his live sessions rewrite it
+     continuously. `trustDirectory` read-modify-RENAMES it, so a concurrent
+     write in that window is silently lost.
+  4. #96's own evidence (`silent-deploy.txt`) already rules this out in as
+     many words: "writing Johan's real ~/.claude.json is forbidden by the
+     house rules." #96 drove its own probe under a scratch CLAUDE_CONFIG_DIR
+     throughout for exactly this reason.
+
+  MEASURED, so the tradeoff is not a guess. The obvious escape — keep the real
+  HOME for credentials, point CLAUDE_CONFIG_DIR at scratch so only the trust
+  write is redirected — does not work, because the binary reads credentials
+  from the config dir too:
+
+    $ cd <scratch>; CLAUDE_CONFIG_DIR=<scratch>/cfg \
+        ~/.local/bin/claude -p 'say ok' --model claude-opus-5
+      Not logged in · Please run /login
+
+    ~/.claude/.credentials.json was checksummed before and after and was
+    unchanged (fed88619...e7d6). It was never read, copied or written.
+
+  So the two requirements are in direct conflict: the credential needs the
+  real config dir, and the house rules forbid writing the real config dir.
+  Section 3 covers what this half would have covered about the PRE-TRUST STEP
+  at zero cost; it does not cover the transcript leg, and this file does not
+  claim otherwise.
+
+  TO CLOSE IT would take one of: a `trustDirectory` that can be told to skip
+  (a deployment into an already-trusted ancestor never writes), an opt-in
+  "assume trusted" request field, or Johan running it by hand and accepting
+  the write. That is a ticket, not a thing to decide inside an evidence
+  refresh.
+
+------------------------------------------------------------------------------
+5. What is NOT proven here
+------------------------------------------------------------------------------
+Unchanged from #55 except where noted: no frontier read, no claim, no
+concurrency cap (#56); no verify/merge/close and no ticket closure (#57).
+
+NEW, and the honest narrowing of #55's "both halves drive the whole primitive":
+
+  - The TAB leg is undriven. No cmux surface was opened by either section, by
+    design, so `openWorkerTab` and the `workspace: "auto"` discovery path are
+    still proven only against a scripted cmux — never against the real 0.62.2
+    app. #95 replaced the function #55's file named; neither the old file nor
+    this one has driven the replacement. `cmux-door.txt` (#90) is the live
+    cmux evidence; it is a different gate and it does not go through
+    `deployWorker`.
+  - The Claude TRANSCRIPT leg is undriven, per section 4.
+  - `surface`/`workspace` have never been observed non-null by any run. Every
+    null in this file is "not requested", never "requested and resolved".

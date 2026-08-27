@@ -22,7 +22,7 @@ import {
   type TailEvent,
 } from "../tailing";
 import { classifierFromRegistry, loadRegistry, registryPaths } from "../provenance";
-import { deployWorker } from "./index.ts";
+import { deployWorker, type Deployment } from "./index.ts";
 
 /**
  * Ticket #55 — the primitive against REAL agent CLIs.
@@ -94,6 +94,29 @@ async function sandboxRepo(prefix: string): Promise<string> {
 
 const isMessage = (event: TailEvent): event is MessageEvent => event.type === "message";
 
+/**
+ * The four fields #55's run could not observe, printed with an explicit
+ * `null` rather than dropped (#107).
+ *
+ * `undefined` and "absent" are the same thing in JSON, and that ambiguity is
+ * exactly what let this file go stale invisibly: a reader cannot tell a
+ * `trustDegraded` that was never populated from one this build does not have.
+ * Spelled out, `trustDegraded: null` is a positive statement.
+ *
+ * READ IT PER ROUTE, though. `deployWorker` only pre-trusts when
+ * `route.agent === "claude"`, so on the CODEX half every one of these four is
+ * null because the step does not apply — which is not the same statement as
+ * "the step ran and succeeded". The claude half is where a null is a result.
+ */
+function deploymentShape(deployment: Deployment) {
+  return {
+    workspace: deployment.workspace ?? null,
+    surface: deployment.surface ?? null,
+    workspaceDegraded: deployment.workspaceDegraded ?? null,
+    trustDegraded: deployment.trustDegraded ?? null,
+  };
+}
+
 describe.skipIf(claudeGate.claude.status !== "run")(
   liveHalfTitle(
     "deployWorker live (#55): a real Claude session, registered before it existed",
@@ -142,6 +165,12 @@ describe.skipIf(claudeGate.claude.status !== "run")(
               worktree,
               transcriptSessions: [...new Set(events.map((event) => event.sessionId))],
               registryRow: (await Bun.file(registryPaths(repo).sessionsFile).text()).trim(),
+              // #107: the four fields the #55 run could not have observed,
+              // because they did not exist. On THIS route `trustDegraded` is
+              // the readout of whether #96's pre-trust step fired: null means
+              // it wrote the key, a string means the session started anyway
+              // and may be sitting on the dialog.
+              ...deploymentShape(result.deployment),
             })}`,
           );
           const sessions = new Set(events.map((event) => event.sessionId));
@@ -212,6 +241,7 @@ describe.skipIf(codexGate.status !== "run")(
             `argus #55 codex deploy: ${JSON.stringify({
               announcedSessionId: result.deployment.sessionId,
               registryRow: (await Bun.file(registryPaths(repo).sessionsFile).text()).trim(),
+              ...deploymentShape(result.deployment),
             })}`,
           );
           const early = await findRollout(codexHome, result.deployment.sessionId);

@@ -251,3 +251,65 @@ ticket could not run and what each would take. #99 holds the live watcher fleet
 lease and was running a live Hermes drive throughout this audit, so every gate
 needing the fleet, Hermes or a cmux surface was left alone by design rather than
 by failure.
+
+---
+
+## Amendment — #107 acted on this grading (2026-08-27)
+
+This section is appended, not woven in: #101's audit above is a record of what
+was true at `4a49096` and stays that way. What follows is what the re-drives it
+implied actually produced, at `5d405c0` (and `c4d9469` for the journey).
+
+| file | was | now | run |
+| --- | --- | --- | --- |
+| `deploy-primitive.txt` | STALE | **REFRESHED, one half `not-run`** | codex half `run`; pre-trust step driven by a new committed runner |
+| `live-agent-drive.txt` | STALE | **REFRESHED, drive UNRELIABLE** | gate `run`; 16/16 checks pass and the script exits 1 |
+| `live-command-sweep.txt` | STALE | **REFRESHED** | re-run clean, exit 0 |
+| `full-journey-e2e.txt` | STALE | **REFRESHED, unchanged** | 11 pass / 0 fail; 3 of 3 LIVE |
+| `grill-live.txt` | PARTLY STALE | **header only, NOT re-run** | provenance of #96 preserved, as this map directs |
+| `hermes-live.txt` | STALE | untouched | out of scope — #108 |
+
+**Three corrections to the analysis above, found by doing the re-drives.**
+
+1. **`ARGUS_LIVE_AGENTS`'s staleness reasoning was wrong about which code moved.**
+   This map says its drive "deploys a Codex session through the deployment
+   primitive" and is therefore exposed to #95, #96 and #89.
+   `scripts/acceptance/live-agents.ts` does not call `deployWorker` at all — it
+   spawns `codex exec` directly. Those three merges do not touch it. The file
+   was stale for an unrelated and larger reason (below), and the deployment
+   primitive's staleness is real but belongs only to `deploy-primitive.txt`.
+
+2. **`live-command-sweep.txt` was stale in its command surface, not its
+   deployment path.** The CLI grew six commands the old sweep never ran —
+   `init`, `grill`, `dispatch`, `complete`, `signals`, `memory` — plus a
+   `Flags:` section. Its `--help` capture listed six commands; it now lists
+   twelve. Also worth stating: `scripts/acceptance/live-sweep.ts` reads **no
+   gate at all** and spends no agent call, so mapping it to `ARGUS_LIVE_AGENTS`
+   describes where the evidence belongs, not what switches it on.
+
+3. **A gate this map records as `run` can no longer be run under the house
+   rules, and nothing recorded that.** `ARGUS_LIVE_CLAUDE_SUBSCRIPTION`'s
+   Claude half needs the real `HOME`; since #96 that half also reaches
+   `trustDirectory`, which read-modify-renames Johan's live `~/.claude.json`
+   (340 KB, 1276 project entries, rewritten continuously by his own sessions).
+   #96's own evidence forbids that write in as many words. Redirecting only the
+   trust write via `CLAUDE_CONFIG_DIR` does not work — measured: the binary
+   reads credentials from the config dir too and reports "Not logged in". So
+   the half is `not-run`, for a reason that is a property of the code rather
+   than of the machine. **A fix ticket is warranted; #107 did not manufacture a
+   pass.**
+
+**And one new defect, found by re-driving rather than by reading.**
+`RetroEye.persist` (`src/eyes/retro/retro.ts:966-978`) writes through a fixed
+temp path, so two concurrent persists race and the loser's `rename` gets
+ENOENT; `scripts/acceptance/live-agents.ts:433` calls `observeSession` without
+`await`, which is what makes them concurrent and what turns the loss into an
+unhandled rejection instead of a failed check. The drive therefore prints
+"16/16 checks passed" and exits 1 — and on the first of two runs printed
+nothing at all. `src/deploy/trust.ts` already carries the fix pattern
+(pid + UUID in the temp name). Details in `live-agent-drive.txt` section 6.
+
+**The thing this map asked for, now in each refreshed file:** a `HEAD` line.
+The absence of a recorded commit is half of why these went stale invisibly —
+dating them required reading ~25 merges. Each refreshed file names the commit
+it is a record of, so the next audit is a `git log` away.

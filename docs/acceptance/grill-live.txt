@@ -1,4 +1,31 @@
 ==============================================================================
+SUPERSEDED BEHAVIOUR — HEADER ADDED BY #107. THIS RUN WAS NOT REPEATED.
+==============================================================================
+Read this before the record below, and do NOT re-run this drive to "refresh"
+it. #101's map is explicit about why, and #107 followed it:
+
+  Drive 3 below hit Claude Code's first-run trust dialog and hung — a durable
+  registry row, five live watchers, and no transcript. THAT HANG IS THE
+  FINDING #96 WAS FILED TO FIX. #96's own evidence file (`silent-deploy.txt`)
+  cites it by name: "Found live by #89, drive 3". Re-running this drive would
+  delete the provenance of the fix.
+
+So this file is BOTH an accurate record of a real run AND a stale description
+of current grill behaviour. Both halves of that are load-bearing:
+
+  - #96 (merged 19:22, after this run) pre-trusts the working directory in the
+    config the session will read, before the process exists. The dialog this
+    drive hung on is answered before it is asked. `src/deploy/trust.ts`;
+    driven live by #107, see `deploy-primitive.txt` section 3.
+  - #97 (merged 19:52, after this run) changed how a grill mode's skill is
+    dispatched: `resolveGrillSkill` became `resolveGrillDispatch`, which reads
+    the skill's invocation form off the file.
+  - `claude` was 2.1.246 for this run; it is 2.1.247 as of 2026-08-27.
+
+The finding is durable. The behaviour it describes is superseded by the fixes
+it caused. Nothing below was edited.
+
+==============================================================================
 ARGUS LIVE GRILL VERIFICATION — ticket #89 (SPEC §14, first bullet)
 ==============================================================================
 run on          2026-08-26, this machine
