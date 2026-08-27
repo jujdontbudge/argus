@@ -21,6 +21,17 @@ default `bun test` must never spawn real agents. LIVE is what the nine opt-in ga
 
 ## 1. Correction to map #81's gate recon
 
+> **SUPERSEDED IN PART by #101 (2026-08-26).** This section was graded against
+> `main` @ `ff82238` and there are now **twelve** gates, not nine. Four of the
+> rows below have moved: `ARGUS_LIVE_FULL_JOURNEY` and `ARGUS_LIVE_LAUNCHD_SMOKE`
+> have since run (#83, #85), and `ARGUS_LIVE_WATCHER_BRAINS` gained a file (#91),
+> leaving two comment-only records rather than three — all three are now
+> transcribed into `docs/acceptance/` regardless. See
+> [`docs/acceptance/GATE-EVIDENCE-MAP.md`](../acceptance/GATE-EVIDENCE-MAP.md)
+> for the current 12-gate mapping and
+> [`docs/acceptance/gate-rerun-101.txt`](../acceptance/gate-rerun-101.txt) for
+> which gates were re-run fresh.
+
 #81 records seven gates as never run. Verified against the committed evidence, only
 **two** have never run:
 
