@@ -16,6 +16,18 @@ export type TerminalSignalStatus = "blocked" | "dead" | "done";
 
 export interface HermesSignal {
   prompt: string;
+  /**
+   * What the SESSION said, in its own words — #104 finding 2.
+   *
+   * `prompt` is a dispatch instruction: it names the session and points a
+   * mission-control agent at the file to go read. That is the right shape for
+   * waking Hermes and the wrong shape for a human, and the difference mattered
+   * — a blocked worker's reason lived only in `.argus/events/*.json`, and
+   * anything that forwarded `prompt` forwarded a file path instead of the
+   * reason. This carries the reason itself so a consumer can put it where a
+   * person will actually read it. Empty when the source had none to give.
+   */
+  reason: string;
   sessionId: string;
   source: "event" | "poll";
   status: TerminalSignalStatus;
@@ -205,6 +217,7 @@ export async function pollHermesSignals(
       delivered.add(key);
       signals.push({
         prompt: eventPrompt(event, file),
+        reason: event.message,
         sessionId: event.sessionId,
         source: "event",
         status,
@@ -231,6 +244,9 @@ export async function pollHermesSignals(
         delivered.add(key);
         signals.push({
           prompt: pollPrompt(digest, screen),
+          // The slow-poll path never saw a push event, so the nearest thing to
+          // the session's own words is the digest narrative the eyes wrote.
+          reason: digest.body.trim(),
           sessionId: digest.sessionId,
           source: "poll",
           status: indexedStatus,
