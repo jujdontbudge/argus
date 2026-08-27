@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
   createCodexBrain,
   parseCodexOutput,
-  type CodexBrainOptions,
   type SpawnRequest,
 } from "./brain";
 
@@ -76,7 +75,7 @@ describe("createCodexBrain — the exact researched invocation", () => {
         if (attempts === 1) return await new Promise(() => {});
         return { exitCode: 0, stdout: AGENT_MESSAGE_JSONL, stderr: "" };
       },
-    } as CodexBrainOptions & { attemptTimeoutMs: number });
+    });
 
     const first = await Promise.race([
       brain.evaluate({ prompt: "p", schema: {}, cwd: "/tmp" }),

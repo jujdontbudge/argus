@@ -16,6 +16,10 @@ export interface BrainRequest {
   schema: object;
   /** Repo the brain may read (`-C`); judgment context, never written to. */
   cwd: string;
+  /** Daemon shutdown; aborts an in-flight child instead of waiting for its deadline. */
+  signal?: AbortSignal;
+  /** Per-evaluation override; defaults to the brain's attempt timeout. */
+  attemptTimeoutMs?: number;
 }
 
 export interface BrainUsage {
@@ -41,6 +45,8 @@ export interface SpawnRequest {
   cwd: string;
   env: Readonly<Record<string, string | undefined>>;
   stdin: string;
+  /** Aborts on either caller shutdown or the per-attempt deadline. */
+  signal: AbortSignal;
 }
 
 export interface SpawnResult {
@@ -59,7 +65,16 @@ export interface CodexBrainOptions {
   binary?: string;
   /** Process environment; provider credentials are stripped before spawn. */
   env?: Readonly<Record<string, string | undefined>>;
+  /** Maximum wall time for one `codex exec` attempt. */
+  attemptTimeoutMs?: number;
 }
+
+/**
+ * #8 measured ~5.3s/call and #113 measured a healthy live Retro scan at 8.1s.
+ * Two minutes is ~23x / ~15x those baselines, while bounding the >2min tail
+ * that exposed #114. A timeout is a retryable attempt failure, never a drop.
+ */
+export const DEFAULT_BRAIN_ATTEMPT_TIMEOUT_MS = 120_000;
 
 /**
  * Parse `codex exec --json` JSONL stdout: the verdict is the last
@@ -117,13 +132,55 @@ const defaultSpawn: SpawnFn = async (request) => {
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [exitCode, stdout, stderr] = await Promise.all([
-    child.exited,
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-  ]);
-  return { exitCode, stdout, stderr };
+  const kill = () => child.kill("SIGTERM");
+  if (request.signal.aborted) kill();
+  else request.signal.addEventListener("abort", kill, { once: true });
+  try {
+    const [exitCode, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    return { exitCode, stdout, stderr };
+  } finally {
+    request.signal.removeEventListener("abort", kill);
+  }
 };
+
+function attemptFailure(
+  timeoutSignal: AbortSignal,
+  attemptTimeoutMs: number,
+): Error {
+  if (timeoutSignal.aborted) {
+    return new Error(`brain attempt timed out after ${attemptTimeoutMs}ms`);
+  }
+  const error = new Error("brain attempt aborted by caller");
+  error.name = "AbortError";
+  return error;
+}
+
+async function waitForSpawn(
+  spawned: Promise<SpawnResult>,
+  signal: AbortSignal,
+  timeoutSignal: AbortSignal,
+  attemptTimeoutMs: number,
+): Promise<SpawnResult> {
+  if (signal.aborted) throw attemptFailure(timeoutSignal, attemptTimeoutMs);
+  return await new Promise<SpawnResult>((resolve, reject) => {
+    const onAbort = () => reject(attemptFailure(timeoutSignal, attemptTimeoutMs));
+    signal.addEventListener("abort", onAbort, { once: true });
+    void spawned.then(
+      (result) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(result);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
 
 /** The researched lean invocation (docs/research/watcher-brains-codex-exec.md). */
 export function createCodexBrain(options: CodexBrainOptions): Brain {
@@ -139,38 +196,53 @@ export function createCodexBrain(options: CodexBrainOptions): Brain {
   delete env.CLAUDE_CODE_OAUTH_TOKEN;
   return {
     async evaluate(request) {
+      const attemptTimeoutMs =
+        request.attemptTimeoutMs ??
+        options.attemptTimeoutMs ??
+        DEFAULT_BRAIN_ATTEMPT_TIMEOUT_MS;
+      const timeoutSignal = AbortSignal.timeout(attemptTimeoutMs);
+      const signal =
+        request.signal === undefined
+          ? timeoutSignal
+          : AbortSignal.any([request.signal, timeoutSignal]);
       const schemaDirectory = await mkdtemp(join(tmpdir(), "argus-brain-"));
       const schemaFile = join(schemaDirectory, "output-schema.json");
       try {
         await Bun.write(schemaFile, JSON.stringify(request.schema));
         let result: SpawnResult;
         try {
-          result = await spawn({
-            argv: [
-              binary,
-              "exec",
-              "--ignore-user-config",
-              "-m",
-              options.model,
-              "-c",
-              `model_reasoning_effort=${options.reasoningEffort}`,
-              "-s",
-              "read-only",
-              "--ephemeral",
-              "-C",
-              request.cwd,
-              "--skip-git-repo-check",
-              "-c",
-              "project_doc_max_bytes=0",
-              "--output-schema",
-              schemaFile,
-              "--json",
-              "-",
-            ],
-            cwd: request.cwd,
-            env,
-            stdin: request.prompt,
-          });
+          result = await waitForSpawn(
+            spawn({
+              argv: [
+                binary,
+                "exec",
+                "--ignore-user-config",
+                "-m",
+                options.model,
+                "-c",
+                `model_reasoning_effort=${options.reasoningEffort}`,
+                "-s",
+                "read-only",
+                "--ephemeral",
+                "-C",
+                request.cwd,
+                "--skip-git-repo-check",
+                "-c",
+                "project_doc_max_bytes=0",
+                "--output-schema",
+                schemaFile,
+                "--json",
+                "-",
+              ],
+              cwd: request.cwd,
+              env,
+              stdin: request.prompt,
+              signal,
+            }),
+            signal,
+            timeoutSignal,
+            attemptTimeoutMs,
+          );
         } catch (error) {
           return {
             ok: false,
