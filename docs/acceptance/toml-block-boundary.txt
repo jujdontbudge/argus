@@ -1,0 +1,170 @@
+==============================================================================
+#103 — Argus's managed block in Codex's config.toml is delimited by COMMENTS,
+       and TOML does not respect comments as scope
+==============================================================================
+Branch: build/toml-block.  Scratch CODEX_HOME only; Johan's live
+~/.codex/config.toml was never written.
+
+  grep -c "argus:notify" ~/.codex/config.toml   before -> 0
+  grep -c "argus:notify" ~/.codex/config.toml   after  -> 0
+
+------------------------------------------------------------------------------
+1. THE ASSERTION THAT COULD NOT FAIL, AND THE ONE THAT DID
+------------------------------------------------------------------------------
+The block is not what gets eaten, so a test that writes the block, converges
+again and finds the block intact proves nothing.  Seven tests were written
+against the four shapes that actually occur.  Six of them PASSED on the
+unfixed code — including all three shapes the ticket predicted would fail:
+
+  PASS (before fix)  a key appended immediately after the end-marker, no
+                     following header
+  PASS (before fix)  a key appended after the end-marker with a later
+                     [profiles.luna] header present
+  PASS (before fix)  a whole foreign [projects."..."] table after the block
+
+They pass because `withCodexNotify` emits its block into the ROOT region, ahead
+of every table.  Anything after the end-marker is therefore either still root
+(and survives as root) or already a table (and survives in the tables tail).
+
+The one that FAILED is the shape #99 actually observed in the wild:
+
+  FAIL (before fix)  a foreign [projects."..."] table left INSIDE the markers
+
+    Expected to contain: [projects."/private/tmp/argus-99-run/repo"]
+    Received:
+      model = "gpt-5.6-sol"
+      sandbox_mode = "workspace-write"
+
+      # argus:notify:begin
+      notify = ["…/bun","…/scripts/codex-notify.ts"]
+      # argus:notify:end
+
+    src/up/codex-block-boundary.test.ts:110
+
+The mechanism is worth naming precisely, because it is not "someone appended in
+the wrong place".  `# argus:notify:end` is a DANGLING COMMENT at the tail of the
+root table.  A comment-preserving TOML writer (toml_edit and friends) stores
+dangling trivia with the document, not with any key, and emits it after the
+tables it appends.  So the instant any TOML-aware tool adds a table, Argus's
+end-marker relocates itself to the far side of that table, and the marker pair
+now spans somebody else's data.  The marker did not move because anyone was
+careless; it moved because a comment is not addressable structure.
+
+------------------------------------------------------------------------------
+2. THE BOUNDARY DECISION
+------------------------------------------------------------------------------
+Chosen: the converge no longer deletes a SPAN at all.
+
+  - `removeManagedNotify` now deletes the two marker LINES wherever they have
+    ended up, and nothing else.
+  - `removeRootNotify` (already present) deletes the one root-level `notify`
+    assignment, bounded by the first `[table]` header — a construct the parser
+    genuinely honours.
+  - Everything else in the file is foreign by definition and is carried
+    through: keys, tables, comments, blank lines.
+
+So the managed region is defined by CONTENT Argus wrote, not by a span between
+two comments.  The markers keep their documentary value for a human reader and
+their count is still asserted by the init/up scenario harness, but nothing
+destructive keys off them any more.  A relocated end-marker is now inert
+instead of dangerous, which is the property that actually matters: a marker
+that a TOML writer is free to move must not be load-bearing.
+
+REJECTED — terminate the block with an explicit table header.
+  This was the ticket's own suggestion and it is the obvious one, but it means
+  emitting a synthetic table (`[argus]`, or similar) into a config file Argus
+  does not own.  Codex deserialises config.toml with serde; an unrecognised
+  top-level table is at best noise in a user's file and at worst a hard parse
+  rejection that breaks Codex entirely.  Trading "Argus may silently drop one
+  key" for "Argus may render config.toml unloadable" is a bad trade — the
+  second failure is louder but far more expensive, and it would land on
+  Johan's real config.  It also cannot be validated here, because validating it
+  means running the real Codex against the real config, which this ticket
+  forbids.
+
+REJECTED — refuse to converge when the block contains content Argus did not
+write, and make the human fix it.
+  Safe, and it was #99's own first suggestion.  But `argus up` runs
+  unattended on every repo; a converger that hard-fails on a file some other
+  tool legitimately reformatted turns a silent minor bug into a fleet-wide
+  stop.  Preserving the foreign content is strictly better than refusing to
+  proceed, and it needs no human.
+
+REJECTED — move Argus's block to the very end of the file.
+  Does not work.  `notify` is a root-level key, and in TOML root keys cannot
+  follow a table header.  The block must live above the first table, which is
+  precisely where a TOML writer's dangling trivia collects.
+
+NOT DONE — relocating Hermes' `trust_level` write "outside the managed block".
+  The ticket names this as the immediate fix.  There is no Argus code that
+  writes `trust_level`; it is an external agent's edit, and grep across `src`,
+  `scripts` and `skills` finds no Argus instruction that places it.  Making the
+  converge indifferent to WHERE the key sits is the stronger fix, and it also
+  covers the next tool that appends something Argus has never heard of.
+
+------------------------------------------------------------------------------
+3. THE CONVERGER PROPERTY (SPEC §1)
+------------------------------------------------------------------------------
+Idempotence is asserted over a REPAIRED file rather than a pristine one, which
+is the case that could regress:
+
+  seed      model + [profiles.luna]
+  converge  -> block written
+  damage    append [projects."/tmp/widgets"] trust_level = "trusted"
+  converge  -> second
+  converge  -> third
+
+  expect(third).toBe(second)                          byte-identical
+  begin markers 1, end markers 1, root `notify =` 1   no accumulation
+
+Two further tests guard the thing the span-deletion used to buy: Argus still
+replaces its OWN stale root `notify` instead of stacking copies, and a `notify`
+key belonging to `[profiles.luna]` is still left alone.
+
+------------------------------------------------------------------------------
+4. IS THE COMMENT-MARKER PATTERN USED ANYWHERE ELSE?
+------------------------------------------------------------------------------
+Yes, once — REPORTED, NOT FIXED, per "one mechanism per ticket".
+
+  AGENTS.md — src/up/scaffold.ts:291 and :400 replace
+  /<!-- argus:begin -->[\s\S]*?<!-- argus:end -->/ and the matching
+  matt-pocock pair.  This is the same span-deletion shape.  It is far less
+  dangerous, because Markdown has no scoping construct a comment can straddle
+  and no Markdown writer relocates HTML comments the way a TOML writer
+  relocates dangling trivia — the markers stay where they were put.  The
+  residual risk is only the honest one: text a human types BETWEEN the markers
+  is inside a region Argus declares its own, and will be replaced.  That is a
+  different decision and belongs in its own ticket.
+
+  .gitignore — src/up/scaffold.ts:358 uses no markers at all.  It appends only
+  the entries missing from the line set.  Nothing to fix; the format has no
+  scope and the writer has no span.
+
+  ~/.hermes — the marker pattern is NOT used.  Argus edits the Hermes profile
+  config.yaml key-by-key via `convergeYamlValues` / `convergeYamlStringList`
+  (src/up/bindings.ts:747-773), which is already content-scoped rather than
+  span-scoped.  YAML would have been the other format with real scoping
+  hazards, and it is clean.
+
+------------------------------------------------------------------------------
+5. GATE
+------------------------------------------------------------------------------
+  bun x tsc --noEmit   clean
+  bun test             1029 pass / 21 skip / 0 fail, 3588 expect() calls,
+                       1050 tests across 141 files
+
+  The first full run of the gate, taken at load average 30, reported 3 fail
+  and 1 error.  Two subsequent runs at load 10 were clean.  Per the standing
+  rule that a failure under load is a load artifact until re-run alone, those
+  three are recorded as load artifacts; their names were not captured before
+  the re-run, which is the honest limit of this note.
+
+------------------------------------------------------------------------------
+6. WHAT WAS NOT DONE
+------------------------------------------------------------------------------
+  - Johan's live ~/.codex/config.toml was never read for modification and never
+    written.  Every test uses a scratch CODEX_HOME under mkdtemp.
+  - No watcher was started, no cmux surface created or closed, no process
+    killed, no launchd job registered.  #105's soak was left alone.
+  - The AGENTS.md marker instance was reported above, not fixed.
+  - Credential files were checksummed, never read.
