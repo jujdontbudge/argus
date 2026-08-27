@@ -55,7 +55,7 @@ Two columns below are this ticket's, and neither is #43's vocabulary:
 | 5 | `ARGUS_LIVE_CODEX_DEPLOY` | `src/deploy/live.test.ts:54` — **a test file** | yes — #55 | `deploy-primitive.txt` | **STALE** |
 | 6 | `ARGUS_LIVE_FULL_JOURNEY` | `src/harness/full-journey.ts:125` | yes — #83, 2026-08-26 13:04 | `full-journey-e2e.txt` | **STALE** |
 | 7 | `ARGUS_LIVE_GRILL` | `src/harness/grill-live.ts:110` | yes — #89, 2026-08-26 17:37 | `grill-live.txt` | **PARTLY STALE** |
-| 8 | `ARGUS_LIVE_HERMES` | `src/harness/hermes-live-gate.ts:36` | yes — #47, 2026-08-25; `real` half **`not-run`** | `hermes-live.txt` | **STALE** |
+| 8 | `ARGUS_LIVE_HERMES` | `src/harness/hermes-live-gate.ts:36` | scratch half re-driven #108, 2026-08-27; `real` half **structurally unrunnable** | `hermes-live.txt` (#47), `hermes-real-108.txt` (#108) | CURRENT (scratch); `real` **CLOSED — STRUCTURAL LIMIT** |
 | 9 | `ARGUS_LIVE_HONCHO` | `src/eyes/live-gate.ts:7` | yes — #76, 2026-08-26 10:50 | **was comment-only** → `honcho-isolation-live.txt` (transcribed by #101) | **TRANSCRIBED** |
 | 10 | `ARGUS_LIVE_LAUNCHD_SMOKE` | `src/supervisor/launchd-live-gate.ts:3` | yes — #85, 2026-08-26 15:41 | `launchd-live-smoke.txt` | CURRENT |
 | 11 | `ARGUS_LIVE_SLOTS` | `src/harness/live-slots.ts:101` | yes — #78, 2026-08-26 11:26 | **was comment-only** → `live-slots-drive.txt` (transcribed by #101) | **TRANSCRIBED** |
@@ -65,6 +65,16 @@ Two columns below are this ticket's, and neither is #43's vocabulary:
 at the whole-gate level. The gap this ticket was filed against is not
 un-run gates — it is un-durable and out-of-date records, and two of the three
 comment-only records are now files.
+
+**Two HALVES, however, are `not-run` and will stay that way**, and both for the
+same kind of reason: the half needs the real `HOME`, and the house rules forbid
+writing it. `ARGUS_LIVE_CLAUDE_SUBSCRIPTION`'s Claude half (#107, finding 3
+below) — **a fix ticket is warranted there.** `ARGUS_LIVE_HERMES`'s `real` half
+(#108, `hermes-real-108.txt`) — **no fix ticket is warranted there; it is a
+permanent structural limit and re-opening it each audit is the waste this line
+exists to stop.** The difference is that #107's half was runnable once and was
+broken by a code change, while #108's never had a precondition anything but a
+real deployment could create.
 
 ---
 
@@ -160,12 +170,42 @@ transcripts — so it is exposed to #94, #95, #89, #96 and #100 simultaneously.
 Its resolution of 13.1's "1 of 2 replies" finding stands as a historical result;
 its description of the path that produced it does not.
 
-**`ARGUS_LIVE_HERMES` — STALE, and it was never whole.** `hermes-live.txt` (#47)
-is from 2026-08-25 and records its `real` half as **`not-run`**: `~/.hermes/profiles`
-did not exist, so only the scratch half ran. That half-gate has never been
-closed. The file's own version line (`Hermes Agent v0.16.0`) is the thing that
-makes a future break attributable, and it is worth checking against the installed
-binary before trusting the §7 caveat it records.
+**`ARGUS_LIVE_HERMES` — the scratch half is CURRENT; the `real` half is CLOSED as
+a PERMANENT STRUCTURAL LIMIT. Do not re-open it.** #108 asked whether the `real`
+half *can* be run and answered no, with measurements, in `hermes-real-108.txt`.
+Four independent reasons, each sufficient: its precondition is a DIRECTORY, and
+every route that creates it writes the real `~/.hermes` (including a copy of a
+484-line credential-bearing `.env`, and — via `hermes profile create` — an
+executable dropped into `~/.local/bin`); there is no read-only `hermes`
+subcommand at all, since even one that dies in argparse creates two log files
+under its `HERMES_HOME`; the real `state.db` is WAL-mode, so a `mode=ro` open in
+place would make SQLite create a `-shm` in the real tree; and the tree is under
+continuous concurrent write by a live gateway (measured: three paths moved in 24
+idle seconds), so nothing taken over it would be reproducible. `HERMES_HOME`
+does not relax this — it never reaches the `real` half, which reads
+`join(homedir(), ".hermes")`. `HOME` does, and #108 **refused** it: redirecting
+`HOME` turns the half green against a tree the test author built, which is the
+manufactured pass #47 existed to remove. #102's refusal of `hermes profile use`
+against the real home stands and is now confirmed by measurement — it writes
+`<HERMES_HOME>/active_profile`.
+
+What that costs is exactly one claim: **that `argus up`'s Hermes binding, run
+against the REAL `~/.hermes`, produces a profile the production source discovers
+in place.** Everything else under the half is covered — #108 drove Johan's real
+2.8 GB `state.db` (clonefile, source inode/size/mtime unchanged) through the
+UNMODIFIED `createHermesSource` and read 45,295 real assistant rows, which
+retires research §7's caveat in its positive form; #47's scratch half covers the
+binding and the caveat's negative form; #102 covers the generated name against
+the real binary. The residue is a path prefix, and that prefix is what the house
+rule forbids. It becomes runnable by itself the day Johan deploys Argus on a repo
+of his own — that is the right posture, not making `REAL_HERMES_ROOT` injectable,
+which would convert the limit into a knob whose only use is turning the half
+green.
+
+The version line checks out: installed `Hermes Agent v0.16.0 (2026.6.5) · upstream
+9e484f05` and `state.db` schema 15, both **identical** to what #47 recorded, so
+#100's canary has nothing to attribute and the §7 caveat is still held against
+the Hermes that is installed.
 
 **`ARGUS_LIVE_GRILL` — PARTLY STALE, in a specific and interesting way.**
 `grill-live.txt` (#89) merged at 17:37, *before* #96 (19:22) and #97 (19:52).
