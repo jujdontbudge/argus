@@ -3,6 +3,7 @@ import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createBrainCap } from "../cap";
+import { createCodexBrain } from "../brain";
 import { loadScaledMs } from "../test-budget";
 import { applyDigestUpdate } from "../digest/outputs";
 import type { ProvenanceRecord } from "../../provenance";
@@ -181,6 +182,70 @@ const filedIssue = (gh: FakeGh) =>
   gh.issues.find((issue) => issue.labels.includes("retro"));
 
 describe("the Retro watcher's production tick path", () => {
+  test("watcher shutdown interrupts a hung brain and releases its cap slot", async () => {
+    const place = await scratch();
+    const gh = createFakeGh({ repo: "JohanSardar/argus" });
+    const controller = new AbortController();
+    const cap = createBrainCap({
+      directory: join(place.root, "brain-slots"),
+      maxConcurrency: 1,
+      pollMs: 1,
+    });
+    let started!: () => void;
+    const spawnStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    try {
+      const eye = await RetroEye.open({
+        repo: place.repo,
+        brain: createCodexBrain({
+          attemptTimeoutMs: 100,
+          model: "gpt-5.6-luna",
+          reasoningEffort: "low",
+          spawn: async () => {
+            started();
+            return await new Promise(() => {});
+          },
+        }),
+        cap,
+        cadence: { quietWindowSeconds: 60, maxWaitSeconds: 600 },
+        gh: gh.run,
+        signal: controller.signal,
+        sleep: async () => {},
+      });
+      await eye.prime();
+      await place.commit(
+        "src/hung.ts",
+        "export const hung = true;\n",
+        "implementation whose brain hangs",
+      );
+
+      const scan = eye.scan();
+      await spawnStarted;
+      controller.abort();
+      const observed = await Promise.race([
+        scan.then(
+          () => "resolved" as const,
+          (error: unknown) => error,
+        ),
+        Bun.sleep(20).then(() => "test-watchdog" as const),
+      ]);
+      if (observed === "test-watchdog") await scan.catch(() => {});
+
+      expect(observed).not.toBe("test-watchdog");
+      expect(observed).toBeInstanceOf(Error);
+      expect((observed as Error).name).toBe("AbortError");
+      const release = await Promise.race([
+        cap.acquire(),
+        Bun.sleep(20).then(() => "cap-watchdog" as const),
+      ]);
+      expect(release).not.toBe("cap-watchdog");
+      if (typeof release === "function") await release();
+    } finally {
+      await place.cleanup();
+    }
+  }, BUDGET_MS);
+
   test("startup priming preserves work that lands before the first scheduled tick", async () => {
     const place = await scratch();
     const gh = createFakeGh({ repo: "JohanSardar/argus" });
