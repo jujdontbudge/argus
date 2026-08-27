@@ -483,6 +483,27 @@ describe("the Retro eye degrades loudly, never silently (ADR-0001)", () => {
 });
 
 describe("the Retro eye's state survives a restart", () => {
+  test("concurrent state persists on one file both complete", async () => {
+    const place = await scratch();
+    const gh = createFakeGh({ repo: "JohanSardar/argus" });
+    try {
+      const harness = await openEye(place, gh);
+
+      await Promise.all([
+        harness.eye.observeSession({ sessionId: "sess-one", cwd: place.repo }),
+        harness.eye.observeSession({ sessionId: "sess-two", cwd: place.repo }),
+      ]);
+
+      const restarted = await harness.reopen();
+      await Promise.all([
+        restarted.observeSession({ sessionId: "sess-three", cwd: place.repo }),
+        restarted.observeSession({ sessionId: "sess-four", cwd: place.repo }),
+      ]);
+    } finally {
+      await place.cleanup();
+    }
+  }, BUDGET_MS);
+
   test("the git cursor and the filed set are persisted", async () => {
     const place = await scratch();
     const gh = createFakeGh({ repo: "JohanSardar/argus" });

@@ -430,7 +430,7 @@ try {
   console.log("\n  the REAL Retro eye over the same live work:");
   for (const meta of metas) {
     if (meta.cwd !== undefined) {
-      retro.observeSession({ sessionId: meta.sessionId, cwd: meta.cwd });
+      await retro.observeSession({ sessionId: meta.sessionId, cwd: meta.cwd });
     }
   }
   await retro.ingest(records);
@@ -459,15 +459,15 @@ try {
     (await retro.scan()).length === 0,
     "§13.3 — a second sweep re-files nothing",
   );
-
-  console.log("\n" + "=".repeat(78));
-  const failed = checks.filter(({ ok }) => !ok);
-  console.log(
-    `LIVE AGENT DRIVE: ${checks.length - failed.length}/${checks.length} checks passed`,
-  );
-  for (const { what } of failed) console.log(`  FAILED: ${what}`);
-  console.log("=".repeat(78));
-  process.exitCode = failed.length === 0 ? 0 : 1;
 } finally {
   await sandbox.teardown();
 }
+
+console.log("\n" + "=".repeat(78));
+const failed = checks.filter(({ ok }) => !ok);
+console.log(
+  `LIVE AGENT DRIVE: ${checks.length - failed.length}/${checks.length} checks passed`,
+);
+for (const { what } of failed) console.log(`  FAILED: ${what}`);
+console.log("=".repeat(78));
+process.exitCode = failed.length === 0 ? 0 : 1;

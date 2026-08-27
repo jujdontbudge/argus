@@ -185,11 +185,10 @@ try {
       "  session stops here and writes no transcript. Everything checked above\n" +
       "  happened before this point. This is NOT the subscription drive.",
   );
-
-  rule(`PRE-TRUST PROBE: ${failed === 0 ? "all checks passed" : `${failed} FAILED`}`);
 } finally {
   await rm(root, { force: true, recursive: true });
   console.log(`\nscratch removed: ${root}`);
 }
 
+rule(`PRE-TRUST PROBE: ${failed === 0 ? "all checks passed" : `${failed} FAILED`}`);
 process.exit(failed === 0 ? 0 : 1);

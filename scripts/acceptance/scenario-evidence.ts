@@ -43,9 +43,11 @@ console.log("=".repeat(78));
 console.log(`checkout ${checkout}`);
 console.log("");
 
+const started = Date.now();
+let reports: Awaited<ReturnType<typeof runScenarios>> = [];
+let totalAssertions = 0;
 try {
-  const started = Date.now();
-  const reports = await runScenarios({
+  reports = await runScenarios({
     checkout,
     reportDirectory,
     scenarios: selectedSlots.map(({ number, title }) => ({
@@ -54,7 +56,6 @@ try {
     })),
   });
 
-  let totalAssertions = 0;
   for (const report of reports) {
     const failed = report.assertions.filter(({ passed }) => !passed);
     totalAssertions += report.assertions.length;
@@ -73,20 +74,22 @@ try {
     }
     console.log("");
   }
-
-  console.log("=".repeat(78));
-  console.log("SUMMARY");
-  console.log("=".repeat(78));
-  for (const report of reports) {
-    console.log(
-      `  ${report.status.padEnd(6)}  ${String(report.assertions.length).padStart(3)} assertions  ${report.name}`,
-    );
-  }
-  console.log(
-    `\n  ${reports.length} scenarios, ${totalAssertions} assertions, ` +
-      `${reports.filter(({ status }) => status !== "passed").length} not passing, ` +
-      `${((Date.now() - started) / 1000).toFixed(1)}s`,
-  );
 } finally {
   await rm(reportDirectory, { force: true, recursive: true });
 }
+
+console.log("=".repeat(78));
+console.log("SUMMARY");
+console.log("=".repeat(78));
+for (const report of reports) {
+  console.log(
+    `  ${report.status.padEnd(6)}  ${String(report.assertions.length).padStart(3)} assertions  ${report.name}`,
+  );
+}
+const notPassing = reports.filter(({ status }) => status !== "passed").length;
+console.log(
+  `\n  ${reports.length} scenarios, ${totalAssertions} assertions, ` +
+    `${notPassing} not passing, ` +
+    `${((Date.now() - started) / 1000).toFixed(1)}s`,
+);
+process.exitCode = notPassing === 0 ? 0 : 1;
