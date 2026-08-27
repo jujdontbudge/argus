@@ -682,3 +682,58 @@ skills:
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// #102 — the profile Argus writes must be USABLE through the name it writes.
+//
+// #94's lesson, applied literally. A test that asserts "a profile name was
+// generated" or "a directory was created" passes for a broken binding: `argus
+// up` mkdir's the profile directly and never calls `hermes profile create`, so
+// Hermes' own name validation is bypassed at write time and the name is only
+// refused later, at USE time, by a caller who has no idea Argus produced it.
+//
+// So this asserts the round trip: converge a binding, then hand the name it
+// reports to the real `hermes profile use` against a scratch HERMES_HOME. No
+// auth, no model, no network — a local argv validation path — so it belongs in
+// the default gate rather than behind ARGUS_LIVE_HERMES. Skipped only when the
+// binary is absent, because then there is nothing to round-trip against.
+// ---------------------------------------------------------------------------
+
+const hermesBinary = Bun.which("hermes");
+
+describe.skipIf(hermesBinary === null)("hermes profile round trip (#102)", () => {
+  test("the profile argus up writes can be selected by the name it writes", async () => {
+    const { repo, root } = await scratchRepo("Widget Kit");
+    const hermesRoot = join(root, "home", ".hermes");
+    const honcho = new FakeHoncho();
+
+    const report = await convergeAgentBindings({
+      hermesRoot,
+      honcho,
+      honchoUrl: "http://honcho.test:8000",
+      repo,
+    });
+
+    // The profile directory exists on disk — this much has always been true,
+    // and asserting only this is exactly the test that would have shipped the
+    // bug. The name being usable is the claim that matters.
+    expect(
+      (await lstat(join(hermesRoot, "profiles", report.profile))).isDirectory(),
+    ).toBe(true);
+
+    const child = Bun.spawn([hermesBinary as string, "profile", "use", report.profile], {
+      env: { ...Bun.env, HERMES_HOME: hermesRoot },
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [exitCode, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+
+    expect({ exitCode, output: `${stdout}${stderr}`.trim() }).toMatchObject({
+      exitCode: 0,
+    });
+  });
+});
