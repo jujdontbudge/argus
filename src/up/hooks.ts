@@ -61,15 +61,27 @@ async function convergeClaudeStop(
   await Bun.write(path, `${JSON.stringify(settings, null, 2)}\n`);
 }
 
+/**
+ * Drop Argus's marker comments wherever they sit.
+ *
+ * The markers are comments, and TOML does not honour comments as scope, so the
+ * region between them is not a region the parser agrees exists: a comment-
+ * preserving TOML writer is free to append a `[table]` before the trailing
+ * marker, and any text-level append lands after it. Argus therefore never
+ * deletes a SPAN. It deletes only the marker lines here and, in
+ * `removeRootNotify`, the one root-level `notify` assignment it wrote. Foreign
+ * keys, tables and comments survive wherever they ended up. The real boundary
+ * is the first `[table]` header — a construct the parser does honour — and
+ * that is the boundary `removeRootNotify` uses.
+ */
 function removeManagedNotify(config: string): string {
-  const begin = config.indexOf(ARGUS_CODEX_BEGIN);
-  if (begin === -1) return config;
-  const end = config.indexOf(ARGUS_CODEX_END, begin);
-  if (end === -1) {
-    throw new Error("argus up: Codex config has an unterminated Argus notify block");
-  }
-  const after = end + ARGUS_CODEX_END.length;
-  return `${config.slice(0, begin)}${config.slice(after).replace(/^\r?\n/, "")}`;
+  return config
+    .split(/\r?\n/)
+    .filter((line) => {
+      const text = line.trim();
+      return text !== ARGUS_CODEX_BEGIN && text !== ARGUS_CODEX_END;
+    })
+    .join("\n");
 }
 
 /** Remove only a root-level notify assignment; keys inside [profiles] stay put. */
