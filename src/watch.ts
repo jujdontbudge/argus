@@ -8,6 +8,7 @@ import { Tailer, type TranscriptSource } from "./tailing/index.ts";
 import { ProvenanceFeed } from "./eyes/source.ts";
 import { parseArgusEvent } from "./events/schema.ts";
 import { acquireWatchLease } from "./watch/lease.ts";
+import { createMemProbe } from "./watch/memprobe.ts";
 import { EyeHealthReporter } from "./supervisor/health.ts";
 import { recordAudits } from "./audits/store.ts";
 
@@ -283,6 +284,11 @@ async function runLoop(
   }, pollMilliseconds);
   let lease: Awaited<ReturnType<typeof acquireWatchLease>> | undefined;
   const health = new EyeHealthReporter(repo, eye);
+  // null unless ARGUS_WATCH_MEMPROBE_FILE is set (#109). See ./watch/memprobe.ts:
+  // an external `ps` reading cannot separate JS heap from SQLite page cache
+  // from arena retention, and #105 found a shape with no cause for exactly
+  // that reason.
+  const memProbe = createMemProbe(eye);
   try {
     lease = await acquireWatchLease(
       repo,
@@ -299,8 +305,12 @@ async function runLoop(
         );
         return 0;
       }
+      memProbe?.maybeSample();
       const rssBytes = process.memoryUsage().rss;
       if (rssBytes > maxRssBytes) {
+        // The reading AT the breach is the most informative one the probe can
+        // take — it is the only sample that says WHAT the 512 MiB was made of.
+        memProbe?.sample();
         console.error(
           `argus watch ${eye}: RSS ceiling exceeded (${Math.ceil(rssBytes / 1024 / 1024)} MiB > ${maxRssMiB} MiB); exiting for supervised restart`,
         );
