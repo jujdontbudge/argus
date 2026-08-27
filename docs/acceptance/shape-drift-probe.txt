@@ -1,0 +1,81 @@
+# #100 — record-shape drift probe (live, read-only)
+
+Run: `bun scripts/acceptance/shape-drift-probe.ts`
+Date: 2026-08-27T01:11:28Z   Host load: 8.61 8.99 8.86
+bun 1.3.12 · claude 2.1.247 (Claude Code) · codex codex-cli 0.149.1 · Hermes Agent v0.16.0 (2026.6.5) · upstream 9e484f05
+
+```
+captured-at        2026-08-27T01:11:40.962Z
+claude-code  oldest 37737 records / newest 21387 records
+codex        oldest 59529 records / newest 32063 records
+hermes       oldest 95336 records / newest 95339 records
+claude versions    installed 2.1.247 (Claude Code)
+codex versions     installed codex-cli 0.149.1
+
+=== claude-code: 9 facts the OLD contract had never seen ===
+  [notice] cli-version||2.1.211
+  [notice] cli-version||2.1.221
+  [notice] cli-version||2.1.223
+  [notice] cli-version||2.1.231
+  [notice] cli-version||2.1.233
+  [notice] cli-version||2.1.234
+  [notice] field||imagePasteIds
+  [notice] field||userFeedback
+  [decision-bearing] value|origin.kind|coordinator
+
+=== codex: 50 facts the OLD contract had never seen ===
+  [notice] cli-version||0.148.0-alpha.9
+  [notice] cli-version||0.149.1
+  [decision-bearing] envelope|user-text|recommended_plugins
+  [notice] field|payload.content[]:encrypted_content|encrypted_content
+  [notice] field|payload.content[]:encrypted_content|type
+  [notice] field|payload:compacted|first_window_id
+  [notice] field|payload:compacted|previous_window_id
+  [notice] field|payload:compacted|window_id
+  [notice] field|payload:compacted|window_number
+  [notice] field|payload:event_msg|agent_path
+  [notice] field|payload:event_msg|agent_thread_id
+  [notice] field|payload:event_msg|audio
+  [notice] field|payload:event_msg|client_id
+  [notice] field|payload:event_msg|completed_at_ms
+  [notice] field|payload:event_msg|event_id
+  [notice] field|payload:event_msg|item
+  [notice] field|payload:event_msg|local_audio
+  [notice] field|payload:event_msg|num_turns
+  [notice] field|payload:event_msg|occurred_at_ms
+  [notice] field|payload:event_msg|read_only_hint
+  [notice] field|payload:event_msg|results
+  [notice] field|payload:event_msg|started_at_ms
+  [notice] field|payload:event_msg|thread_settings
+  [notice] field|payload:inter_agent_communication_metadata|trigger_turn
+  [notice] field|payload:response_item|author
+  [notice] field|payload:response_item|internal_chat_message_metadata_passthrough
+  [notice] field|payload:response_item|recipient
+  [notice] field|payload:session_meta|agent_path
+  [notice] field|payload:session_meta|context_window
+  [notice] field|payload:session_meta|forked_from_id
+  [notice] field|payload:session_meta|history_mode
+  [notice] field|payload:session_meta|multi_agent_version
+  [notice] field|payload:session_meta|parent_thread_id
+  [notice] field|payload:session_meta|session_id
+  [notice] field|payload:session_meta|subagent_history_start_ordinal
+  [notice] field|payload:turn_context|approvals_reviewer
+  [notice] field|payload:turn_context|comp_hash
+  [notice] field|payload:turn_context|multi_agent_version
+  [notice] field|payload:turn_context|workspace_roots
+  [notice] field|payload:world_state|full
+  [notice] field|payload:world_state|state
+  [notice] field||ordinal
+  [decision-bearing] undecomposable|user-text|recommended_plugins
+  [decision-bearing] value|payload.content[].type|encrypted_content
+  [decision-bearing] value|payload.type|item_completed
+  [decision-bearing] value|payload.type|sub_agent_activity
+  [decision-bearing] value|payload.type|thread_rolled_back
+  [decision-bearing] value|payload.type|thread_settings_applied
+  [decision-bearing] value|type|inter_agent_communication_metadata
+  [decision-bearing] value|type|world_state
+
+=== hermes: 0 facts the OLD contract had never seen ===
+
+decision-bearing drift: 10
+```

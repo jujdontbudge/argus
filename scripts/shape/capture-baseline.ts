@@ -37,6 +37,12 @@ import {
 } from "../../src/tailing/shape/contract.ts";
 
 const MAX_FILES = Number(process.env.ARGUS_SHAPE_MAX_FILES ?? 500);
+/**
+ * Newest-first by default. `ARGUS_SHAPE_ORDER=oldest` is what makes the drift
+ * probe possible: capture from the oldest corpus, then run the canary over the
+ * newest, and every fact it reports is real drift that really happened.
+ */
+const OLDEST_FIRST = process.env.ARGUS_SHAPE_ORDER === "oldest";
 const MAX_BYTES_PER_FILE = 8 * 1024 * 1024;
 
 interface Collected {
@@ -64,7 +70,10 @@ async function* jsonlUnder(root: string, depth = 4): AsyncGenerator<string> {
   } catch {
     return;
   }
-  for (const entry of entries.sort((a, b) => b.name.localeCompare(a.name))) {
+  const ordered = entries.sort((a, b) =>
+    OLDEST_FIRST ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name),
+  );
+  for (const entry of ordered) {
     const path = join(root, entry.name);
     if (entry.isDirectory() && depth > 0) yield* jsonlUnder(path, depth - 1);
     else if (entry.isFile() && entry.name.endsWith(".jsonl")) yield path;
