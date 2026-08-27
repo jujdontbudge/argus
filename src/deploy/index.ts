@@ -25,6 +25,7 @@ export {
 export {
   CLAUDE_ROUTE,
   CODEX_ROUTE,
+  CODEX_SANDBOX_POSTURE,
   ROUTES,
   type AgentRoute,
   type DeployAgent,
