@@ -141,6 +141,19 @@ const THREAD_STARTED = /"type"\s*:\s*"thread\.started"/;
  * Set as `-c` overrides so they beat the config file: the failure mode being
  * fixed is precisely a machine whose config disagrees with what Argus needs.
  *
+ * TWO things hide this on a developed machine, not one, and the second was
+ * found while re-verifying (#104 second pass). The first is the obvious one:
+ * `sandbox_mode = "danger-full-access"` in `~/.codex/config.toml`. The second
+ * is per-project trust — `codex` records `[projects."<path>"] trust_level =
+ * "trusted"` in config.toml for a directory it has been trusted in once, and a
+ * trusted project silently starts `codex exec` at `workspace-write` even with
+ * no `sandbox_mode` anywhere. Measured: identical pre-fix argv, same scratch
+ * home, same prompt — untrusted project `read-only` and the write rejected;
+ * with only that `trust_level` stanza added, `workspace-write` and the write
+ * succeeded. So a repo Argus has been driven in by hand looks fine and a
+ * freshly adopted one does not, which is the same trap one layer down. Pinning
+ * the posture in argv is what makes the two machines behave alike.
+ *
  * Argus already knew to do this on the READ side and had simply never done it
  * on the WRITE side: `createCodexBrain` (src/eyes/brain.ts) passes
  * `--ignore-user-config` and `-s read-only`, pinning a watcher brain to
