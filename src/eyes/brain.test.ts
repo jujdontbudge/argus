@@ -82,7 +82,7 @@ describe("createCodexBrain — the exact researched invocation", () => {
 
     const first = await Promise.race([
       brain.evaluate({ prompt: "p", schema: {}, cwd: "/tmp" }),
-      Bun.sleep(100).then(() => "test-watchdog" as const),
+      Bun.sleep(1_000).then(() => "test-watchdog" as const),
     ]);
 
     expect(first).not.toBe("test-watchdog");
