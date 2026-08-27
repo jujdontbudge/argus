@@ -226,12 +226,24 @@ already consumed by hand; both defeat the cursor.
 ## Launch and observe Hermes
 
 `argus up` creates a repo-scoped Hermes profile INSIDE the Hermes home, at
-`$HERMES_HOME/profiles/argus-repo-<sha256-of-the-repo-path>`, and registers the
-repo's `.argus/skills` in that profile's `config.yaml`. The profile is a
-directory under the home — it is not itself a `HERMES_HOME`, and pointing
-`HERMES_HOME` at it makes Hermes look for `profiles/` inside the profile. Read
-the profile name from `$HERMES_HOME/profiles/` rather than guessing it; the
-digest is not reconstructable by eye.
+`$HERMES_HOME/profiles/argus-<repo-slug>-<16 hex of the repo path digest>`, and
+registers the repo's `.argus/skills` in that profile's `config.yaml`. The
+profile is a directory under the home — it is not itself a `HERMES_HOME`, and
+pointing `HERMES_HOME` at it makes Hermes look for `profiles/` inside the
+profile. Read the profile name rather than guessing it; the digest is not
+reconstructable by eye:
+
+```sh
+hermes profile list
+```
+
+Before #102 that listing was empty of Argus profiles and `hermes profile use`
+refused them: the generated name ran past Hermes' 64-character limit
+(`^[a-z0-9][a-z0-9_-]{0,63}$`), so every profile `argus up` wrote was inert.
+If you are on an older checkout, or `list` does not show the profile you
+expect, check the name length before anything else — and note that
+`hermes profile show` and `describe` will happily succeed on a name that
+`use` refuses, so neither is a usability check.
 
 To drive a batch unattended, run Hermes headless with this skill selected:
 
