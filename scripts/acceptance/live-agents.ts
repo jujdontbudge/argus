@@ -430,7 +430,7 @@ try {
   console.log("\n  the REAL Retro eye over the same live work:");
   for (const meta of metas) {
     if (meta.cwd !== undefined) {
-      retro.observeSession({ sessionId: meta.sessionId, cwd: meta.cwd });
+      await retro.observeSession({ sessionId: meta.sessionId, cwd: meta.cwd });
     }
   }
   await retro.ingest(records);
