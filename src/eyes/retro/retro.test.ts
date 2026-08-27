@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createBrainCap } from "../cap";
+import { createCodexBrain } from "../brain";
+import type { StuckAlert } from "../backpressure";
 import { loadScaledMs } from "../test-budget";
 import { applyDigestUpdate } from "../digest/outputs";
 import type { ProvenanceRecord } from "../../provenance";
@@ -181,6 +183,165 @@ const filedIssue = (gh: FakeGh) =>
   gh.issues.find((issue) => issue.labels.includes("retro"));
 
 describe("the Retro watcher's production tick path", () => {
+  test("watcher shutdown interrupts a hung brain and releases its cap slot", async () => {
+    const place = await scratch();
+    const gh = createFakeGh({ repo: "JohanSardar/argus" });
+    const controller = new AbortController();
+    const cap = createBrainCap({
+      directory: join(place.root, "brain-slots"),
+      maxConcurrency: 1,
+      pollMs: 1,
+    });
+    let started!: () => void;
+    const spawnStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    try {
+      const eye = await RetroEye.open({
+        repo: place.repo,
+        brain: createCodexBrain({
+          attemptTimeoutMs: 100,
+          model: "gpt-5.6-luna",
+          reasoningEffort: "low",
+          spawn: async () => {
+            started();
+            return await new Promise(() => {});
+          },
+        }),
+        cap,
+        cadence: { quietWindowSeconds: 60, maxWaitSeconds: 600 },
+        gh: gh.run,
+        signal: controller.signal,
+        sleep: async () => {},
+      });
+      await eye.prime();
+      await place.commit(
+        "src/hung.ts",
+        "export const hung = true;\n",
+        "implementation whose brain hangs",
+      );
+
+      const scan = eye.scan();
+      await spawnStarted;
+      controller.abort();
+      const observed = await Promise.race([
+        scan.then(
+          () => "resolved" as const,
+          (error: unknown) => error,
+        ),
+        Bun.sleep(20).then(() => "test-watchdog" as const),
+      ]);
+      if (observed === "test-watchdog") await scan.catch(() => {});
+
+      expect(observed).not.toBe("test-watchdog");
+      expect(observed).toBeInstanceOf(Error);
+      expect((observed as Error).name).toBe("AbortError");
+      const release = await Promise.race([
+        cap.acquire(),
+        Bun.sleep(20).then(() => "cap-watchdog" as const),
+      ]);
+      expect(release).not.toBe("cap-watchdog");
+      if (typeof release === "function") await release();
+    } finally {
+      await place.cleanup();
+    }
+  }, BUDGET_MS);
+
+  test("timed-out brains alert, retry without dropping work, and return to the RSS boundary", async () => {
+    const place = await scratch();
+    const gh = createFakeGh({ repo: "JohanSardar/argus" });
+    const slots = join(place.root, "brain-slots");
+    const cap = createBrainCap({ directory: slots, maxConcurrency: 1, pollMs: 1 });
+    const fixture = fixtureRetroBrain();
+    const alerts: StuckAlert[] = [];
+    const failures: string[] = [];
+    let attempts = 0;
+    let now = 0;
+    let rssCeilingChecks = 0;
+    try {
+      const brain = createCodexBrain({
+        attemptTimeoutMs: 20,
+        model: "gpt-5.6-luna",
+        reasoningEffort: "low",
+        spawn: async (request) => {
+          attempts += 1;
+          if (attempts <= 2) return await new Promise(() => {});
+          const outcome = await fixture.evaluate({
+            prompt: request.stdin,
+            schema: {},
+            cwd: place.repo,
+          });
+          if (!outcome.ok) throw new Error(outcome.detail);
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              type: "item.completed",
+              item: { type: "agent_message", text: outcome.text },
+            }),
+            stderr: "",
+          };
+        },
+      });
+      const eye = await RetroEye.open({
+        repo: place.repo,
+        brain,
+        cap,
+        cadence: { quietWindowSeconds: 60, maxWaitSeconds: 600 },
+        gh: gh.run,
+        now: () => now,
+        // One failed-attempt backoff crosses the real 15-minute alert bar
+        // without making this test wait on wall time.
+        sleep: async () => {
+          now += 15 * 60_000 + 1;
+        },
+        onAlert: (alert) => {
+          alerts.push(alert);
+        },
+        onFailure: ({ lastError }) => {
+          failures.push(lastError);
+        },
+      });
+      await eye.prime();
+      await place.commit(
+        "src/survives.ts",
+        "export const survives = true;\n",
+        "implementation survives a hung brain",
+      );
+
+      // src/watch.ts checks RSS immediately after each awaited tick. This
+      // counter pins that a previously hung tick settles back at that boundary.
+      const watcherTick = async (): Promise<RetroFiling[]> => {
+        const filings = await eye.scan();
+        rssCeilingChecks += 1;
+        return filings;
+      };
+      const filings = await watcherTick();
+
+      expect(attempts).toBe(3);
+      expect(failures).toHaveLength(2);
+      expect(failures.every((failure) => failure.includes("timed out after 20ms"))).toBe(
+        true,
+      );
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0]).toMatchObject({
+        type: "eye-stuck",
+        eye: "retro",
+        attempts: 2,
+        stuckForMs: 15 * 60_000 + 1,
+      });
+      expect(filings).toHaveLength(1);
+      expect(rssCeilingChecks).toBe(1);
+      expect(await readdir(slots)).toEqual([]);
+      const release = await cap.acquire();
+      await release();
+
+      expect(await watcherTick()).toEqual([]);
+      expect(rssCeilingChecks).toBe(2);
+    } finally {
+      await place.cleanup();
+    }
+  }, BUDGET_MS);
+
   test("startup priming preserves work that lands before the first scheduled tick", async () => {
     const place = await scratch();
     const gh = createFakeGh({ repo: "JohanSardar/argus" });

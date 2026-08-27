@@ -668,6 +668,7 @@ export class RetroEye {
         prompt: buildDriftPrompt(questions),
         schema: DRIFT_OUTPUT_SCHEMA,
         cwd: this.options.repo,
+        ...(this.options.signal !== undefined && { signal: this.options.signal }),
       });
     } catch (error) {
       // A brain is supposed to REPORT failure, not throw it. One that throws
@@ -769,6 +770,7 @@ export class RetroEye {
         prompt: buildPrompt(signals, this.state.prompts, candidates),
         schema: RETRO_OUTPUT_SCHEMA,
         cwd: this.options.repo,
+        ...(this.options.signal !== undefined && { signal: this.options.signal }),
       });
       if (!outcome.ok) throw new Error(`brain ${outcome.reason}: ${outcome.detail}`);
       const verdict = parseRetroVerdict(outcome.text);
@@ -982,6 +984,8 @@ export class RetroEye {
 /** Pieces `openRetro` composes from config that a caller may substitute. */
 export interface OpenRetroOverrides {
   brain?: Brain;
+  /** Per-attempt `codex exec` deadline; defaults to brain.ts's measured 2 min. */
+  brainAttemptTimeoutMs?: number;
   capDirectory?: string;
   gh?: GhRunner;
   git?: GitRunner;
@@ -1014,6 +1018,9 @@ export async function openRetro(
         }),
         model: config.retro.brain.model,
         reasoningEffort: config.retro.brain.reasoningEffort,
+        ...(overrides.brainAttemptTimeoutMs !== undefined && {
+          attemptTimeoutMs: overrides.brainAttemptTimeoutMs,
+        }),
       }),
     cap: createBrainCap({
       directory: overrides.capDirectory ?? defaultBrainSlotsDirectory(),
