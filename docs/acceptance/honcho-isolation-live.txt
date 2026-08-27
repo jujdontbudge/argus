@@ -1,0 +1,160 @@
+==============================================================================
+TRANSCRIBED FROM A GITHUB COMMENT — NOT A FRESH RUN
+==============================================================================
+This file is NOT a measurement. Every number and quotation below was recorded
+by the author of ticket #76 in a comment on that issue, and is copied here by
+ticket #101 so that it survives `git clone`. Nothing here was re-executed.
+
+  source        github.com/JohanSardar/argus issue #76, comment by JohanSardar
+  comment date  2026-08-26T10:50:53Z  (implementation) and 2026-08-26T10:56:54Z (merge)
+  transcribed   2026-08-26 by ticket #101
+  code state    the run was made on `build/slots-9-10` @ 33d0f80, merged as
+                69caf8e. `main` is ~15 merges past that as of transcription.
+
+A transcription is WEAKER EVIDENCE THAN A FRESH RUN. It cannot be diffed
+against the code it describes, because nobody re-derived it from the code. If
+you need to know whether ARGUS_LIVE_HONCHO still behaves this way, run it —
+do not cite this file.
+
+  gate      ARGUS_LIVE_HONCHO   (src/eyes/live-gate.ts:7)
+  driver    src/harness/honcho-isolation.ts, slot `9-live`
+  opened by ARGUS_LIVE_HONCHO=1 bun test src/harness/honcho-isolation.test.ts
+            src/eyes/honcho/live.test.ts
+
+------------------------------------------------------------------------------
+1. THE GATE TABLE, VERBATIM FROM THE COMMENT
+------------------------------------------------------------------------------
+  default (`bun test`), ARGUS_LIVE_HONCHO unset
+      `9-live` SKIPPED (`gate-unset`), banner printed on every run; slot 10's
+      peer eyes run unconditionally — no gate, no agent call
+
+  ARGUS_LIVE_HONCHO=1, local Honcho at localhost:8000 healthy, credential in
+  ~/.honcho/config.json
+      `9-live` RUN, passes, ~3s
+
+  ARGUS_LIVE_HONCHO=1, no service/credential
+      NOT RUN with the reason, never a silent pass
+
+The three states are #43's `gate-unset` / `run` / `not-run`. This gate is one
+of the few where all three were explicitly exercised and tabulated.
+
+------------------------------------------------------------------------------
+2. WHAT THE LIVE SLOT PROVED — quoted, because the restraint is the substance
+------------------------------------------------------------------------------
+Slot 9 BEFORE: the core slot was STRUCTURAL with `13.9.query-workspace`
+UNCOVERED — no Honcho workspace was queried anywhere in the slot.
+
+Slot 9 AFTER: the core fixture slot is UNCHANGED — still STRUCTURAL, still
+doubles `agent, brain, honcho`, still 0 covered / 2 partial / 1 uncovered. What
+is new is an ADDITIVE, separately graded slot `9-live`.
+
+  `9-live`, when ARGUS_LIVE_HONCHO=1 and a local instance is reachable:
+  STRUCTURAL, doubles `agent, brain`, 1 covered / 2 partial / 1 uncovered.
+
+On why it did NOT reach LIVE, verbatim:
+
+  "It does NOT reach LIVE, and that is the honest answer, not a shortfall I
+   failed to close. #63's LIVE means evidence recorded from an agent the
+   scenario itself spawned, via `recordLiveEvidence`. This slot spawns none —
+   its messages come from the fixture provenance driver, classified by the real
+   classifier. Widening LIVE to mean 'some real dependency was involved' would
+   buy the slot a better-looking word by deleting the property that makes every
+   other verdict worth reading. So it drops only the `honcho` double, which is
+   the one SPEC §13.9 is actually about, and keeps `agent` and `brain`."
+
+What the live evidence established that the fixture could not:
+
+  * Both sandbox repos ingested through the production `HonchoEye` with
+    `HttpHonchoClient` pointed at the URL each repo's OWN `argus up` binding
+    names.
+  * The workspaces are queried back OUT of the live service: its server-side
+    peer filter returns exactly Johan's typed message; the agent decoy and the
+    Hermes nudge sit on their own peers.
+  * Each workspace holds exactly the four messages its eye sent.
+  * Neither repo's words appear in the other's workspace — "answered by Honcho,
+    not by an array this harness owns."
+  * Scratch workspaces deleted afterwards; the service accepts the delete and
+    drains within ~20s; verified 0 leftovers.
+
+------------------------------------------------------------------------------
+3. WHAT STAYED PARTIAL OR UNCOVERED, BY NAME
+------------------------------------------------------------------------------
+  13.9.representation-johan-only          PARTIAL
+    Honcho's Deriver waits for 512 tokens or 30 minutes; the drive is four short
+    messages per repo and stays under that threshold ON PURPOSE. The
+    representation endpoint is queried and printed verbatim (it returns "") and
+    that emptiness is reported as what it is. Quoted: "Asserting 'no foreign
+    content in an empty representation' as coverage would be slot 10's
+    dormant-directory mistake in a new file. What is proven live is ATTRIBUTION
+    AND SCOPE, not derivation."
+
+  13.9.repo-isolation                     PARTIAL, inherited
+    The two sandboxes still get different HERMES_HOMEs and different basenames,
+    so AUDIT.md §4 item 11's `argus-<basename>` collision is still not
+    exercised.
+
+  13.9.johan-representation-live-agent    UNCOVERED by design
+    No live session's words have ever been shown to route correctly on a real
+    instance; closing it needs a subscription call this property does not
+    require.
+
+------------------------------------------------------------------------------
+4. THE ANTI-SILENT-PASS PROPERTY
+------------------------------------------------------------------------------
+Quoted, because it is the property that makes the gate trustworthy:
+
+  "No fixture fallback, no seam. The scenario takes no client parameter. With
+   the gate shut or the service absent it FAILS its first assertion — 'a real
+   Honcho instance is reachable — this slot never falls back to a fixture' —
+   and that anti-silent-pass property is itself asserted on the default path.
+   No fake spawner, no mock driver, no evidence seam was added anywhere."
+
+------------------------------------------------------------------------------
+5. SLOT 10, RECORDED IN THE SAME RUN (no gate — costs no agent call)
+------------------------------------------------------------------------------
+Included because it shares the commit and the comment, though it is ungated.
+
+  BEFORE  STRUCTURAL, doubles `agent, brain, peer-instance`, 1 covered /
+          1 partial / 0 uncovered. `13.10.no-other-instance-noticed` was
+          PARTIAL: the peer's eyes never started, so "noticed nothing" was
+          asserted of a dormant directory.
+  AFTER   STRUCTURAL, doubles `agent, brain`, 2 covered / 0 partial /
+          0 uncovered. `peer-instance` deleted from the `Double` vocabulary.
+
+  Assertions went 5 -> 12; none was weakened. Four claims now stand about
+  something demonstrably watching, with the peer's five real `argus watch`
+  processes running under the same `WatcherSupervisor` scenario 6 uses:
+    - durable peer `.argus/` state byte-identical across the wipe;
+    - all five pids unchanged and alive — nothing died, nothing restarted;
+    - no eye gained a `lastError` entry;
+    - every heartbeat advanced PAST the wipe (alive != awake), and the peer
+      archiver then archived a message written AFTER the wipe.
+
+  Still uncovered: "this proves a QUIET peer instance noticed nothing, not a
+  BUSY one. A peer mid-session, with its own transcripts in flight, is
+  untested." Slot runs in ~3s.
+
+------------------------------------------------------------------------------
+6. GATE NUMBERS AS REPORTED IN THE COMMENT
+------------------------------------------------------------------------------
+  bun x tsc --noEmit          clean
+  bun test                    889 pass / 17 skip / 0 fail (906 across 125
+                              files, ~120s), foreground
+  ARGUS_LIVE_HONCHO=1 targeted run                7 pass / 0 fail
+  pgrep -f 'bin/bun.*cli\.ts watch' | wc -l       0 after every run
+  leftover Honcho workspaces                      0
+  after merge to main @ 69caf8e                   890 pass / 17 skip / 0 fail
+
+  Census after merge: still 10 of 10 STRUCTURAL, 0 of 10 LIVE.
+
+SPEC §1 items 7 and 8, as reported: the only credential read is a LOCAL
+self-hosted Honcho's bearer token. No Anthropic or OpenAI key is consulted, no
+model is called, and the drive stays under the Deriver's threshold so it cannot
+start one. No missing key produces NOT RUN.
+
+------------------------------------------------------------------------------
+7. WHAT #101 DID NOT DO
+------------------------------------------------------------------------------
+#101 did not re-derive any number above from the code. See
+GATE-EVIDENCE-MAP.md for this gate's currency assessment and
+gate-rerun-101.txt for whether #101 re-ran it fresh.
