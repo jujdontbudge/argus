@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { createCodexBrain, parseCodexOutput, type SpawnRequest } from "./brain";
+import {
+  createCodexBrain,
+  parseCodexOutput,
+  type CodexBrainOptions,
+  type SpawnRequest,
+} from "./brain";
 
 const AGENT_MESSAGE_JSONL = [
   JSON.stringify({ type: "thread.started", thread_id: "t-1" }),
@@ -60,6 +65,36 @@ describe("codex exec --json output parsing (research #8)", () => {
 });
 
 describe("createCodexBrain — the exact researched invocation", () => {
+  test("a hung spawn times out and the brain survives for the next evaluation", async () => {
+    let attempts = 0;
+    const brain = createCodexBrain({
+      attemptTimeoutMs: 20,
+      model: "gpt-5.6-luna",
+      reasoningEffort: "low",
+      spawn: async () => {
+        attempts += 1;
+        if (attempts === 1) return await new Promise(() => {});
+        return { exitCode: 0, stdout: AGENT_MESSAGE_JSONL, stderr: "" };
+      },
+    } as CodexBrainOptions & { attemptTimeoutMs: number });
+
+    const first = await Promise.race([
+      brain.evaluate({ prompt: "p", schema: {}, cwd: "/tmp" }),
+      Bun.sleep(100).then(() => "test-watchdog" as const),
+    ]);
+
+    expect(first).not.toBe("test-watchdog");
+    expect(first).toEqual({
+      ok: false,
+      reason: "spawn-error",
+      detail: "brain attempt timed out after 20ms",
+    });
+    expect(
+      await brain.evaluate({ prompt: "p", schema: {}, cwd: "/tmp" }),
+    ).toMatchObject({ ok: true });
+    expect(attempts).toBe(2);
+  });
+
   test("spawns the lean luna argv with prompt on stdin and the schema in a temp file", async () => {
     const requests: Array<SpawnRequest & { schemaOnDisk: unknown }> = [];
     const brain = createCodexBrain({
