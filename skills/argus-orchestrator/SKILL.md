@@ -38,9 +38,19 @@ Treat `.argus/registry/` as the only provenance authority.
    startup and announced on stdout. Your job is to dispatch through the command
    that guarantees this order, never to reproduce it.
 2. Before every follow-up typed into any worker or Hermes session, append the send
-   record to `.argus/registry/sends.jsonl`. Include the session id, agent, prefixed
-   workspace/surface refs, timestamp, kind, exact logical text intended to land, and
-   the SHA-256 of its normalized UTF-8 content.
+   record to `.argus/registry/sends.jsonl`. Include the session id, agent, the
+   workspace and surface **as UUIDs**, timestamp, kind, exact logical text intended
+   to land, and the SHA-256 of its normalized UTF-8 content.
+
+   **Never persist a short ref in a registry row** (#98/#99). This sentence used to
+   say "prefixed workspace/surface refs" and #99 measured the result: a durable
+   `"workspace":"workspace:1"` sitting in `sends.jsonl`. A registry row outlives the
+   cmux process that minted the ref, refs are renumbered from scratch when cmux
+   restarts, and a ref that resolves to nothing is not an error on 0.62.2 — it is a
+   redirect onto whatever surface is focused. Copy the UUID out of
+   `cmux --id-format both tree --all --json`; `sessions.jsonl` rows written by
+   `argus dispatch` already hold UUIDs, so a follow-up can just carry the row's
+   values through unchanged.
 3. Normalize send content exactly as the matcher does: Unicode NFC; CRLF and CR to
    LF; trailing whitespace stripped from every line; then outer whitespace trimmed.
    Hash that exact result. Log the logical content, not Claude Code's transport
@@ -120,6 +130,17 @@ So: **hold the UUID from `cmux --id-format both tree --all --json` and pass a
 UUID to anything that destroys state.** Re-resolving first is good practice but
 it is not the protection — resolve-then-act is not atomic, and the UUID is what
 makes the gap harmless. Read-only verbs may use whatever ref is convenient.
+
+Argus itself no longer relies on you remembering this (#98). `runCmux` is the
+only place in the tree that spawns `cmux`, and it REFUSES any state-changing
+verb — the three `close-*`, `new-surface`/`new-pane`/`new-split`, every
+`rename-*`, `move-*`, `reorder-*`, `focus-*`, `select-workspace`, `tab-action`,
+`workspace-action` — whose `--workspace`/`--surface`/`--pane`/`--window`/
+`--tab`/`--panel` value is not a raw UUID. It refuses without spawning, exit 1
+with the reason on stderr. `send`/`send-key` are deliberately exempt: their
+redirect costs a stray line rather than a terminal, and they are already
+guarded by resolution. **This does not cover cmux commands YOU type** — you are
+outside that process, so the rule above is still yours to keep.
 
 `list-workspaces` sees only the current window and will miss the workspace
 Argus runs in; `tree --all` is the only whole-machine inventory. Never steal
