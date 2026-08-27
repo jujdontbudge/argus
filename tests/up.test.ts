@@ -120,7 +120,7 @@ describe("argus up", () => {
       expect(result.exitCode).toBe(0);
       expect(requests).toHaveLength(5);
       const workspace = (requests[0]!.body as { id: string }).id;
-      expect(workspace).toMatch(/^argus-scratch-fake-honcho-[a-f0-9]{64}$/);
+      expect(workspace).toMatch(/^argus-scratch-fake-honcho-[a-f0-9]{16}$/);
       expect(result.stdout).toContain(
         `Honcho binding: ${workspace} (created)`,
       );
@@ -332,7 +332,7 @@ description: proves Hermes reads the Argus canonical skills store
     const result = await runUp(repo, env);
     expect(result.exitCode).toBe(0);
     const profile = result.stdout.match(/^Hermes profile: (\S+)$/m)?.[1];
-    expect(profile).toMatch(/^argus-hermes-skills-reader-[a-f0-9]{64}$/);
+    expect(profile).toMatch(/^argus-hermes-skills-reader-[a-f0-9]{16}$/);
     expect(result.stdout).toContain(
       "wiring: Hermes skills binding OK (profile skills.external_dirs includes .argus/skills)",
     );
