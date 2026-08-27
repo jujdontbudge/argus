@@ -1,26 +1,27 @@
 ==============================================================================
-ARGUS LIVE TEST-AGENT DRIVE — ticket #36, RE-DRIVEN by #107
+ARGUS LIVE TEST-AGENT DRIVE — ticket #36, RE-DRIVEN by #107, COMPLETED by #113
 ==============================================================================
-THIS FILE SUPERSEDES THE #36 RUN (2026-08-25, last touched at `bbb317a`).
+THIS FILE SUPERSEDES THE #107 RUN (2026-08-27T05:05Z, HEAD 5d405c0b).
 
-#101's gate × evidence map graded `ARGUS_LIVE_AGENTS` STALE on the grounds
-that this drive "deploys a Codex session through the deployment primitive" as
-it stood before #95/#96/#89. **That reasoning is wrong about this file, and
-the correction matters more than the grade.** `scripts/acceptance/live-agents.ts`
-does not call `deployWorker` at all — it spawns `codex exec` directly and drives
-the tailing, provenance and retro paths over the result. So #95's tab change,
-#96's pre-trust step and #89's `cwd` on the launch line do not touch it. The
-deployment primitive's own staleness is real and is recorded in
-`deploy-primitive.txt`, which is where it belongs.
+#107's run printed "16/16 checks passed" and exited 1 — a fixed-temp-path race
+in `RetroEye.persist` met an un-awaited `observeSession` loop and surfaced as an
+unhandled rejection the drive's own banner could not see. #112 fixed both the
+race and the lying counters, then could not drive this file to the end: the run
+sat in the live Retro brain scan until the 10-minute bash ceiling and honestly
+reported NOT RUN. The four Retro checks at the tail had therefore not been
+observed since #36.
 
-What the re-drive DID find is worse than drift, and it is below in section 6.
+They are observed here. This is the first recorded run of this drive that
+prints 16/16 AND exits 0.
 
 ------------------------------------------------------------------------------
 Identity of the code this file is a record of
 ------------------------------------------------------------------------------
-  HEAD          5d405c0b87c5db2ae53c681b86bbcacb3f3274c9
-  branch        build/evidence-refresh
-  run date      2026-08-27T05:05Z
+  HEAD          501f41e1896a4d8751201722a07ca453a1a1fc75
+  branch        build/live-agents-ceiling
+  run date      2026-08-27T16:08:17Z
+  exit code     0
+  wall clock    07:56 (7m56s)
   gate          ARGUS_LIVE_AGENTS=1  (status `run`, both halves)
   reproduce     env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
                   ARGUS_LIVE_AGENTS=1 bun run scripts/acceptance/live-agents.ts
@@ -28,60 +29,96 @@ Identity of the code this file is a record of
                 half of this gate registers in subscription-drive.test.ts, not
                 here (this script's Claude leg is the OPTIONAL hermetic one)
   bun           1.3.12
-  codex-cli     0.149.1
+  codex-cli     0.150.1   (#107 recorded 0.149.1)
 
   A gate reaching `run` does not make any §13 slot LIVE (#63). This drive
   grades nothing on that axis.
 
 ------------------------------------------------------------------------------
-6. WHAT THE RE-DRIVE FOUND: 16/16 checks passed, and the drive exits 1
+HOW THE CEILING WAS BEATEN, AND WHY IT IS NOT A FIX
 ------------------------------------------------------------------------------
-DRIVEN TWICE, and the two runs disagree about how far the script gets while
-agreeing on the cause. This is a real defect, found by re-driving, and it is
-not fixed here — #107 is an evidence refresh and this needs its own ticket.
+#113 offered three options: checkpoint the drive, bound the Retro scan, or run
+it detached. The drive was run DETACHED with polling — no production code was
+changed to make this run pass. That choice is deliberate on two grounds:
 
-  run 1 (05:03:33Z)  crashed at section 5, before the retro results printed
-  run 2 (05:05:41Z)  printed "LIVE AGENT DRIVE: 16/16 checks passed"
-                     ...and exited 1
+  * The 10-minute ceiling is a property of how a worker invokes bash, not of
+    the drive. Detaching is the only option that satisfies #113's acceptance
+    criterion literally — ONE recorded run printing 16/16 and exiting 0.
+    Checkpointing would have satisfied it by stitching two runs together,
+    which is the opposite of what the criterion asks for.
+  * Bounding the scan means changing `codex exec`'s invocation under ADR-0002's
+    never-drop contract. That is a production design decision, and #113 says
+    plainly: fix the harness, not the finding.
 
-Both raise the same unhandled rejection:
-
-    ENOENT: no such file or directory, rename
-      '<sandbox>/.argus/eyes/retro/state.json.tmp'
-        -> '<sandbox>/.argus/eyes/retro/state.json'
-      at async persist   (src/eyes/retro/retro.ts:977)
-      at async observeSession (src/eyes/retro/retro.ts:436)
-
-CAUSE, and it is two things meeting:
-
-  a. `scripts/acceptance/live-agents.ts:433` calls
-     `retro.observeSession({...})` WITHOUT `await`, inside a loop over the
-     session-metas. Two calls are therefore in flight at once.
-  b. `RetroEye.persist` (`src/eyes/retro/retro.ts:966-978`) writes through a
-     FIXED temp path, `${this.statePath}.tmp`. Two concurrent persists write
-     the same temp file; the first `rename` moves it away and the second gets
-     ENOENT.
-
-The comment on `persist` says "Atomic (temp + rename): a crash can never tear
-the cursor or the ledger". Atomic against a crash, yes. Not safe against a
-second concurrent writer. The repo already has the fix pattern in tree —
-`src/deploy/trust.ts` names its temp file
-`${configPath}.argus.${process.pid}.${randomUUID()}.tmp` for exactly this
-reason — so this is an inconsistency, not an unknown.
-
-WHY #36 DID NOT SEE IT. The same script, the same two session-metas, the same
-race: #36's run won it. A floating promise means the loser surfaces as an
-unhandled rejection rather than as a failed check, so the drive's own
-"16/16 checks passed" banner is blind to it — as is this file's previous
-version, which recorded 16/16 and a `time` line and never recorded an exit
-code. **The exit code is now in the identity block above for that reason.**
-
-The 16/16 body below is run 2's, and every check in it is a genuine pass over
-a live session. The drive's verdict is nonetheless UNRELIABLE until (a) or (b)
-is fixed: on run 1 the same script reported nothing at all.
+The only harness change is a stopwatch (`timed()`), which does not make the
+drive faster — it makes a slow drive legible. That instrumentation is what
+produced the timing evidence below, and the evidence reframes the blocker.
 
 ------------------------------------------------------------------------------
-Verbatim output — run 2 (2026-08-27T05:05:41Z), exit 1
+WHAT THE TIMINGS SHOW: the scan is not slow, it is UNBOUNDED
+------------------------------------------------------------------------------
+  sections 1-4 (four live codex exec sessions)   07:48   <-- 98% of the run
+  retro.prime                                     1.0s
+  retro.observeSession x 2 session-metas          0.0s
+  retro.ingest                                    0.0s
+  retro.scan #1  (LIVE brain, files the retro)    8.1s   <-- the expensive part
+  retro.scan #2  (LIVE brain, re-files nothing)   0.3s
+
+The live Retro brain scan — the section #112 died inside — took EIGHT SECONDS.
+It is not the expensive part of this drive. The four live agent sessions ahead
+of it are: they burn 7m48s of a 10m budget, leaving the Retro tail about two
+minutes of headroom. #112 did not hit a pathologically slow scan; it hit a
+scan whose tail latency exceeded the two minutes that happened to be left.
+
+That is the finding. A median of 8.1s and a #112 observation of >2min from the
+same call, with NO TIMEOUT ANYWHERE on the path, is an unbounded tail — see
+below. Filed as its own ticket; not fixed here.
+
+------------------------------------------------------------------------------
+PRODUCTION HAS NO TIMEOUT ON THE LIVE RETRO BRAIN PATH
+------------------------------------------------------------------------------
+Read end to end, the chain is:
+
+  RetroEye.scan
+    -> judgeSignals            (src/eyes/retro/retro.ts:562)
+    -> retryForever            (src/eyes/backpressure.ts:83)
+    -> evaluateOnce            (src/eyes/retro/retro.ts:762)
+    -> cap.acquire             (src/eyes/cap.ts:110)
+    -> Brain.evaluate          (src/eyes/brain.ts:129)
+    -> defaultSpawn            (src/eyes/brain.ts:108)  -> `codex exec`
+
+Not one link carries a deadline:
+
+  * `defaultSpawn` awaits `child.exited` with no timeout and no AbortSignal.
+    A `codex exec` that never returns is awaited forever.
+  * `createCodexBrain.evaluate` passes no deadline and `openRetro` exposes no
+    knob to set one.
+  * `retryForever` bounds FAILURES, not HANGS. Its stuck-alert (15 min) and its
+    backoff only run when the operation THROWS. An attempt that never returns
+    never throws, so the "eye-stuck" alert that exists precisely to make this
+    loud NEVER FIRES. The one failure mode the alert cannot see is the one
+    with no upper bound.
+  * The daemon's shutdown `signal` is checked only BETWEEN attempts and during
+    the backoff sleep (backpressure.ts:96,113). A hang is inside `operation()`,
+    so SIGTERM sets the abort flag and nothing reads it: `argus watch retro`
+    does not shut down until codex returns.
+  * The watch loop tests `controller.signal.aborted` between ticks
+    (src/watch.ts) — as does its own RSS-ceiling check. An eye hung in a brain
+    call also stops enforcing its own memory ceiling.
+  * Worst: the brain cap is MACHINE-WIDE and only 2 slots (ADR-0002), and a
+    slot is reclaimed as stale only when its owning pid is DEAD. A hung call
+    keeps the eye process alive, so the slot is never reclaimed. Two hung
+    brain calls block every eye in every repo on the machine, permanently.
+
+The codebase knows the pattern — `src/eyes/honcho/live-probe.ts` uses
+`AbortSignal.timeout(500)` and `AbortSignal.timeout(10_000)`, and
+`src/eyes/curator/usage.ts` breaks a lock held past a timeout. The brain path
+is the inconsistency, exactly as the fixed temp path was in #107.
+
+SPEC says nothing about what a live brain call costs or how long it may take.
+
+------------------------------------------------------------------------------
+Verbatim output — 2026-08-27T16:08:17Z, exit 0
 ------------------------------------------------------------------------------
 ARGUS_LIVE_AGENTS=1 — live agent drives are ENABLED (this burns a subscription)
   claude  RUN      gate set and no token is needed — the Claude half runs in subscription mode
@@ -90,21 +127,23 @@ ARGUS_LIVE_AGENTS=1 — live agent drives are ENABLED (this burns a subscription
 ==============================================================================
 ARGUS LIVE TEST-AGENT DRIVE — ticket #36
 ==============================================================================
-sandbox repo   /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-3mWLB7/scratch-argus-harness-3mWLB7
-scratch CODEX_HOME /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-3mWLB7/state/codex-live
+sandbox repo   /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-QfpEHT/scratch-argus-harness-QfpEHT
+scratch CODEX_HOME /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-QfpEHT/state/codex-live
 argus up exit  0
-codex CLI      codex-cli 0.149.1
+codex CLI      codex-cli 0.150.1
+  [00:06] retro.prime …
+  [00:07] retro.prime — 1.0s
 retro eye     primed (live brain, cursor anchored on repo history)
 
 ------------------------------------------------------------------------------
 1. deploy a REAL Codex sol high session (the dispatch prompt)
 ------------------------------------------------------------------------------
   exit 0
-  out| Created [NOTES.md](/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-3mWLB7/worktrees/live-ticket/NOTES.md) with exactly the requested line.
+  out| Created [NOTES.md](/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-QfpEHT/worktrees/live-ticket/NOTES.md) with exactly the requested line.
   out| 
 
-  rollout      /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-3mWLB7/state/codex-live/sessions/2026/08/27/rollout-2026-08-27T00-05-43-01a0419c-167f-7b80-ae95-ba5db5a45e67.jsonl
-  session id   01a0419c-167f-7b80-ae95-ba5db5a45e67
+  rollout      /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-QfpEHT/state/codex-live/sessions/2026/08/27/rollout-2026-08-27T11-09-38-01a043fb-ea7e-71b3-80b8-42cda3736d79.jsonl
+  session id   01a043fb-ea7e-71b3-80b8-42cda3736d79
 
 ------------------------------------------------------------------------------
 2. a registry-LOGGED Hermes nudge into the live session
@@ -120,19 +159,19 @@ retro eye     primed (live brain, cursor anchored on repo history)
 4. a ROGUE unregistered Codex session that commits real work
 ------------------------------------------------------------------------------
   exit 0  (no sessions.jsonl row — unregistered)
-  rogue session id 01a0419c-aa7e-7bd1-ab2b-012693219b82
+  rogue session id 01a04401-938d-7642-8df2-cccad73953b6
 
 ------------------------------------------------------------------------------
 5. what Argus reads back from the transcripts the model wrote
 ------------------------------------------------------------------------------
-  tailed 16 events (14 messages, 2 session-metas) from 2 live rollouts
+  tailed 19 events (15 messages, 2 session-metas) from 2 live rollouts
 
   PASS  the live dispatch prompt is in the normalized stream
   PASS  the logged Hermes nudge is in the normalized stream
   PASS  the unlogged fake-Johan directive is in the normalized stream
   PASS  the live model's own assistant turns are in the normalized stream
-  session-meta 01a0419c cwd=/private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-3mWLB7/worktrees/live-ticket repo=/private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-3mWLB7/scratch-argus-harness-3mWLB7
-  session-meta 01a0419c cwd=/private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-3mWLB7/worktrees/live-rogue repo=/private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-3mWLB7/scratch-argus-harness-3mWLB7
+  session-meta 01a043fb cwd=/private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-QfpEHT/worktrees/live-ticket repo=/private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-QfpEHT/scratch-argus-harness-QfpEHT
+  session-meta 01a04401 cwd=/private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-QfpEHT/worktrees/live-rogue repo=/private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-QfpEHT/scratch-argus-harness-QfpEHT
   PASS  the live session's worktree cwd maps to the parent sandbox repo (SPEC §7.3)
 
   PASS  §13.4 — the live dispatch prompt classifies Hermes-authored
@@ -143,38 +182,28 @@ retro eye     primed (live brain, cursor anchored on repo history)
   PASS  §13.5 — the attach surfaces as a loud johan-attached audit, never silence
 
   git scan: 3 roots, rogue=3, attributed=0
-    ROGUE 076b2815 harness sandbox
-    ROGUE 03bcb8e7 feat: document the rate limiter
+    ROGUE 55ef9df7 harness sandbox
+    ROGUE e206c7a0 feat: document the rate limiter
   PASS  §13.3 — the live rogue commit is unattributable and becomes retro signal
   PASS  §13.3 — the registered ticket session's own worktree files no retro
 
   the REAL Retro eye over the same live work:
-972 |         { ...this.state, window: this.coalescer.pendingWindow() },
-973 |         null,
-974 |         2,
-975 |       ),
-976 |     );
-977 |     await rename(temporary, this.statePath);
-                ^
-ENOENT: no such file or directory, rename '/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-3mWLB7/scratch-argus-harness-3mWLB7/.argus/eyes/retro/state.json.tmp' -> '/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-3mWLB7/scratch-argus-harness-3mWLB7/.argus/eyes/retro/state.json'
-    path: "/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-3mWLB7/scratch-argus-harness-3mWLB7/.argus/eyes/retro/state.json.tmp",
-    dest: "/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-3mWLB7/scratch-argus-harness-3mWLB7/.argus/eyes/retro/state.json",
- syscall: "rename",
-   errno: -2,
-    code: "ENOENT"
-
-      at async persist (/Users/johansardar/argus-worktrees/evidence-refresh/src/eyes/retro/retro.ts:977:11)
-      at async observeSession (/Users/johansardar/argus-worktrees/evidence-refresh/src/eyes/retro/retro.ts:436:16)
-  retro audit {"type":"tracker-less","signalId":"retro-097cd3e9c441de0f","title":"Retro: Documented rate limiter","where":"/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-3mWLB7/scratch-argus-harness-3mWLB7/.argus/eyes/retro/unfiled/retro-097cd3e9c441de0f.md"}
-  retro audit {"type":"scope-drift-not-filed","candidateId":"drift-dcbbea386a850f9e","ticket":"36","reason":"tracker-less mode: a ticket's stated scope cannot be read, so the scope question cannot be asked"}
-    digest-note  "Retro: Documented rate limiter"  parent=none rule=root-level reason=tracker-less mode: no GitHub tracker for this repo
+  [07:48] retro.observeSession × session-metas …
+  [07:48] retro.observeSession × session-metas — 0.0s
+  [07:48] retro.ingest …
+  [07:48] retro.ingest — 0.0s
+  [07:48] retro.scan #1 (LIVE brain) …
+  retro audit {"type":"tracker-less","signalId":"retro-1844a4e36a99ba89","title":"Retro: Documented the rate limiter","where":"/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-QfpEHT/scratch-argus-harness-QfpEHT/.argus/eyes/retro/unfiled/retro-1844a4e36a99ba89.md"}
+  retro audit {"type":"scope-drift-not-filed","candidateId":"drift-236f7954f6830472","ticket":"36","reason":"tracker-less mode: a ticket's stated scope cannot be read, so the scope question cannot be asked"}
+  [07:56] retro.scan #1 (LIVE brain) — 8.1s
+    digest-note  "Retro: Documented the rate limiter"  parent=none rule=root-level reason=tracker-less mode: no GitHub tracker for this repo
   PASS  §13.3 — the primed eye files exactly one retro (repo history is not accused)
   PASS  §13.3 — the retro the LIVE brain wrote names the rogue work
   PASS  §13.3 — tracker-less sandbox degrades LOUDLY to a digest note, never silence
+  [07:56] retro.scan #2 (LIVE brain) …
+  [07:56] retro.scan #2 (LIVE brain) — 0.3s
   PASS  §13.3 — a second sweep re-files nothing
 
 ==============================================================================
-LIVE AGENT DRIVE: 16/16 checks passed
+LIVE AGENT DRIVE: 16/16 checks passed  (wall clock 07:56)
 ==============================================================================
-
-Bun v1.3.12 (macOS arm64)
