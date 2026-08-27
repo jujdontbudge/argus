@@ -112,14 +112,23 @@ log "watchdog pid $(cat "$SCRATCH/watchdog.pid") hard deadline $(date -r "$HARD_
 # gained over five minutes (50 MiB/min fleet-wide) — twenty times below the
 # incident signature and far above anything a healthy fleet does, so it aborts
 # on a real leak long before it costs Johan anything.
+#
+# The guard is DISARMED for the first GUARD_ARM_MIN minutes. A fleet starting
+# from nothing climbs from 0 to its working set within a minute, which is a
+# 700+ MiB "gain" that means nothing; arming immediately would abort every run
+# on its own warm-up. Ten minutes is well past the initial catchUp and well
+# inside any real leak's runway to the ceiling.
 ABORT_GAIN_MIB=250
+GUARD_ARM_MIN=10
 GUARD_WINDOW=$(( 300 / INTERVAL_S ))
 [ "$GUARD_WINDOW" -lt 2 ] && GUARD_WINDOW=2
+GUARD_ARMED_AT=$(( NOW + GUARD_ARM_MIN * 60 ))
 
 while [ "$(date +%s)" -lt "$SOFT_DEADLINE" ]; do
   sleep 15
   [ -f "$SCRATCH/STOP" ] && { log "STOP file present; ending"; break; }
   kill -0 "$SUPERVISOR_PID" 2>/dev/null || { log "supervisor died; ending"; break; }
+  [ "$(date +%s)" -lt "$GUARD_ARMED_AT" ] && continue
   window=$(tail -n "$GUARD_WINDOW" "$SCRATCH/series.jsonl" 2>/dev/null \
     | grep -o '"totalRssMiB":[0-9.]*' | grep -o '[0-9.]*')
   [ -z "$window" ] && continue

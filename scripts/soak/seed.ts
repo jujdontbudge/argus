@@ -26,10 +26,21 @@ const repo = join(root, "repo");
 const codexSessions = join(home, ".codex", "sessions", "2026", "08", "26");
 const claudeProjects = join(home, ".claude", "projects", "-scratch-soak-repo");
 
-const CODEX_FILES = 20;
-const CODEX_BYTES_PER_FILE = 1024 * 1024;
-const CLAUDE_FILES = 4;
-const CLAUDE_BYTES_PER_FILE = 512 * 1024;
+/**
+ * Sized from a measured smoke run, not from taste. At 23 MiB of seeded
+ * history the FIRST catchUp — which returns every backlogged record in one
+ * batch — pushed digest to 619 MiB and reviewer to 528 MiB and tripped the
+ * 512 MiB ceiling, restarting both. That is a cold-start property of an
+ * unbounded backlog, and the ticket is explicit that cold-start numbers are
+ * not the question; letting it stand would have scored a seeding artefact as
+ * a ceiling failure. ~5 MiB keeps the warm-up peak near 150 MiB/eye while
+ * still making a #86 regression unmissable: re-reading 5 MiB at a 250 ms poll
+ * is 20 MiB/s per eye, roughly six times the incident's own growth rate.
+ */
+const CODEX_FILES = Number(process.env.ARGUS_SOAK_CODEX_FILES ?? 8);
+const CODEX_BYTES_PER_FILE = Number(process.env.ARGUS_SOAK_CODEX_BYTES ?? 512 * 1024);
+const CLAUDE_FILES = Number(process.env.ARGUS_SOAK_CLAUDE_FILES ?? 4);
+const CLAUDE_BYTES_PER_FILE = Number(process.env.ARGUS_SOAK_CLAUDE_BYTES ?? 256 * 1024);
 
 /** Deterministic filler: no Math.random, so a reseed reproduces byte-for-byte. */
 function filler(seed: number, words: number): string {

@@ -22,7 +22,7 @@
  *   search   a query that degrades over hours, likewise.
  */
 import { Database } from "bun:sqlite";
-import { appendFileSync, statSync } from "node:fs";
+import { appendFileSync, readFileSync, statSync } from "node:fs";
 import { loadavg } from "node:os";
 import { join } from "node:path";
 
@@ -30,13 +30,14 @@ const [, , scratchRoot, intervalArgument, deadlineArgument, ownerArgument] = pro
 if (!scratchRoot || !intervalArgument || !deadlineArgument || !ownerArgument) {
   throw new Error("usage: sampler.ts <scratch-root> <interval-ms> <deadline-epoch-ms> <owner-pid>");
 }
+const root: string = scratchRoot;
 const intervalMilliseconds = Number(intervalArgument);
 const deadline = Number(deadlineArgument);
 const owner = Number(ownerArgument);
 
-const repo = join(scratchRoot, "repo");
-const seriesPath = join(scratchRoot, "series.jsonl");
-const statusPath = join(scratchRoot, "supervisor-status.json");
+const repo = join(root, "repo");
+const seriesPath = join(root, "series.jsonl");
+const statusPath = join(root, "supervisor-status.json");
 const archivePath = join(repo, ".argus", "archive.db");
 const startedAt = Date.now();
 
@@ -134,7 +135,7 @@ function archiveMetrics(): {
 
 function restartCount(): number | null {
   try {
-    const log = require("node:fs").readFileSync(join(scratchRoot, "supervisor.log"), "utf8") as string;
+    const log = readFileSync(join(root, "supervisor.log"), "utf8");
     return (log.match(/exited with code/g) ?? []).length;
   } catch {
     return null;
