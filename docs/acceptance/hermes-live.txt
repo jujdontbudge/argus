@@ -1,6 +1,16 @@
 ==============================================================================
 ARGUS LIVE HERMES VERIFICATION — ticket #47
 ==============================================================================
+HEADER ADDED BY #108. The `real` half this file records as NOT RUN was
+investigated in 2026-08-27 and is now CLOSED as a PERMANENT STRUCTURAL LIMIT,
+not a to-do — see `hermes-real-108.txt`. Do not re-open it; every route to the
+profile it needs writes the real ~/.hermes. The scratch half below was
+re-driven at HEAD 81f6cf9 and still passes, against the same
+`Hermes Agent v0.16.0 (2026.6.5) · upstream 9e484f05` and the same
+`schema_version 15` — NO DRIFT on either anchor. Research §7's caveat has since
+been checked in its POSITIVE form too, against 45,295 real assistant rows read
+out of a clonefile of Johan's own state.db (#108 §4).
+==============================================================================
 run on         2026-08-25, this machine
 gate           ARGUS_LIVE_HERMES=1
 hermes CLI     Hermes Agent v0.16.0 (2026.6.5) · upstream 9e484f05

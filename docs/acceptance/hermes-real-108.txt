@@ -1,0 +1,423 @@
+==============================================================================
+TICKET #108 — THE `real` HALF OF ARGUS_LIVE_HERMES IS A PERMANENT STRUCTURAL
+LIMIT. IT IS NOT A TO-DO. DO NOT RE-OPEN IT.
+==============================================================================
+This file is a DECISION, backed by measurements. It does not close the `real`
+half and does not pretend to. It records why that half cannot be run on this
+machine under the house rules, what was measured on the way to that answer, and
+which claim — exactly one — is left standing on something other than it.
+
+  run on          2026-08-27, this machine
+  worktree        /Users/johansardar/argus-worktrees/hermes-real
+  branch          build/hermes-real
+  HEAD            81f6cf9739cded161eb02bc43426245accc6d864  (merge of #105)
+  bun             1.3.12
+  macOS           26.5.2
+  load at start   2.85 / 3.67 / 3.74
+  contention      #112 ran concurrently on build/retro-race. Nothing here
+                  started a watcher fleet, created a cmux workspace, or wrote
+                  anything under the real ~/.hermes.
+
+------------------------------------------------------------------------------
+0. THE VERSION LINE — CHECKED FIRST, BECAUSE ATTRIBUTION DEPENDS ON IT
+------------------------------------------------------------------------------
+GATE-EVIDENCE-MAP.md notes that `hermes-live.txt`'s version line is what makes a
+future break attributable, and asks for it to be checked before the §7 caveat
+it records is trusted. Both anchors are UNMOVED:
+
+                      hermes-live.txt (#47, 2026-08-25)   installed, 2026-08-27
+  hermes --version    Hermes Agent v0.16.0 (2026.6.5)     Hermes Agent v0.16.0
+                        · upstream 9e484f05                 (2026.6.5)
+                                                            · upstream 9e484f05
+  state.db schema     15                                   15
+
+  binary              /Users/johansardar/.local/bin/hermes
+  project             /Users/johansardar/.hermes/hermes-agent
+  python              3.11.14 · OpenAI SDK 2.24.0
+
+NO DRIFT on either anchor, so #47's §7 caveat is still held against the Hermes
+that is installed, and #100's shape canary has nothing to attribute. The schema
+number is the same one read two independent ways: off the scratch profile the
+gate provisions (§2 below), and off Johan's real 2.8 GB `state.db` (§4). Both 15.
+
+------------------------------------------------------------------------------
+1. WHAT THE `real` HALF ACTUALLY NEEDS — READS vs WRITES, ENUMERATED
+------------------------------------------------------------------------------
+The half's precondition is one line, `hermes-live-gate.ts:276` (`findRealProfile`):
+
+    ~/.hermes/profiles/argus-*/state.db   holding a row with
+                                          role='assistant' AND active=1
+
+Its READ side is already as safe as it can be made, and was never the problem:
+
+  READ   findRealProfile     opens `mode=ro&immutable=0` + SQLITE_OPEN_READONLY
+                             — cannot create, cannot upgrade a schema, cannot
+                             checkpoint a WAL. It is the ONLY function in the
+                             live Hermes path that touches the real home.
+  READ   createHermesSource  `listFiles` reads `<root>/profiles`; the reader
+                             opens the same read-only URI.
+
+So the half is not blocked on reading. It is blocked on the directory existing.
+Nothing on this machine can bring `~/.hermes/profiles/argus-*/state.db` into
+existence without writing the real home. Every route was enumerated:
+
+  ROUTE A — `argus up` against a real (non-scratch) HERMES_HOME.
+    `ensureHermesProfile` (src/up/bindings.ts:727) then performs, IN THE REAL TREE:
+      mkdir   ~/.hermes/profiles/argus-<slug>/     MACHINE-WIDE: `profiles/`
+                                                   does not exist today, so this
+                                                   makes the install profile-
+                                                   aware for the first time.
+      mkdir   <repo>/.argus/memory                 per-repo
+      copy    ~/.hermes/config.yaml -> profile/    per-profile
+      copy    ~/.hermes/SOUL.md     -> profile/    per-profile
+      copy    ~/.hermes/.env        -> profile/    CREDENTIAL DUPLICATION.
+                                                   ~/.hermes/.env is 23,594
+                                                   bytes / 484 lines, mode 600,
+                                                   and 4 of its assignments
+                                                   match /(_KEY|_TOKEN|_SECRET|
+                                                   _PASSWORD|_CREDENTIALS)=/.
+                                                   (Counted with grep -c. No
+                                                   value from that file was read
+                                                   or printed by this ticket.)
+      write   profile/config.yaml                  raised memory limits, curator
+                                                   disabled, skills external_dirs
+      symlink profile/memories -> <repo>/.argus/memory
+    and then the installed Hermes bootstraps `state.db` inside it on first run.
+    NONE of these is throw-away-scoped. All land in the real ~/.hermes.
+
+  ROUTE B — `hermes profile create <name>`. MEASURED, in a scratch HERMES_HOME:
+      $ hermes profile create t108probe
+        Profile 't108probe' created at <HH>/profiles/t108probe
+        73 bundled skills synced.
+        Wrapper created: <HOME>/.local/bin/t108probe
+    It writes `profiles/<name>/` with ten subdirectories, syncs 73 skills, and
+    — note the third line — DROPS AN EXECUTABLE WRAPPER INTO $HOME/.local/bin,
+    which is OUTSIDE ~/.hermes entirely and is the same directory Johan's real
+    `hermes` binary lives in. Against the real HOME this is machine-wide and is
+    not even confined to the tree the house rule names.
+
+  ROUTE C — `hermes profile use <name>`. MEASURED, in a scratch HERMES_HOME:
+      $ hermes profile use t108probe
+        Switched to: t108probe
+      files changed:  <HH>/active_profile        <- the sticky machine-wide default
+                      <HH>/logs/agent.log
+                      <HH>/logs/errors.log
+    #102 REFUSED to run this against the real home. That refusal was correct,
+    it is confirmed here by measurement rather than by memory, and #108 DOES NOT
+    UNDO IT. (#102 did run `profile use` — against a scratch HERMES_HOME, which
+    §3 below shows is a different tree entirely.)
+
+  ROUTE D — `hermes profile import` / `install` / `update` / `rename` / `delete`
+    all write by name.
+
+  AND THERE IS NO READ-ONLY hermes SUBCOMMAND AT ALL. MEASURED:
+      $ HERMES_HOME=<fresh empty scratch> hermes profile list
+        (prints a table, rc=0)
+      $ find <HH>
+        <HH>/logs/agent.log      <- created
+        <HH>/logs/errors.log     <- created
+      $ HERMES_HOME=<second fresh empty scratch> hermes profile info
+        usage: hermes profile info [-h] profile_name
+        hermes profile info: error: the following arguments are required: ...
+      $ find <HH>
+        <HH>/logs/agent.log      <- created ANYWAY
+        <HH>/logs/errors.log     <- created ANYWAY
+    An invocation that dies in ARGPARSE still opens and creates two log files
+    under its HERMES_HOME. So `hermes profile info`, the one #102 called
+    read-only, is read-only with respect to PROFILES but not with respect to
+    HERMES_HOME. Run against the real home it would append to ~/.hermes/logs/.
+    That is minor next to `active_profile`, but it means the correct rule is
+    "no hermes subcommand may be pointed at the real home", not "only avoid
+    `profile use`".
+
+------------------------------------------------------------------------------
+2. THE SCRATCH HALF, RE-DRIVEN AT THIS HEAD (it was graded STALE)
+------------------------------------------------------------------------------
+  $ ARGUS_LIVE_HERMES=1 bun test src/tailing/hermes.live.test.ts
+
+  ARGUS_LIVE_HERMES=1 — the live Hermes verification is ENABLED (it provisions
+  and drives a scratch profile)
+    scratch  RUN      gate set and the hermes CLI is on PATH
+    real     NOT RUN  no ~/.hermes/profiles/argus-*/state.db holds an assistant
+                      row — a real profile appears the first time Argus is
+                      deployed on a repo
+    verified against Hermes Agent v0.16.0 (2026.6.5) · upstream 9e484f05
+                     · state.db schema 15
+
+   2 pass  1 skip  0 fail  8 expect() calls   [27.66s]
+
+The skip is the `real` half, and it is the honest one. 27.66s against #47's
+28.3s. `~/.hermes/profiles` did not exist before this drive and does not exist
+after it — the test asserts that itself, and §5 re-checks it independently.
+
+------------------------------------------------------------------------------
+3. IS `HERMES_HOME`-AT-SCRATCH A REAL DRIVE, OR THE SCRATCH HALF RENAMED?
+    ==> IT IS THE SCRATCH HALF, AND NOT EVEN RENAMED. IT IS LITERALLY IT.
+------------------------------------------------------------------------------
+This was the whole question, and it has a flat answer.
+
+  (a) The scratch half ALREADY IS "HERMES_HOME at scratch". `hermesDriveEnv`
+      (hermes-live-gate.ts) sets, unconditionally and last so no ambient value
+      can win:
+          env.HERMES_HOME = drive.hermesHome    <- the scratch profile directory
+          env.HOME        = drive.home          <- the scratch home
+      There is no second thing for a "HERMES_HOME at scratch" run to be.
+
+  (b) HERMES_HOME CANNOT MOVE THE `real` HALF AT ALL. `REAL_HERMES_ROOT` is
+      `join(homedir(), ".hermes")`; the env var is never consulted. MEASURED,
+      with HERMES_HOME pointed at a tree that DOES contain a qualifying profile:
+
+        HERMES_HOME env             /private/tmp/t108-hermes/probe-real
+        HOME env                    /Users/johansardar
+        os.homedir()                /Users/johansardar
+        REAL_HERMES_ROOT            /Users/johansardar/.hermes
+        probe.realProfile           undefined
+        gate.real                   not-run
+        findRealProfile(that tree)  <tree>/profiles/argus-real-108/state.db
+
+      The last two lines together are the proof: the profile is right there and
+      findRealProfile finds it when asked directly — and the GATE still says
+      not-run, because the gate never asks about HERMES_HOME.
+
+  (c) THE ONE LEVER THAT DOES MOVE IT IS `HOME`, AND USING IT WOULD BE A
+      MANUFACTURED PASS. `os.homedir()` honours $HOME. MEASURED:
+
+        HOME env                    /private/tmp/t108-hermes/fakehome
+        os.homedir()                /private/tmp/t108-hermes/fakehome
+        REAL_HERMES_ROOT            /private/tmp/t108-hermes/fakehome/.hermes
+        probe.realProfile           <fakehome>/.hermes/profiles/argus-real-108/state.db
+        gate.real                   run — ... holds an assistant row, and is
+                                    opened read-only
+
+      Point HOME at a directory you assembled yourself and the `real` half goes
+      GREEN. THIS IS RECORDED HERE SO THAT NOBODY DISCOVERS IT LATER AND THINKS
+      IT IS THE ANSWER. It is not evidence and #108 REFUSES IT: the half's claim
+      is about a profile a real deployment left in the real home, and the word
+      doing all the work in "real profile" is the LOCATION. Redirect HOME and
+      "real" means "whatever tree the test author built", which is the exact
+      failure #47 was filed to remove — a check that cannot fail.
+
+------------------------------------------------------------------------------
+4. WHAT COULD BE RUN, AND WAS: THE CLAIM UNDER THE HALF, AGAINST REAL BYTES
+------------------------------------------------------------------------------
+The half's TITLE names two claims, and they are separable:
+
+  "a deployed Hermes persists an assistant row  |  the read-only source can tail"
+   ^-- deployment shape, needs the real home        ^-- reader contract, needs
+       and is unrunnable (§1)                           only real Hermes bytes
+
+The second is reachable without writing anything, and this ticket ran it.
+Johan's daily-driver ~/.hermes/state.db is a real Hermes database, written by
+the SAME installed v0.16.0 from turns a real provider really answered. It is
+not in `profiles/` and is not `argus-*`, so the production source will never
+find it in place — `createHermesSource` only ever globs `<root>/profiles/argus-*`
+(hermes.ts:281). So it was CLONED into a scratch tree laid out the way the
+source expects, and the source was driven over the clone.
+
+  $ bun scripts/acceptance/hermes-real-probe.ts --scratch <scratch>
+
+  real   /Users/johansardar/.hermes/state.db
+         ino=6152657 size=2851282944 mtime=1787809867507      <- before
+         ino=6152657 size=2851282944 mtime=1787809867507      <- after
+  clone  <scratch>/profiles/argus-real-108/state.db
+         6.5ms  source UNCHANGED
+
+  schema schema_version.version 15
+  rows   max(id) 95898 · assistant rows with content 45295
+         assistant    45295
+         tool         30644
+         user         19957
+         session_meta 2
+
+  source createHermesSource({ hermesRoot: <scratch> }).listFiles()
+         <scratch>/profiles/argus-real-108/state.db
+         readNewLines(file, 95498) -> 299 lines, next offset 95898
+         session-meta 100 · messages 298 · assistant 199
+
+  assistant row, as the production parser emits it
+         session   cron_6f226580bc84_20260827_005052
+         model     gpt-5.6-sol
+         candidate false
+         chars     8
+
+  VERDICT  a real Hermes assistant row parsed by the unmodified source
+
+  6.5ms for 2.8 GB because `cp -c` is an APFS clonefile: copy-on-write, same
+  volume (both device 16777234), no bytes moved and nothing written to the
+  source. inode/size/mtime identical before and after.
+
+  A MEASUREMENT FALLING OUT OF THIS, WORTH ITS OWN LINE: the first attempt
+  cloned only `state.db` and the read-only open failed —
+
+      SQLiteError: unable to open database file  errno 14  SQLITE_CANTOPEN
+
+  The real database is in WAL mode. A `mode=ro` open of a WAL database with no
+  companion `-shm` cannot proceed, because SQLite would have to CREATE that
+  `-shm` first. So `createHermesSource` pointed at the real ~/.hermes in place
+  would either fail outright or make SQLite write into the real tree. This is a
+  THIRD independent reason the half must not be run in situ, and it is one the
+  house rule did not have to supply.
+
+WHAT §4 ESTABLISHES:  research §7's caveat in its POSITIVE form. A real Hermes
+  DOES persist assistant rows — 45,295 of them — and the unmodified production
+  reader and parser turn them into MessageEvents with role='assistant', with
+  session-meta stitched on and the model resolved. The reader's SQL, its column
+  names, its schema line and its role filter all hold against real v0.16.0
+  output at schema 15.
+WHAT §4 DOES NOT ESTABLISH:  the deployment shape. It says nothing about whether
+  `argus up`'s binding leaves a profile the source discovers in the real home,
+  because the clone's location was chosen by this probe, not by a deployment.
+  §2's scratch drive is what covers the binding, and it covers it against a
+  scratch profile.
+
+------------------------------------------------------------------------------
+5. THE REAL ~/.hermes IS UNDER CONTINUOUS CONCURRENT WRITE — PROVEN BY CONTROL
+------------------------------------------------------------------------------
+`find ~/.hermes -newer <marker>` is NOT a usable "I wrote nothing" proof on this
+machine, and saying so is part of the answer rather than a hedge. A live
+gateway owns the tree:
+
+  pid 1860  started Wed Aug 26 10:24:18 2026  (14 hours before this session)
+            .../venv/bin/python -m hermes_cli.main gateway run --replace
+  pid 3553  node .../whatsapp-bridge/bridge.js --port 3000 ...
+
+CONTROL — a marker was set and NO hermes-touching command was run for 24s:
+
+  $ find ~/.hermes -maxdepth 3 -newer REF-CONTROL      # 00:51:46 -> 00:52:10
+    /Users/johansardar/.hermes
+    /Users/johansardar/.hermes/cron/.tick.lock
+    /Users/johansardar/.hermes/whatsapp/session/creds.json
+
+Three paths moved in twenty-four seconds with this ticket idle. So the untouched
+proof is PATH-SCOPED, not timestamp-scoped, and it is exact:
+
+  ~/.hermes/profiles            absent at session start, absent now, never
+                                created. This is the ONE path any write of this
+                                ticket's would have made, and it does not exist.
+  ~/.hermes/auth.json           da742362b9e49833760e31672d012dd9e894389617a965074a3244eb2b349220
+                                — matches the baseline, before and after.
+  ~/.hermes/state.db            inode 6152657 throughout; opened only via a
+                                clonefile, never writable, never in place.
+  ~/.hermes/.env                stat'd and grep -c'd. Never opened for content,
+                                never copied, no value printed.
+  every hermes invocation       ran with HERMES_HOME and HOME both at scratch,
+                                and §3(b) shows hermes honours HERMES_HOME.
+
+This is also, independently of the house rule, a FOURTH reason the half is not
+runnable as durable evidence: a record taken over a tree that mutates three
+paths a minute could not be held still long enough to mean anything.
+
+------------------------------------------------------------------------------
+6. THE DECISION
+------------------------------------------------------------------------------
+`ARGUS_LIVE_HERMES`'s `real` half is a PERMANENT STRUCTURAL LIMIT ON THIS
+MACHINE. It is not a to-do, not a gap, and not something a future audit should
+re-open. Four independent reasons, each sufficient:
+
+  1. Its precondition is a DIRECTORY, and every route that creates it writes the
+     real ~/.hermes — including a copy of a 484-line credential-bearing `.env`
+     and, via `profile create`, an executable dropped into ~/.local/bin (§1).
+  2. There is no read-only `hermes` subcommand; even one that fails argparse
+     creates two log files under its HERMES_HOME (§1).
+  3. The production reader cannot open the real WAL-mode database read-only
+     without SQLite creating a `-shm` in the real tree (§4).
+  4. The real tree is under continuous concurrent write by a live gateway, so
+     nothing measured over it would be reproducible anyway (§5).
+
+`HERMES_HOME` cannot relax this: it does not reach the `real` half at all (§3b).
+`HOME` can, and doing so would be a manufactured pass, refused (§3c).
+
+WHICH SPEC CLAIM IS LEFT UNVERIFIABLE — exactly one, and it is narrow:
+
+  That `argus up`'s Hermes binding, run against the REAL ~/.hermes, produces a
+  profile the production source discovers and tails in place.
+
+  Not "Hermes persists assistant rows" — §4 settles that against 45,295 real
+  rows.  Not "the source reads them" — §4 settles that through the unmodified
+  reader.  Not "the generated profile name is valid and selectable" — #102
+  settled that against the real binary.  Not "the binding produces a profile
+  Hermes accepts and bootstraps a state.db in" — §2's scratch drive settles
+  that, and #47 already argued the profile "is not a directory invented for the
+  test; it is the one convergeAgentBindings creates on a real deployment".
+
+  What is left is ONLY the substitution of the real root for a scratch root in
+  that binding — a path prefix. The code is identical; `hermesRoot` is a
+  parameter (`src/up/bindings.ts:733`). So the residue is: does anything about
+  the REAL tree specifically (its existing config.yaml, its 484-line .env, its
+  live gateway, the fact that `profiles/` must be created rather than found)
+  make the binding behave differently than it does against an empty scratch
+  root? That is a real question and this ticket cannot answer it.
+
+IS IT COVERED IN SUBSTANCE? Largely, by three neighbours, and the gap that
+remains should be stated plainly rather than rounded to zero:
+
+  §2 / #47's scratch half   the binding, the profile Hermes accepts, the
+                            state.db it bootstraps, and §7's caveat in its
+                            falsifiable negative form — against a scratch root.
+  #102                      the generated name against the real `hermes` binary:
+                            listed, selected, memories symlink resolving. This
+                            is the closest anything has come to the real tree
+                            and it stopped at the same wall.
+  §4 / this ticket          §7's caveat in its POSITIVE form against real bytes,
+                            and #100's shape contract holding at schema 15.
+  #99's redrive             a Hermes drive at the orchestrator level.
+
+  NOT covered: the real-root binding itself. The honest grade is "covered except
+  for a path prefix, and that prefix is exactly what the house rule forbids".
+
+WHAT WOULD HAVE TO CHANGE FOR IT TO BE RUNNABLE — three options, in the order a
+future reader should consider them:
+
+  1. IN THE HOUSE RULES (the only realistic one, and still probably not worth
+     it). Johan deploys Argus on a real repo of his own, for his own reasons.
+     Then `~/.hermes/profiles/argus-<repo>` exists because he wanted it to, the
+     half's precondition is met by his usage rather than by a test, and the half
+     "starts running by itself" exactly as #47 predicted. Nothing in Argus needs
+     to change; the gate is already written to notice. THE RIGHT POSTURE IS TO
+     WAIT FOR THAT, NOT TO ENGINEER IT.
+  2. IN ARGUS. Make `REAL_HERMES_ROOT` injectable rather than
+     `join(homedir(), ".hermes")` — but do NOT do this. It converts a limit into
+     a knob, and §3(c) shows the knob's only use is turning the half green
+     against a tree the caller built. The hardcoding is load-bearing.
+  3. IN HERMES. A genuinely read-only mode — no logs, no `active_profile`, no
+     `-shm` — plus a profile that could be created outside the home. Neither
+     exists at v0.16.0 and neither is Argus's to add.
+
+WHAT #108 REFUSED TO DO
+  - run `hermes profile use` against the real home (#102's refusal, upheld and
+    now measured: it writes `<HERMES_HOME>/active_profile`)
+  - run `argus up`, `hermes profile create`, or any other write against the real
+    ~/.hermes
+  - point `HOME` at a scratch tree to make the `real` half report `run` (§3c)
+  - point `createHermesSource` at the real ~/.hermes in place (§4, WAL/-shm)
+  - open or copy ~/.hermes/.env or ~/.hermes/auth.json for content
+  - print any line of Johan's real transcripts; they are counted, never quoted
+
+------------------------------------------------------------------------------
+7. THE GATE, AT THIS HEAD
+------------------------------------------------------------------------------
+  $ bun install --frozen-lockfile      5 packages installed (@types/bun,
+                                       typescript) — `bun x tsc` on a cold
+                                       node_modules resolves a tsc WITHOUT the
+                                       bun type library and reports a spurious
+                                       TS2688; install first.
+  $ bun x tsc --noEmit                 clean, no diagnostics
+  $ bun test                           1048 pass  21 skip  0 fail
+                                       3654 expect() calls
+                                       1069 tests across 142 files  [144.25s]
+                                       exit 0
+
+  The 21 skips are the live gates left unset by default, each printing its own
+  named skip line. `src/tailing/hermes.live.test.ts` contributes one of them —
+  the `real` half — and after this ticket that skip is a RECORDED DECISION
+  rather than an open item.
+
+------------------------------------------------------------------------------
+8. THE PROBE THIS FILE IS A RECORD OF
+------------------------------------------------------------------------------
+  scripts/acceptance/hermes-real-probe.ts       (committed with this file)
+
+  It is re-runnable and self-checking: it re-fingerprints the real `state.db`
+  after the clone and throws if inode/size/mtime moved. It reads only
+  `state.db`, opens no credential, runs no `hermes` subcommand, and counts
+  Johan's transcript text without ever printing a line of it.
