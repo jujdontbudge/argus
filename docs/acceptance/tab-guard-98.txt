@@ -1,0 +1,238 @@
+==============================================================================
+ARGUS #98 — THE HANDLE FORM, MADE STRUCTURAL
+==============================================================================
+run on          2026-08-26, this machine
+worktree        /Users/johansardar/argus-worktrees/tab-guard  (build/tab-guard)
+cmux            0.62.2 (77) [6c203b514]   <- same build #90 measured
+bun             1.3.12
+model calls     ZERO. Real cmux only.
+gate            none. This is not a gated drive; it is a small live drive run
+                by hand, because the whole change is about what `runCmux` does
+                BEFORE it spawns and that is provable without a gate.
+concurrently    #105's five-watcher soak was live throughout. Load 17.5 at the
+                gate. Nothing in this ticket touched /private/tmp/argus-*.
+
+------------------------------------------------------------------------------
+0. WHAT #90 LEFT STANDING, AND WHAT THIS TICKET DOES ABOUT IT
+------------------------------------------------------------------------------
+#90 (`cmux-door.txt`) measured the mechanism and closed the argument:
+
+  - an unresolvable SHORT REF is not an error on 0.62.2, it is a REDIRECT onto
+    the FOCUSED surface, exit 0;
+  - an unresolvable UUID fails CLOSED (`not_found`, exit 1);
+  - short refs do not remap, but they DO renumber across a cmux restart;
+  - FOCUS MOVES ON ITS OWN — `identify.focused` walked surface:2 -> surface:6
+    -> surface:4 during #90's run with no action by the driver.
+
+That last one is what this ticket is about. `src/deploy/tab.ts` guards a
+destructive verb by resolving the handle against `tree --all` first.
+Resolve-then-act is NOT ATOMIC: between the resolve and the call, focus can
+move and another session can close what was just resolved. The window cannot
+be removed from outside cmux. Only the COST of losing it can be, and only the
+handle form removes it.
+
+So the handle form has to stop being a convention. Until this ticket it was
+one, and precisely one line proves it: `closeWorkerTab` matched the caller's
+handle against the inventory by `surface.id === h || surface.ref === h`, and
+then passed `request.surface` — THE CALLER'S STRING — to `close-surface`. A
+ref-shaped registry row was therefore resolved as a ref and CLOSED as a ref.
+Nothing failed. No test noticed. The docblock said UUID; the code did not.
+
+------------------------------------------------------------------------------
+1. THE TICKET'S THREE QUESTIONS, ANSWERED
+------------------------------------------------------------------------------
+
+Q1. Is every destructive cmux verb UUID-only in a way that cannot silently
+    regress — structurally impossible, or merely conventional?
+
+BEFORE: merely conventional, in two independent ways.
+  (a) `runCmux` (`src/events/notify.ts:87`) spawned whatever argv it was
+      handed. Nothing anywhere inspected a handle's FORM.
+  (b) `tab.ts` passed the caller's string through, as above.
+NOW: structural, by a choke point plus a test that the choke point is one.
+  - `src/events/handles.ts` — `refuseCmuxArgs(args)`, a PURE function over an
+    argv. Twenty state-changing verbs (the three `close-*`, `new-surface`,
+    `new-pane`, `new-split`, every `rename-*`/`move-*`/`reorder-*`/`focus-*`,
+    `select-workspace`, `tab-action`, `workspace-action`) may carry a UUID and
+    nothing else on `--workspace/--surface/--pane/--window/--tab/--panel`.
+    It finds the verb properly rather than scanning for a name, so
+    `rename-tab --surface <uuid> "close-surface"` is not refused for its title,
+    and it stops at `--`, so literal text cannot smuggle a flag in.
+  - `runCmux` calls it and refuses WITHOUT SPAWNING. The refusal is shaped
+    exactly like cmux's own fail-closed answer — exit 1, reason on stderr —
+    because every caller in the tree already degrades on that. A throw would
+    have needed new handling at each call site, and any site that forgot would
+    have been silent, which is the failure class this ticket exists to remove.
+  - `src/events/handles.test.ts` asserts NOTHING ELSE IN `src/` SPAWNS `cmux`.
+    That test is what makes "choke point" a fact rather than an intention: a
+    future `Bun.spawn(["cmux", …])` elsewhere turns the gate red instead of
+    being discovered after an incident.
+  - `tab.ts` now passes the UUID resolution PRODUCED (`workspace.id`,
+    `surface.id`), never the caller's string. So the refusal above is
+    UNREACHABLE on the production path rather than being what production
+    relies on — two layers, not one.
+
+  HONEST LIMIT. This binds THIS PROCESS. An agent that types `cmux
+  close-surface --surface surface:60` into a terminal is outside it, and no
+  code in this repo can stop that. That is why the skill correction in §2 is
+  part of the fix and not a footnote.
+
+  Second honest limit: `send`/`send-key` are deliberately NOT in the set.
+  Their redirect is #7's hazard and it is real, but it costs a stray line
+  rather than a terminal, it is already guarded by `createCmuxResolve`, and
+  Hermes rows in `sends.jsonl` legitimately carry ref handles today (#99).
+  Hard-refusing them would take mission delivery down to close a hole that
+  destroys nothing. Recorded as a decision, not an oversight.
+
+Q2. Does anything still PERSIST a handle that could later reach a destructive
+    verb?
+
+  Every place a cmux handle is persisted in this tree, and what was done:
+
+  1. `.argus/registry/sessions.jsonl` — `workspace` + `surface`.
+     THE ONE THAT REACHES A DESTRUCTIVE VERB. `retireWorkerTab` reads this row
+     and hands it to `closeWorkerTab` -> `close-surface`.
+     Written by `deployWorker` from `openWorkerTab`'s return value, which now
+     returns `workspace.id` / `surface.id` — UUIDs — even when the caller
+     supplied a ref. Proven live in §3 probe B. And on the read side,
+     `closeWorkerTab` re-resolves whatever the row holds to a UUID before
+     issuing the verb, so an OLD row holding a ref is still closed by UUID
+     (§3 probe C, and `tab.test.ts` "#98: a ref-shaped row is resolved, and
+     the verb is still given UUIDs").
+  2. `.argus/registry/sends.jsonl` — `workspace` + `surface`.
+     #99 measured Hermes writing `"workspace":"workspace:1"` here durably.
+     This row is read by nothing destructive: it feeds the matcher and `send`.
+     Left as a record, deliberately — see the `send` decision above — but the
+     INSTRUCTION that produced it is fixed, item 4.
+  3. `GrillResult.workspace` / `attachLine`'s surface — the handle Argus hands
+     to a HUMAN and, via stdout, to Hermes. Both come from `openWorkerTab`, so
+     both are now UUIDs by construction.
+  4. `skills/argus-orchestrator/SKILL.md` rule 2 — THE SOURCE OF #99's ROW.
+     It said: "Include the session id, agent, prefixed workspace/surface refs".
+     That sentence told Hermes to persist a ref. Changed to UUIDs, with the
+     reason (a registry row outlives the cmux process that minted the ref).
+     The skill also now records what `runCmux` refuses, and states plainly
+     that the enforcement does NOT cover cmux commands the agent types itself.
+  5. Dispatch slots — carry no handle (checked; that is why `retireWorkerTab`
+     is registry-first at all).
+  6. `docs/acceptance/*` and this file — inert prose, never parsed.
+
+Q3. Given the guard can lose its race, is there anything that makes losing it
+    HARMLESS beyond the handle form?
+
+  No. The handle form is the whole defence, and this is worth stating flatly
+  rather than softening.
+
+  Everything else in `tab.ts` narrows the WINDOW: re-reading the inventory
+  immediately before the call, confirming the surface survived a close that
+  exited 0, tolerating a missing tab. Not one of them acts at the instant the
+  verb runs, and cmux offers no compare-and-swap, no lease, no "close this
+  surface only if it is still this surface". The post-close confirmation is the
+  closest thing and it runs AFTER the damage. Focus is not ours to hold — #90
+  watched it move three times unaided — so "I checked what was focused" is not
+  available either.
+
+  What changed is where the guard's output goes. Resolution used to produce a
+  BOOLEAN ("yes, that handle is present") and the caller then re-used its own
+  string. It now produces a HANDLE, and that handle is the one the verb gets.
+  The check and the defence are no longer two separate things one of which can
+  be lost: the check's only remaining job is to mint the UUID, and if it is
+  wrong or stale the UUID it minted simply fails closed.
+
+------------------------------------------------------------------------------
+2. THE LIVE DRIVE — real binary, every call bracketed by a UUID-SET diff
+------------------------------------------------------------------------------
+Comparison is by UUID SET, not by count (#99's technique: a count hides one
+surface dying while another is born). Snapshot command before and after every
+step: `cmux --id-format both tree --all`.
+
+  BASELINE   workspaces 8   surfaces 29
+
+  PROBE A — the experiment #90 EXPLICITLY REFUSED TO RUN, now safe to run.
+    Production `runCmux(["close-surface", "--surface", "surface:99999"])`
+    — a destructive verb pointed at a dead short ref, the exact #98 shape.
+
+      exit   1
+      stderr argus refuses to run `cmux close-surface` with --surface
+             "surface:99999": a state-changing cmux verb takes a UUID only. …
+      surface diff   removed=[] added=[]
+      workspace diff removed=[] added=[]
+
+    READ THAT STDERR CAREFULLY. It is OURS, not cmux's. The binary was never
+    spawned — the refusal returns before `Bun.spawn`. So this drive still does
+    NOT measure what real cmux does with a dead ref on `close-surface`, and it
+    is not claimed to. #90 refused that experiment because the fallback target
+    is the focused surface and focus is not ours to hold; that reasoning is
+    unchanged and I refuse it too. What IS measured is the thing this ticket
+    is for: the call that would have reached the binary no longer can.
+
+  PROBE B — `openWorkerTab({workspace: "workspace:1"})`. A REF goes in.
+
+      returned {"status":"opened",
+                "surface":"2F928FF7-A2A1-4720-8DF1-DC1181C07B03",
+                "workspace":"2D3B8B38-C9FC-46F4-A512-8F1157CE2E10"}
+      issued  cmux new-surface --type terminal
+                   --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10
+      issued  cmux rename-tab --workspace 2D3B8B38-…
+                   --surface 2F928FF7-… argus98-throwaway
+      surface diff   added=[2F928FF7-A2A1-4720-8DF1-DC1181C07B03]  removed=[]
+
+    A ref in, a UUID out, and not one `workspace:`/`surface:` argument in
+    either state-changing call. The tab cmux gave me held ref `surface:81`;
+    what got recorded is the UUID.
+
+  PROBE C — `closeWorkerTab({surface: "surface:81", workspace: "workspace:1"})`.
+    Both handles in the REF form, as a hand-written registry row would be.
+
+      returned {"status":"closed"}
+      issued  cmux close-surface
+                   --surface   2F928FF7-A2A1-4720-8DF1-DC1181C07B03
+                   --workspace 2D3B8B38-C9FC-46F4-A512-8F1157CE2E10
+      surface diff   removed=[2F928FF7-A2A1-4720-8DF1-DC1181C07B03]  added=[]
+
+    Exactly one surface removed and it is the one this drive created.
+
+  FINAL vs BASELINE   surfaces removed=[] added=[]
+                      workspaces removed=[] added=[]
+                      workspaces 8   surfaces 29
+
+  Exactly one surface was created and closed in this ticket, and it was mine.
+  No surface or workspace belonging to Johan or to another session was closed,
+  renamed, reordered, focused, sent to or read back.
+
+------------------------------------------------------------------------------
+3. WHAT THIS RUN REFUSED TO DO
+------------------------------------------------------------------------------
+1. Did NOT point the REAL binary at a dead short ref with a destructive verb
+   (§2 probe A explains what was proven instead, and what was not).
+2. Did NOT close, rename, reorder, focus, send to or read back any surface it
+   did not create — including surfaces 79/80, the two `[browser]` "Sign in -
+   Claude" tabs that are open incident #106. No navigation, no OAuth flow.
+3. Did NOT create a cmux workspace (R6), or close one.
+4. Did NOT restart cmux to re-confirm that refs renumber across processes.
+   Same reason as #90: it would end every session in every window.
+5. Did NOT start a watcher, and did not touch `/private/tmp/argus-soak-*` or
+   anything else belonging to #105.
+6. Did NOT read or copy `~/.claude/.credentials.json` (checksummed only), run
+   `claude setup-token` / `/login` / `logout` / `claude auth`, or write to
+   `~/.hermes`, `~/.claude`, `~/argus` or `~/.codex/config.toml`.
+7. Did NOT change any default, model or effort setting (#54).
+8. Did NOT push, merge or close anything. Commits are on build/tab-guard.
+9. ZERO model calls.
+
+------------------------------------------------------------------------------
+4. GATES
+------------------------------------------------------------------------------
+  bun x tsc --noEmit   exit 0, no diagnostics
+  bun test             1048 pass, 21 skip, 0 fail
+                       3654 expect() calls, 1069 tests across 142 files, 203s
+                       (run once, at the end, with #105's soak live; load 17.5)
+  new tests            11 in src/events/handles.test.ts
+                        2 in src/deploy/tab.test.ts
+  bun.lock             unchanged
+
+------------------------------------------------------------------------------
+5. DIRECTIVE 14 CLEANUP
+------------------------------------------------------------------------------
+(printed verbatim at the end of the run; see the ticket comment for the paste)
+==============================================================================

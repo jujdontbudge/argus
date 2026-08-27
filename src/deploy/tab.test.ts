@@ -123,6 +123,30 @@ describe("openWorkerTab (#95): a tab in the workspace Argus already has", () => 
     expect(createdAWorkspace(calls)).toBe(false);
   });
 
+  /**
+   * #98 — the row this returns is what teardown later hands to
+   * `close-surface`, so a ref recorded here would be a ref persisted across a
+   * cmux restart, after which #90 measured it means nothing at all. A handle
+   * that means nothing is the redirect.
+   */
+  test("#98: a ref workspace is accepted, but only its UUID is used or recorded", async () => {
+    const { calls, run } = fakeCmux({
+      trees: [ARGUS_ONLY([DISPATCHER]), ARGUS_ONLY([DISPATCHER, WORKER])],
+    });
+
+    const result = await openWorkerTab(
+      { env: { CMUX_WORKSPACE_ID: "workspace:1" }, title: "argus #98" },
+      run,
+    );
+
+    expect(result).toEqual({ status: "opened", surface: WORKER, workspace: ARGUS });
+    const changing = calls.filter((call) => call[0] === "new-surface" || call[0] === "rename-tab");
+    expect(changing).toHaveLength(2);
+    for (const call of changing) {
+      expect(call.some((argument) => /^(?:workspace|surface):/.test(argument))).toBe(false);
+    }
+  });
+
   test("a workspace handle cmux does not resolve degrades and creates nothing", async () => {
     // Measured live on 0.62.2 for #95, read-only: `list-pane-surfaces
     // --workspace workspace:9999` exits 0 and answers for the FOCUSED
@@ -187,6 +211,39 @@ describe("closeWorkerTab (#95): the half of the directive that burned Johan", ()
       "--workspace",
       ARGUS,
     ]);
+  });
+
+  /**
+   * #98 — THE ONE THING #90'S MEASUREMENT LEFT STANDING.
+   *
+   * The membership check accepts a ref, because a registry row written by hand
+   * can hold one (#99 measured Hermes writing `"workspace":"workspace:1"`
+   * durably). What must NOT happen is that ref reaching `close-surface`:
+   * resolve-then-act is not atomic, focus moves on its own, and a ref that
+   * resolves to nothing on 0.62.2 is not an error but a REDIRECT onto whatever
+   * Johan is looking at, exit 0. So the verb is pointed at the UUIDs the
+   * lookup PRODUCED, and losing the race then costs `not_found`, exit 1.
+   */
+  test("#98: a ref-shaped row is resolved, and the verb is still given UUIDs", async () => {
+    const { calls, run } = fakeCmux({
+      trees: [ARGUS_ONLY([DISPATCHER, WORKER]), ARGUS_ONLY([DISPATCHER])],
+    });
+
+    // `surface:2` is WORKER's ref in this tree, and `workspace:1` is ARGUS'.
+    const result = await closeWorkerTab({ surface: "surface:2", workspace: "workspace:1" }, run);
+
+    expect(result).toEqual({ status: "closed" });
+    expect(calls).toContainEqual([
+      "close-surface",
+      "--surface",
+      WORKER,
+      "--workspace",
+      ARGUS,
+    ]);
+    const closes = calls.filter((call) => call[0] === "close-surface");
+    expect(closes).toHaveLength(1);
+    // Not one argument of the destructive call is in the form that fails open.
+    expect(closes[0]!.some((argument) => /^(?:workspace|surface):/.test(argument))).toBe(false);
   });
 
   test("a surface that does not resolve is NOT closed — that is Johan's tab", async () => {

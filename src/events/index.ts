@@ -18,6 +18,12 @@ export {
   type TerminalSignalStatus,
 } from "./consumer.ts";
 export {
+  CMUX_HANDLE_FLAGS,
+  CMUX_UUID_ONLY_VERBS,
+  isCmuxUuid,
+  refuseCmuxArgs,
+} from "./handles.ts";
+export {
   createCmuxResolve,
   createCmuxSend,
   findWorkspace,
