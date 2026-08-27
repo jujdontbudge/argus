@@ -49,6 +49,28 @@ function check(ok: boolean, what: string): void {
   console.log(`  ${ok ? "PASS" : "FAIL"}  ${what}`);
 }
 
+/**
+ * #113: the drive's own stopwatch. #112 died at the 10-minute bash ceiling
+ * somewhere inside the live Retro brain scan and could not say WHERE — the
+ * drive printed nothing between "the REAL Retro eye" and the wall. Every
+ * live-brain step is timed from here on, so a future run that runs long is
+ * evidence about which call is unbounded rather than a mystery.
+ */
+const driveStartedMs = Date.now();
+function since(): string {
+  const seconds = Math.round((Date.now() - driveStartedMs) / 1_000);
+  return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+}
+/** Run `work`, printing its wall-clock cost under the drive's stopwatch. */
+async function timed<T>(what: string, work: () => Promise<T>): Promise<T> {
+  const startedMs = Date.now();
+  console.log(`  [${since()}] ${what} …`);
+  const result = await work();
+  const took = ((Date.now() - startedMs) / 1_000).toFixed(1);
+  console.log(`  [${since()}] ${what} — ${took}s`);
+  return result;
+}
+
 interface CodexRun {
   exitCode: number;
   stdout: string;
@@ -134,7 +156,7 @@ try {
     onAlert: (alert) => console.log(`  retro ALERT ${JSON.stringify(alert)}`),
     onAudit: (audit) => console.log(`  retro audit ${JSON.stringify(audit)}`),
   });
-  await retro.prime();
+  await timed("retro.prime", () => retro.prime());
   console.log("retro eye     primed (live brain, cursor anchored on repo history)");
 
   // ---------------------------------------------------------------- ticket
@@ -428,13 +450,17 @@ try {
   );
 
   console.log("\n  the REAL Retro eye over the same live work:");
-  for (const meta of metas) {
-    if (meta.cwd !== undefined) {
-      await retro.observeSession({ sessionId: meta.sessionId, cwd: meta.cwd });
+  await timed("retro.observeSession × session-metas", async () => {
+    for (const meta of metas) {
+      if (meta.cwd !== undefined) {
+        await retro.observeSession({ sessionId: meta.sessionId, cwd: meta.cwd });
+      }
     }
-  }
-  await retro.ingest(records);
-  const filings = await retro.scan();
+  });
+  await timed("retro.ingest", () => retro.ingest(records));
+  // The live brain call lives in here: scan → judgeSignals → retryForever →
+  // evaluateOnce → codex exec. Nothing on that chain has a timeout (#113).
+  const filings = await timed("retro.scan #1 (LIVE brain)", () => retro.scan());
   for (const filing of filings) {
     console.log(
       `    ${filing.outcome}  ${JSON.stringify(filing.title)}  parent=${filing.parent ?? "none"} rule=${filing.parentRule}${
@@ -455,10 +481,8 @@ try {
     filings[0]?.outcome === "digest-note" && filings[0].reason !== undefined,
     "§13.3 — tracker-less sandbox degrades LOUDLY to a digest note, never silence",
   );
-  check(
-    (await retro.scan()).length === 0,
-    "§13.3 — a second sweep re-files nothing",
-  );
+  const resweep = await timed("retro.scan #2 (LIVE brain)", () => retro.scan());
+  check(resweep.length === 0, "§13.3 — a second sweep re-files nothing");
 } finally {
   await sandbox.teardown();
 }
@@ -466,7 +490,7 @@ try {
 console.log("\n" + "=".repeat(78));
 const failed = checks.filter(({ ok }) => !ok);
 console.log(
-  `LIVE AGENT DRIVE: ${checks.length - failed.length}/${checks.length} checks passed`,
+  `LIVE AGENT DRIVE: ${checks.length - failed.length}/${checks.length} checks passed  (wall clock ${since()})`,
 );
 for (const { what } of failed) console.log(`  FAILED: ${what}`);
 console.log("=".repeat(78));
