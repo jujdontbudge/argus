@@ -1,0 +1,170 @@
+#114 — bounded, abortable watcher-brain attempts
+
+Branch: `build/brain-timeout`
+Implementation HEAD before this evidence commit: `eaa0e74ee4bd6d629c809f5197b19a732f14d073`
+Date: 2026-08-27
+
+## Decision and threading
+
+The production deadline is **120,000 ms (120 seconds) per attempt**. This is
+about 23x #8's measured ~5.3 s watcher-brain median and 15x #113's healthy 8.1 s
+live Retro scan, while classifying #112's already-observed >2 minute tail as a
+failed attempt rather than a new unbounded operating mode. It also bounds the
+period in which #86's 512 MiB in-process check cannot run to less than one of
+#109's 5-minute RSS floor buckets.
+
+The value lives as `DEFAULT_BRAIN_ATTEMPT_TIMEOUT_MS` in `src/eyes/brain.ts`.
+It is overridable on `CodexBrainOptions.attemptTimeoutMs`, per
+`Brain.evaluate` request, and through `openRetro`'s
+`brainAttemptTimeoutMs`. `Brain.evaluate` composes the deadline with a caller
+signal and passes the composed signal through `SpawnRequest`. The default
+runner SIGKILLs its child on abort so a timed-out `codex exec` cannot become an
+orphan. Both Retro judgment paths pass the daemon signal into the brain.
+
+## RED, then GREEN
+
+RED was committed before production code as `1cb477c`:
+
+```
+bun test src/eyes/brain.test.ts
+6 pass
+1 fail
+Ran 7 tests across 1 file
+
+failure: a hung spawn times out and the brain survives for the next evaluation
+         Expected: not "test-watchdog"
+```
+
+The injected `SpawnFn` returned a promise that never resolves. With the old
+code, the test's 100 ms watchdog won because no deadline existed.
+
+A second RED checkpoint, `f78eff8`, proved the signal gap in the real Retro
+chain:
+
+```
+bun test src/eyes/retro/retro.test.ts --test-name-pattern 'watcher shutdown interrupts'
+0 pass
+33 filtered out
+1 fail
+
+failure: Expected: not "test-watchdog"
+```
+
+After the fix:
+
+```
+bun test src/eyes/brain.test.ts
+9 pass
+0 fail
+Ran 9 tests across 1 file
+
+bun test src/eyes/retro/retro.test.ts --test-name-pattern 'watcher shutdown interrupts'
+1 pass
+33 filtered out
+0 fail
+Ran 1 test across 1 file
+```
+
+The brain test also runs the default process adapter against a test-owned
+hanging executable and proves its PID is dead after timeout. No live
+`codex exec` or production brain-cap directory is involved.
+
+## The five consequences
+
+1. **15-minute alert restored.** The combined Retro test makes two injected
+   spawns hang, advances fake retry time past 15 minutes after the first
+   failure, and observes exactly one real `eye-stuck` alert on attempt 2 at
+   900,001 ms. Both failure messages contain the attempt timeout.
+2. **SIGTERM/shutdown restored.** The Retro-chain test aborts its controller
+   after the injected spawn starts. The scan rejects with `AbortError` before
+   its short watchdog; the brain-level test independently proves caller abort
+   beats a 60-second attempt deadline.
+3. **RSS check no longer starved.** The combined test awaits the same Retro
+   scan boundary that `src/watch.ts` awaits, then reaches a counter standing in
+   the exact between-tick position of the RSS check. It reaches that boundary
+   after recovery and again on the eye's next scan.
+4. **Machine-wide cap slot released.** The Retro shutdown test uses a one-slot
+   scratch cap and reacquires it immediately after abort. The retry-survival
+   test also proves the scratch slot directory is empty after timed-out
+   attempts, then acquires/releases the slot again. Existing `finally` release
+   semantics are now reachable because the brain wait terminates.
+5. **Eye survives and continues.** Two timeouts are followed by a third attempt
+   that files the original retro; the next scan returns normally. The original
+   signal is not silently dropped.
+
+Focused verification:
+
+```
+bun test src/eyes/brain.test.ts src/eyes/backpressure.test.ts src/eyes/cap.test.ts
+20 pass, 0 fail, 3 files
+
+bun test src/eyes/retro
+145 pass, 2 skip, 0 fail, 13 files
+```
+
+## Never-drop contract
+
+There is no give-up count and `retryForever` was not weakened. A timeout turns
+one non-settling attempt into the same ordinary failure path used by nonzero
+exit and schema failure: release the cap, record failure/alert state, back off,
+and retry the still-pending content. The tension is latency versus retention;
+the chosen resolution bounds each attempt while keeping retries infinite.
+
+## SPEC / ADR
+
+`SPEC.md` now states the 120-second wall-time guarantee, child termination,
+slot release, and no-drop behavior. `docs/adr/0002-watcher-brain-defaults.md`
+records the measured margin, the #86/#109 observability rationale, the override
+locations, and the rejected no-deadline alternative.
+
+## Final gates
+
+```
+bun x tsc --noEmit
+exit 0
+
+bun test
+1107 pass
+21 skip
+0 fail
+3858 expect() calls
+1128 tests across 144 files
+195.07s
+```
+
+## Cleanup, isolation, auth, and refusals
+
+The five requested reads, after the full gate:
+
+```
+ps -eo args | grep 'cli\.ts watch' | grep -v grep | wc -l
+5
+
+launchctl list | grep -ci argus
+0
+
+cmux --id-format both tree --all | grep -c "workspace "
+7
+
+cmux --id-format both tree --all | grep -c "surface "
+14
+
+ls -d /private/tmp/argus-* 2>/dev/null
+/private/tmp/argus-soak-5oAcZD
+/private/tmp/argus-soak-czkoLx
+```
+
+Both soak directories were left untouched. I did not access the soak worktree,
+start `cli.ts watch`, create/close any cmux workspace or surface, or alter
+launchd. I did not run a live brain probe because the injected seam plus the
+test-owned local child cover timeout and kill behavior without subscription
+spend or production cap risk. I did not change model/default effort, push,
+merge, or close the ticket.
+
+All-machine Bun RSS was 522 MiB at the busiest observed overlap and 324 MiB at
+cleanup, so this work's own contribution was necessarily below those values
+and far below the 2 GiB self-abort ceiling. No test-owned hanging child remained.
+
+Hermes, Codex, and Claude credential checksums matched the supplied baselines
+before and after. `~/.claude/.credentials.json` was never read or copied;
+checksum only. No `setup-token`, `/login`, `logout`, or auth command was run.
