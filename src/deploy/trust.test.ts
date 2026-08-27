@@ -100,10 +100,12 @@ describe("pre-trusting a directory", () => {
     await Bun.write(path, JSON.stringify(initial));
 
     const write = Bun.write;
+    let injected = false;
     Object.assign(Bun, {
       write: async (...args: Parameters<typeof Bun.write>) => {
         const written = await write(...args);
-        if (String(args[0]).startsWith(`${path}.argus.`)) {
+        if (!injected && String(args[0]).startsWith(`${path}.argus.`)) {
+          injected = true;
           await write(
             path,
             JSON.stringify({
@@ -131,6 +133,23 @@ describe("pre-trusting a directory", () => {
     const config = await readConfig(configDir);
     expect(config.projects[concurrentProject]).toEqual({ allowedTools: ["Read"] });
     expect(config.projects[project].hasTrustDialogAccepted).toBe(true);
+  });
+
+  test("serializes concurrent Argus writers so every project survives", async () => {
+    const { configDir, project } = await scratch();
+    const projects = Array.from({ length: 8 }, (_, index) => `${project}-${index}`);
+
+    const results = await Promise.all(
+      projects.map((candidate) =>
+        trustDirectory(candidate, { env: { CLAUDE_CONFIG_DIR: configDir } }),
+      ),
+    );
+
+    expect(results.map(({ status }) => status)).toEqual(projects.map(() => "trusted"));
+    const config = await readConfig(configDir);
+    for (const candidate of projects) {
+      expect(config.projects[candidate].hasTrustDialogAccepted).toBe(true);
+    }
   });
 
   test("an already-trusted directory is reported, and the file is not rewritten", async () => {

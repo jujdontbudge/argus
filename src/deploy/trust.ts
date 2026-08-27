@@ -49,9 +49,9 @@
  * parents up to the git root), and if it does block, half 2's silent-deployment
  * check is what makes that visible.
  */
-import { chmod, mkdir, rename, rm, stat } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 export interface TrustOptions {
   env?: Readonly<Record<string, string | undefined>>;
@@ -78,10 +78,109 @@ export function claudeConfigFile(
 const message = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+const code = (error: unknown): string | undefined =>
+  typeof error === "object" && error !== null && "code" in error
+    ? String(error.code)
+    : undefined;
+
+interface ConfigVersion {
+  mode: number;
+  signature: string | null;
+}
+
+async function configVersion(configPath: string): Promise<ConfigVersion> {
+  try {
+    const details = await stat(configPath, { bigint: true });
+    return {
+      mode: Number(details.mode & 0o777n),
+      signature: [
+        details.dev,
+        details.ino,
+        details.size,
+        details.mtimeNs,
+        details.ctimeNs,
+      ].join(":"),
+    };
+  } catch (error) {
+    if (code(error) === "ENOENT") return { mode: 0o600, signature: null };
+    throw error;
+  }
+}
+
+const versionsMatch = (left: ConfigVersion, right: ConfigVersion): boolean =>
+  left.signature === right.signature;
+
+const LOCK_RETRIES = 200;
+const WRITE_RETRIES = 8;
+
+async function acquireConfigLock(configPath: string): Promise<() => Promise<void>> {
+  const lockPath = `${configPath}.argus.lock`;
+  for (let attempt = 0; attempt < LOCK_RETRIES; attempt += 1) {
+    try {
+      const handle = await open(lockPath, "wx", 0o600);
+      try {
+        await handle.writeFile(`${process.pid} ${randomUUID()}\n`);
+      } catch (error) {
+        await handle.close().catch(() => {});
+        await rm(lockPath, { force: true }).catch(() => {});
+        throw error;
+      }
+      return async () => {
+        await handle.close();
+        await rm(lockPath, { force: true });
+      };
+    } catch (error) {
+      if (code(error) !== "EEXIST") throw error;
+      await Bun.sleep(10);
+    }
+  }
+  throw new Error(`timed out waiting for ${lockPath}`);
+}
+
+type ConfigRead =
+  | { config: Record<string, unknown>; status: "read"; version: ConfigVersion }
+  | { status: "changed" }
+  | { reason: string; status: "invalid" };
+
+async function readConfig(configPath: string): Promise<ConfigRead> {
+  const before = await configVersion(configPath);
+  let text = "{}";
+  if (before.signature !== null) {
+    try {
+      text = await readFile(configPath, "utf8");
+    } catch (error) {
+      if (code(error) === "ENOENT") return { status: "changed" };
+      throw error;
+    }
+  }
+  const after = await configVersion(configPath);
+  if (!versionsMatch(before, after)) return { status: "changed" };
+
+  let config: unknown;
+  try {
+    config = JSON.parse(text);
+  } catch (error) {
+    return {
+      reason: `${configPath} is not readable JSON, so it was left untouched: ${message(error)}`,
+      status: "invalid",
+    };
+  }
+  if (typeof config !== "object" || config === null || Array.isArray(config)) {
+    return {
+      reason: `${configPath} is not a JSON object, so it was left untouched`,
+      status: "invalid",
+    };
+  }
+  return { config: config as Record<string, unknown>, status: "read", version: after };
+}
+
 /**
  * Mark `directory` trusted for Claude Code. Merges into the existing config —
  * every other project and every unrelated key survives, because this file is
- * the user's, not Argus's.
+ * the user's, not Argus's. Argus writers serialize on an adjacent lock. Claude
+ * Code does not honor that lock, so the version is checked again after the
+ * replacement is ready; a changed file is re-read and merged instead of being
+ * replaced from a stale snapshot.
  */
 export async function trustDirectory(
   directory: string,
@@ -95,68 +194,61 @@ export async function trustDirectory(
     return { configPath: "", project, reason: message(error), status: "failed" };
   }
 
-  const file = Bun.file(configPath);
-  let config: Record<string, unknown> = {};
-  if (await file.exists()) {
-    try {
-      config = (await file.json()) as Record<string, unknown>;
-    } catch (error) {
-      // A config Argus cannot parse is a config Argus must not rewrite: the
-      // alternative is replacing a user's whole file with a two-key object.
-      return {
-        configPath,
-        project,
-        reason: `${configPath} is not readable JSON, so it was left untouched: ${message(error)}`,
-        status: "failed",
-      };
-    }
-    if (typeof config !== "object" || config === null || Array.isArray(config)) {
-      return {
-        configPath,
-        project,
-        reason: `${configPath} is not a JSON object, so it was left untouched`,
-        status: "failed",
-      };
-    }
-  }
-
-  const projects =
-    typeof config.projects === "object" &&
-    config.projects !== null &&
-    !Array.isArray(config.projects)
-      ? (config.projects as Record<string, Record<string, unknown>>)
-      : {};
-  const existing = projects[project] ?? {};
-  if (existing.hasTrustDialogAccepted === true) {
-    return { configPath, project, status: "already-trusted" };
-  }
-
-  const next = {
-    ...config,
-    projects: {
-      ...projects,
-      [project]: { ...existing, hasTrustDialogAccepted: true },
-    },
-  };
-  const temporary = `${configPath}.argus.${process.pid}.${randomUUID()}.tmp`;
+  let release: (() => Promise<void>) | undefined;
   try {
-    await mkdir(join(configPath, ".."), { recursive: true });
-    const mode = await stat(configPath)
-      .then(({ mode }) => mode & 0o777)
-      .catch(() => 0o600);
-    await Bun.write(temporary, `${JSON.stringify(next, null, 2)}\n`);
-    await chmod(temporary, mode);
-    await rename(temporary, configPath);
+    await mkdir(dirname(configPath), { recursive: true });
+    release = await acquireConfigLock(configPath);
+
+    for (let attempt = 0; attempt < WRITE_RETRIES; attempt += 1) {
+      const read = await readConfig(configPath);
+      if (read.status === "changed") continue;
+      if (read.status === "invalid") {
+        return { configPath, project, reason: read.reason, status: "failed" };
+      }
+
+      const { config, version } = read;
+      const projects =
+        typeof config.projects === "object" &&
+        config.projects !== null &&
+        !Array.isArray(config.projects)
+          ? (config.projects as Record<string, Record<string, unknown>>)
+          : {};
+      const existing = projects[project] ?? {};
+      if (existing.hasTrustDialogAccepted === true) {
+        return { configPath, project, status: "already-trusted" };
+      }
+
+      const next = {
+        ...config,
+        projects: {
+          ...projects,
+          [project]: { ...existing, hasTrustDialogAccepted: true },
+        },
+      };
+      const temporary = `${configPath}.argus.${process.pid}.${randomUUID()}.tmp`;
+      try {
+        await Bun.write(temporary, `${JSON.stringify(next, null, 2)}\n`);
+        await chmod(temporary, version.mode);
+        if (!versionsMatch(version, await configVersion(configPath))) {
+          await rm(temporary, { force: true });
+          continue;
+        }
+        await rename(temporary, configPath);
+        return { configPath, project, status: "trusted" };
+      } catch (error) {
+        await rm(temporary, { force: true }).catch(() => {});
+        throw error;
+      }
+    }
+    throw new Error(`${configPath} kept changing during ${WRITE_RETRIES} write attempts`);
   } catch (error) {
-    // `force` still throws when the PATH itself is unusable (a parent that is
-    // a file, not a directory), and a failed cleanup must not mask the reason.
-    await rm(temporary, { force: true }).catch(() => {});
     return {
       configPath,
       project,
       reason: `${project} could not be pre-trusted in ${configPath}: ${message(error)}`,
       status: "failed",
     };
+  } finally {
+    await release?.().catch(() => {});
   }
-  return { configPath, project, status: "trusted" };
 }
