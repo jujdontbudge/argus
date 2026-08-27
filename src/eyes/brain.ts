@@ -132,7 +132,12 @@ const defaultSpawn: SpawnFn = async (request) => {
     stderr: "pipe",
     stdout: "pipe",
   });
-  const kill = () => child.kill("SIGTERM");
+  // A deadline must be a hard cap: SIGKILL also covers a wedged child that
+  // cannot service SIGTERM, so the timeout cannot trade a stuck promise for
+  // an orphaned `codex exec`.
+  const kill = () => {
+    if (child.exitCode === null) child.kill("SIGKILL");
+  };
   if (request.signal.aborted) kill();
   else request.signal.addEventListener("abort", kill, { once: true });
   try {

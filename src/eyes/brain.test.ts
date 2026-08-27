@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { chmod, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   createCodexBrain,
   parseCodexOutput,
@@ -94,6 +97,90 @@ describe("createCodexBrain — the exact researched invocation", () => {
     expect(attempts).toBe(2);
   });
 
+  test("caller shutdown aborts a hung evaluation before its deadline", async () => {
+    const controller = new AbortController();
+    let requestSignal: AbortSignal | undefined;
+    let started!: () => void;
+    const spawnStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const brain = createCodexBrain({
+      attemptTimeoutMs: 60_000,
+      model: "gpt-5.6-luna",
+      reasoningEffort: "low",
+      spawn: async (request) => {
+        requestSignal = request.signal;
+        started();
+        return await new Promise(() => {});
+      },
+    });
+
+    const evaluation = brain.evaluate({
+      prompt: "p",
+      schema: {},
+      cwd: "/tmp",
+      signal: controller.signal,
+    });
+    await spawnStarted;
+    controller.abort();
+
+    expect(
+      await Promise.race([
+        evaluation,
+        Bun.sleep(100).then(() => "test-watchdog" as const),
+      ]),
+    ).toEqual({
+      ok: false,
+      reason: "spawn-error",
+      detail: "brain attempt aborted by caller",
+    });
+    expect(requestSignal?.aborted).toBe(true);
+  });
+
+  test("the default spawn kills its child when the attempt times out", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "argus-brain-child-"));
+    const binary = join(directory, "hung-codex");
+    const pidFile = join(directory, "pid");
+    let childPid: number | undefined;
+    try {
+      await Bun.write(
+        binary,
+        [
+          "#!/usr/bin/env bun",
+          "await Bun.write(process.env.ARGUS_TEST_CHILD_PID, String(process.pid));",
+          "setInterval(() => {}, 1_000);",
+          "",
+        ].join("\n"),
+      );
+      await chmod(binary, 0o755);
+      const brain = createCodexBrain({
+        attemptTimeoutMs: 1_000,
+        binary,
+        env: { ...process.env, ARGUS_TEST_CHILD_PID: pidFile },
+        model: "gpt-5.6-luna",
+        reasoningEffort: "low",
+      });
+
+      expect(
+        await brain.evaluate({ prompt: "p", schema: {}, cwd: directory }),
+      ).toEqual({
+        ok: false,
+        reason: "spawn-error",
+        detail: "brain attempt timed out after 1000ms",
+      });
+      childPid = Number(await Bun.file(pidFile).text());
+      for (let attempt = 0; attempt < 100 && processIsAlive(childPid); attempt += 1) {
+        await Bun.sleep(5);
+      }
+      expect(processIsAlive(childPid)).toBe(false);
+    } finally {
+      if (childPid !== undefined && processIsAlive(childPid)) {
+        process.kill(childPid, "SIGKILL");
+      }
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
   test("spawns the lean luna argv with prompt on stdin and the schema in a temp file", async () => {
     const requests: Array<SpawnRequest & { schemaOnDisk: unknown }> = [];
     const brain = createCodexBrain({
@@ -187,3 +274,12 @@ describe("createCodexBrain — the exact researched invocation", () => {
     }
   });
 });
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
