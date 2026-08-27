@@ -1,15 +1,62 @@
 ==============================================================================
+ARGUS LIVE COMMAND SWEEP — ticket #36, RE-DRIVEN by #107
+==============================================================================
+THIS FILE SUPERSEDES THE #36 RUN (2026-08-25, last touched at `bbb317a`).
+
+#101's gate × evidence map graded it STALE. It was, and more bluntly than the
+map's reasoning predicted. The map expected deployment-path drift (#95/#96/#89);
+what a re-drive actually shows is that the COMMAND SURFACE this file sweeps
+grew six commands the old sweep never ran and never mentioned:
+
+    init, grill, dispatch, complete, signals, memory
+
+plus a `Flags:` section (`--mode`, `--dry-run`, `--commit`). The old file's
+`argus --help` capture lists six commands; this one lists twelve. Other drift
+the re-drive surfaces:
+
+  - `argus up` now seeds `.argus/memory/`, creates a Hermes slow poll, prints
+    four `wiring:` checks, and reports what it did NOT commit.
+  - the Hermes profile name gained a digest suffix.
+  - "cmux hooks: pending #7 (soft check)" became "cmux hooks: optional
+    (resume convenience; not required for signal delivery)".
+  - `argus status` is now "inspect eyes and audits; acknowledge with --ack".
+
+The old file's own numbers are not repeated; they are in git history.
+
+NOTE ON THE GATE. #101 maps this file to `ARGUS_LIVE_AGENTS`. That is where
+the evidence belongs, but it is worth stating precisely that the RUNNER reads
+no gate: `scripts/acceptance/live-sweep.ts` greps clean for `ARGUS_LIVE_*` and
+ran to completion with every gate shut. It spends no agent call. Only its
+sibling `live-agents.ts` consults the gate.
+
+------------------------------------------------------------------------------
+Identity of the code this file is a record of
+------------------------------------------------------------------------------
+  HEAD          5d405c0b87c5db2ae53c681b86bbcacb3f3274c9
+  branch        build/evidence-refresh
+  run date      2026-08-27T05:02Z
+  reproduce     bun run scripts/acceptance/live-sweep.ts
+  result        exit 0
+  bun           1.3.12
+  cmux          0.62.2 (77)
+  claude        2.1.247
+  codex-cli     0.149.1
+
+------------------------------------------------------------------------------
+Verbatim sweep output
+------------------------------------------------------------------------------
+==============================================================================
 ARGUS LIVE COMMAND SWEEP — ticket #36
 ==============================================================================
-checkout        /Users/johansardar/argus-worktrees/reaccept
-sandbox root    /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP
-sandbox repo    /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP
-scratch HOME    /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/home
-scratch registry /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/state/argus-repos
-scratch CLAUDE  /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/state/claude
-scratch HERMES  /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/state/hermes
-scratch CODEX   /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/state/codex
-scratch cmux    /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/state/cmux/cmux.sock
+checkout        /Users/johansardar/argus-worktrees/evidence-refresh
+sandbox root    /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO
+sandbox repo    /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/scratch-argus-harness-PJehaO
+scratch HOME    /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/home
+scratch registry /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/state/argus-repos
+scratch CLAUDE  /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/state/claude
+scratch HERMES  /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/state/hermes
+scratch CODEX   /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/state/codex
+scratch cmux    /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/state/cmux/cmux.sock
 
 ------------------------------------------------------------------------------
 1. argus --help
@@ -20,12 +67,27 @@ $ argus --help      # help
   out| Argus — orchestration and self-learning toolkit
   out| Usage: argus <command>
   out| Commands:
-  out|   up       converge and start this repo's eyes
+  out|   init     scaffold this repo for Argus (repo-local only; no machine wiring)
+  out|   up       init, converge machine wiring, and start this repo's eyes
   out|   down     stop this repo's eyes
-  out|   status   inspect this repo's eyes
+  out|   status   inspect eyes and audits; acknowledge with --ack <audit-id>
   out|   watch    run one eye
+  out|   grill    open a registered, attachable planning session (SPEC §7.2)
+  out|   dispatch run one AFK ticket-dispatch pass (SPEC §7.3)
+  out|   complete verify, merge, close and map finished tickets (SPEC §7.3.4)
+  out|   signals  consume push events and run one slow-poll fallback sweep
   out|   search   search the transcript archive
+  out|   memory   one-time memory-store migrations
   out|   install  install argus from this checkout
+  out| Flags:
+  out|   --mode     (grill) which planning skill to route to: grilling (default),
+  out|              spec, tickets, review, diagnosis. All route to Claude Code.
+  out|   --dry-run  (grill) print the routed skill and the exact opening prompt and
+  out|              stop; no workspace, no registry row, no session.
+  out|   --commit   (init, up) commit the integration files Argus wrote —
+  out|              .gitignore, AGENTS.md and docs/agents — as they stand in the
+  out|              working tree, in one "chore: adopt Argus" commit. Without it
+  out|              Argus commits nothing and prints the command instead.
 
 ------------------------------------------------------------------------------
 2. argus up  (first run — performed by the harness sandbox factory)
@@ -33,10 +95,22 @@ $ argus --help      # help
 
 $ argus up      # up #1 (fresh repo)
   exit 0
-  out| Hermes profile: argus-scratch-argus-harness-nknajp
+  out| Seeded .argus/memory/: MEMORY.md, USER.md
+  out| Hermes slow poll: created (every 5m)
+  out| Hermes profile: argus-scratch-argus-harness-pjehao-5110fb957e37835e
   out| Push hooks: Claude Stop + Codex notify
-  out| cmux hooks: pending #7 (soft check)
-  out| Argus converged /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP
+  out| cmux hooks: optional (resume convenience; not required for signal delivery)
+  out|   cmux 0.62.2 has no `hooks` command — nothing in Argus requires one
+  out| wiring: claude skills adapter OK (1 canonical skill readable through .claude/skills)
+  out| wiring: AGENTS.md pointers OK (6/6 resolve)
+  out| wiring: Hermes memory binding OK (profile memories -> .argus/memory)
+  out| wiring: Hermes skills binding OK (profile skills.external_dirs includes .argus/skills)
+  out| Committed nothing. Argus never commits for you by default.
+  out|   Integration files not yet in git: .gitignore, AGENTS.md, docs/agents
+  out|   git add -- .gitignore AGENTS.md docs/agents
+  out|   git commit -m "chore: adopt Argus"
+  out|   (or re-run `argus up --commit` to let Argus do exactly that)
+  out| Argus converged /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/scratch-argus-harness-PJehaO
   err| TRACKER-LESS MODE: no GitHub remote; skipped GitHub labels and tracker checks
   err| HONCHO DEGRADED: http://localhost:8000 unavailable (HONCHO_API_KEY and ~/.honcho/config.json apiKey are both missing); local bindings converged
 
@@ -46,10 +120,21 @@ $ argus up      # up #1 (fresh repo)
 
 $ argus up      # up #2 (idempotent)
   exit 0
-  out| Hermes profile: argus-scratch-argus-harness-nknajp
+  out| Hermes slow poll: existing (every 5m)
+  out| Hermes profile: argus-scratch-argus-harness-pjehao-5110fb957e37835e
   out| Push hooks: Claude Stop + Codex notify
-  out| cmux hooks: pending #7 (soft check)
-  out| Argus converged /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP
+  out| cmux hooks: optional (resume convenience; not required for signal delivery)
+  out|   cmux 0.62.2 has no `hooks` command — nothing in Argus requires one
+  out| wiring: claude skills adapter OK (1 canonical skill readable through .claude/skills)
+  out| wiring: AGENTS.md pointers OK (6/6 resolve)
+  out| wiring: Hermes memory binding OK (profile memories -> .argus/memory)
+  out| wiring: Hermes skills binding OK (profile skills.external_dirs includes .argus/skills)
+  out| Committed nothing. Argus never commits for you by default.
+  out|   Integration files not yet in git: .gitignore, AGENTS.md, docs/agents
+  out|   git add -- .gitignore AGENTS.md docs/agents
+  out|   git commit -m "chore: adopt Argus"
+  out|   (or re-run `argus up --commit` to let Argus do exactly that)
+  out| Argus converged /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/scratch-argus-harness-PJehaO
   err| TRACKER-LESS MODE: no GitHub remote; skipped GitHub labels and tracker checks
   err| HONCHO DEGRADED: http://localhost:8000 unavailable (HONCHO_API_KEY and ~/.honcho/config.json apiKey are both missing); local bindings converged
 
@@ -59,7 +144,7 @@ $ argus up      # up #2 (idempotent)
   ~/.argus-repos byte-identical (no dupe rows) ... YES
   .claude/settings.local.json byte-identical ..... YES
   $CODEX_HOME/config.toml byte-identical ......... YES
-  registry rows: "/private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP\n"
+  registry rows: "/private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/scratch-argus-harness-PJehaO\n"
 
 ------------------------------------------------------------------------------
 4. argus up  (from a nested subdirectory — repo-root resolution)
@@ -67,10 +152,21 @@ $ argus up      # up #2 (idempotent)
 
 $ argus up      # up from subdir
   exit 0
-  out| Hermes profile: argus-scratch-argus-harness-nknajp
+  out| Hermes slow poll: existing (every 5m)
+  out| Hermes profile: argus-scratch-argus-harness-pjehao-5110fb957e37835e
   out| Push hooks: Claude Stop + Codex notify
-  out| cmux hooks: pending #7 (soft check)
-  out| Argus converged /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP
+  out| cmux hooks: optional (resume convenience; not required for signal delivery)
+  out|   cmux 0.62.2 has no `hooks` command — nothing in Argus requires one
+  out| wiring: claude skills adapter OK (1 canonical skill readable through .claude/skills)
+  out| wiring: AGENTS.md pointers OK (6/6 resolve)
+  out| wiring: Hermes memory binding OK (profile memories -> .argus/memory)
+  out| wiring: Hermes skills binding OK (profile skills.external_dirs includes .argus/skills)
+  out| Committed nothing. Argus never commits for you by default.
+  out|   Integration files not yet in git: .gitignore, AGENTS.md, docs/agents
+  out|   git add -- .gitignore AGENTS.md docs/agents
+  out|   git commit -m "chore: adopt Argus"
+  out|   (or re-run `argus up --commit` to let Argus do exactly that)
+  out| Argus converged /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/scratch-argus-harness-PJehaO
   err| TRACKER-LESS MODE: no GitHub remote; skipped GitHub labels and tracker checks
   err| HONCHO DEGRADED: http://localhost:8000 unavailable (HONCHO_API_KEY and ~/.honcho/config.json apiKey are both missing); local bindings converged
 
@@ -80,12 +176,12 @@ $ argus up      # up from subdir
 
 $ argus status      # status (repo enrolled)
   exit 0
-  out| REPO                                                                                                        EYE       STATE    PID
-  out| /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP  reviewer  stopped  -
-  out| /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP  archiver  stopped  -
-  out| /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP  honcho    stopped  -
-  out| /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP  digest    stopped  -
-  out| /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP  retro     stopped  -
+  out| REPO                                                                                                        EYE       STATE    PID  LAST SUCCESS  BACKLOG  LAST ERROR
+  out| /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/scratch-argus-harness-PJehaO  reviewer  stopped  -    -             -        -
+  out| /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/scratch-argus-harness-PJehaO  archiver  stopped  -    -             -        -
+  out| /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/scratch-argus-harness-PJehaO  honcho    stopped  -    -             -        -
+  out| /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/scratch-argus-harness-PJehaO  digest    stopped  -    -             -        -
+  out| /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/scratch-argus-harness-PJehaO  retro     stopped  -    -             -        -
 
 ------------------------------------------------------------------------------
 6. argus search  (against seeded archive content)
@@ -93,7 +189,7 @@ $ argus status      # status (repo enrolled)
 
 $ argus search torn      # search with no archive
   exit 1
-  err| argus search: no archive exists for /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP
+  err| argus search: no archive exists for /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/scratch-argus-harness-PJehaO
   archived 2/2 messages into .argus/archive.db
 
   seeded 45056 bytes of .argus/archive.db
@@ -124,36 +220,36 @@ $ argus search      # search with no query
   (a real daemon MUST still be alive after the observation window;
    #36 measured all five as `exit 1 — not implemented yet`)
 
-$ argus watch reviewer --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP      # watch reviewer
+$ argus watch reviewer --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/scratch-argus-harness-PJehaO      # watch reviewer
   exit 0
-  ==> pid 85535 ALIVE after the window, then exited 0 on SIGTERM
+  ==> pid 10285 ALIVE after the window, then exited 0 on SIGTERM
 
-$ argus watch archiver --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP      # watch archiver
+$ argus watch archiver --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/scratch-argus-harness-PJehaO      # watch archiver
   exit 0
-  ==> pid 85605 ALIVE after the window, then exited 0 on SIGTERM
+  ==> pid 10360 ALIVE after the window, then exited 0 on SIGTERM
 
-$ argus watch honcho --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP      # watch honcho
+$ argus watch honcho --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/scratch-argus-harness-PJehaO      # watch honcho
   exit 0
   err| HONCHO DEGRADED: credentials unavailable; messages remain queued and the eye keeps retrying
-  ==> pid 85650 ALIVE after the window, then exited 0 on SIGTERM
+  ==> pid 10389 ALIVE after the window, then exited 0 on SIGTERM
 
-$ argus watch digest --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP      # watch digest
+$ argus watch digest --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/scratch-argus-harness-PJehaO      # watch digest
   exit 0
-  ==> pid 85732 ALIVE after the window, then exited 0 on SIGTERM
+  ==> pid 10447 ALIVE after the window, then exited 0 on SIGTERM
 
-$ argus watch retro --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP      # watch retro
+$ argus watch retro --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/scratch-argus-harness-PJehaO      # watch retro
   exit 0
-  ==> pid 85788 ALIVE after the window, then exited 0 on SIGTERM
+  ==> pid 10478 ALIVE after the window, then exited 0 on SIGTERM
 
   the two legible refusals #39 claims (these DO exit on their own):
 
-$ argus watch nosuchteye --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP      # watch with an unknown eye
+$ argus watch nosuchteye --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/scratch-argus-harness-PJehaO      # watch with an unknown eye
   exit 1
   err| argus watch: unknown eye 'nosuchteye'; expected one of reviewer, archiver, honcho, digest, retro
 
-$ argus watch reviewer --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/unenrolled-repo      # watch an unenrolled repo
+$ argus watch reviewer --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/unenrolled-repo      # watch an unenrolled repo
   exit 1
-  err| argus watch reviewer: repo is not enrolled: /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/unenrolled-repo
+  err| argus watch reviewer: repo is not enrolled: /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/unenrolled-repo
 
 ------------------------------------------------------------------------------
 7b. the REAL supervisor daemon spawning those same `argus watch` children
@@ -173,13 +269,13 @@ $ argus watch reviewer --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/a
 
 $ argus down      # down
   exit 0
-  out| Argus stopped /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP
-  out| Supervisor unloaded (no enabled repos)
+  out| Argus stopped /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/scratch-argus-harness-PJehaO
+  out| No enabled repos remain; supervisor lifecycle is externally managed
   registry after down: ""
 
 $ argus status      # status (after down)
   exit 0
-  out| REPO  EYE  STATE  PID
+  out| REPO  EYE  STATE  PID  LAST SUCCESS  BACKLOG  LAST ERROR
 
 ------------------------------------------------------------------------------
 9. clone-is-install bootstrap
@@ -187,24 +283,39 @@ $ argus status      # status (after down)
 
 $ argus install      # install (fresh scratch HOME)
   exit 0
-  out| Installed argus at /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/install-home/.local/bin/argus
-  /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/install-home/.local/bin/argus -> /Users/johansardar/argus-worktrees/reaccept/src/cli.ts
+  out| Installed argus at /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/install-home/.local/bin/argus
+  /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/install-home/.local/bin/argus -> /Users/johansardar/argus-worktrees/evidence-refresh/src/cli.ts
 
 $ argus install      # install (second run — idempotent)
   exit 0
-  out| Argus is already installed at /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/install-home/.local/bin/argus
+  out| Argus is already installed at /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/install-home/.local/bin/argus
 
-$ /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/install-home/.local/bin/argus --help      # the installed launcher actually runs
+$ /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/install-home/.local/bin/argus --help      # the installed launcher actually runs
   exit 0
   out| Argus — orchestration and self-learning toolkit
   out| Usage: argus <command>
   out| Commands:
-  out|   up       converge and start this repo's eyes
+  out|   init     scaffold this repo for Argus (repo-local only; no machine wiring)
+  out|   up       init, converge machine wiring, and start this repo's eyes
   out|   down     stop this repo's eyes
-  out|   status   inspect this repo's eyes
+  out|   status   inspect eyes and audits; acknowledge with --ack <audit-id>
   out|   watch    run one eye
+  out|   grill    open a registered, attachable planning session (SPEC §7.2)
+  out|   dispatch run one AFK ticket-dispatch pass (SPEC §7.3)
+  out|   complete verify, merge, close and map finished tickets (SPEC §7.3.4)
+  out|   signals  consume push events and run one slow-poll fallback sweep
   out|   search   search the transcript archive
+  out|   memory   one-time memory-store migrations
   out|   install  install argus from this checkout
+  out| Flags:
+  out|   --mode     (grill) which planning skill to route to: grilling (default),
+  out|              spec, tickets, review, diagnosis. All route to Claude Code.
+  out|   --dry-run  (grill) print the routed skill and the exact opening prompt and
+  out|              stop; no workspace, no registry row, no session.
+  out|   --commit   (init, up) commit the integration files Argus wrote —
+  out|              .gitignore, AGENTS.md and docs/agents — as they stand in the
+  out|              working tree, in one "chore: adopt Argus" commit. Without it
+  out|              Argus commits nothing and prints the command instead.
 
 $ argus install      # from a non-checkout copy (must refuse)
   exit 1
@@ -239,13 +350,13 @@ SWEEP SUMMARY
   exit   0  argus search temp-then-rename
   exit   0  argus search zzz-nothing-matches-this
   exit   1  argus search
-  exit   0  argus watch reviewer --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP
-  exit   0  argus watch archiver --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP
-  exit   0  argus watch honcho --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP
-  exit   0  argus watch digest --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP
-  exit   0  argus watch retro --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP
-  exit   1  argus watch nosuchteye --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/scratch-argus-harness-nKNaJP
-  exit   1  argus watch reviewer --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-nKNaJP/unenrolled-repo
+  exit   0  argus watch reviewer --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/scratch-argus-harness-PJehaO
+  exit   0  argus watch archiver --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/scratch-argus-harness-PJehaO
+  exit   0  argus watch honcho --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/scratch-argus-harness-PJehaO
+  exit   0  argus watch digest --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/scratch-argus-harness-PJehaO
+  exit   0  argus watch retro --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/scratch-argus-harness-PJehaO
+  exit   1  argus watch nosuchteye --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/scratch-argus-harness-PJehaO
+  exit   1  argus watch reviewer --repo /var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-PJehaO/unenrolled-repo
   exit   0  argus down
   exit   0  argus status
   exit   0  argus install

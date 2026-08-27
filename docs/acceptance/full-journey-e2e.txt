@@ -1,37 +1,67 @@
 ==============================================================================
-ARGUS FULL REAL-DRIVER JOURNEY ACCEPTANCE — ticket #83
+ARGUS FULL REAL-DRIVER JOURNEY ACCEPTANCE — ticket #83, RE-DRIVEN by #107
 ==============================================================================
-Run date        2026-08-26
-checkout        /Users/johansardar/argus-worktrees/full-journey-run
-branch          build/full-journey-run
-gate            ARGUS_LIVE_FULL_JOURNEY=1
-composed gates  ARGUS_LIVE_AGENTS=1, ARGUS_LIVE_CLAUDE_SUBSCRIPTION=1
-agent policy    Claude Opus 5 + Codex sol/high, subscription CLIs only
-credentials     no API key, no token; ~/.codex/auth.json copied only into the
-                harness scratch CODEX_HOME; ~/.claude/.credentials.json was
-                never read, copied, checksummed or written by the harness
-isolation       harness-created scratch HOME, CODEX_HOME, HERMES_HOME,
+THIS FILE SUPERSEDES THE #83 RUN (2026-08-26, merged 13:04).
+
+#101's gate × evidence map graded it STALE, and its reason was exposure rather
+than a named break: #83 merged before all nine merges of the 16:43-20:23 wave,
+and it is the most composed drive in the repo, so it was exposed to #94, #95,
+#89, #96 and #100 at once. A re-drive is the only thing that can settle what
+that exposure did. It did nothing: the journey passes unchanged at HEAD.
+
+WHAT DID NOT MOVE UNDER IT, checked rather than assumed. `full-journey.ts`
+greps clean for `deployWorker` and `trustDirectory` — the journey spawns its
+Claude leg through `createSubscriptionAgentSpawner` directly, never through the
+deployment primitive. So #95's tab change and #96's pre-trust step, which are
+what went stale under `deploy-primitive.txt`, are not on this path at all. The
+STALE grading was a correct precaution and the re-drive discharges it.
+
+#83's substantive finding STANDS and is re-measured, not merely inherited: the
+13.1 "1 of 2 replies" shortfall is again 2 of 2, through production's own
+repo-scoped transcript source, archived exactly once across an archiver
+kill/restart.
+
+------------------------------------------------------------------------------
+Identity of the code this file is a record of
+------------------------------------------------------------------------------
+  HEAD          c4d946952a47f9396a2d65b5c2cfa62efc17bd7d
+                (5d405c0 + #107's evidence-observability commit, which does not
+                 touch any path this journey runs)
+  branch        build/evidence-refresh
+  run date      2026-08-27T05:07:29Z
+  gate          ARGUS_LIVE_FULL_JOURNEY=1   (claude `run`, codex `run`)
+  composed      ARGUS_LIVE_AGENTS=1, ARGUS_LIVE_CLAUDE_SUBSCRIPTION=1 — set by
+                the OPERATOR by hand. `full-journey.ts:124` says in a comment
+                that #43's gate deliberately does NOT open this one; these two
+                are not implied by anything in the code.
+  result        11 pass  0 fail  50 expect() calls  [8.02s]  exit 0
+  agent policy  Claude Opus 5 + Codex sol/high, subscription CLIs only
+  credentials   no API key, no token. ~/.codex/auth.json copied only into the
+                harness scratch CODEX_HOME. ~/.claude/.credentials.json was
+                never read, copied or written; it was checksummed before and
+                after and is unchanged (fed88619...e7d6).
+  isolation     harness-created scratch HOME, CODEX_HOME, HERMES_HOME,
                 CLAUDE_CONFIG_DIR and sandbox repo/worktrees; the explicitly
-                named Claude subscription child used the existing real HOME
+                named Claude subscription child used the real HOME
                 subscription path with its cwd confined by SandboxScope
+  bun           1.3.12
+  claude        2.1.247   (#83 ran against 2.1.246)
+  codex-cli     0.149.1
 
-The first genuine run passed every behavioral assertion and exposed one stale
-manifest claim: 13.1.batch-end-to-end still said production saw 1 of 2 live
-agent replies "until the journey is rerun". This run is that rerun. Both the
-initial and final-code runs observed 2 of 2 replies through production's own
-repo-scoped transcript source and archived both exactly once across an archiver
-kill/restart. A red-first manifest regression now preserves that finding while
-leaving the undriven merge/close leg PARTIAL.
+VERDICTS, in #63's vocabulary and not overstated: 3 of 3 scenarios reach LIVE
+here, because this drive records evidence from agents it actually spawned —
+which is the only way a slot reaches LIVE. Every one of them still carries
+PARTIAL and UNCOVERED requirements, listed verbatim below. `run` is a gate
+status; LIVE is a scenario verdict; they are different axes.
 
-The final-code command was:
-  env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
-    -u CLAUDE_CODE_OAUTH_TOKEN \
+The command was:
+  env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u CLAUDE_CODE_OAUTH_TOKEN \
     ARGUS_LIVE_FULL_JOURNEY=1 ARGUS_LIVE_AGENTS=1 \
     ARGUS_LIVE_CLAUDE_SUBSCRIPTION=1 \
     bun test src/harness/full-journey.test.ts
 
 ------------------------------------------------------------------------------
-Final-code terminal output (verbatim)
+Verbatim terminal output
 ------------------------------------------------------------------------------
 bun test v1.3.12 (700fc117)
 
@@ -40,6 +70,7 @@ ARGUS_LIVE_FULL_JOURNEY=1 — the FULL real-driver journey is ENABLED (this spen
   claude  RUN      gate set, the CLI is present and no API key or token is needed
   codex   RUN      gate set, the CLI is present and no API key or token is needed
   SPEC §1: no Anthropic API key, no token, no metered provider — the `claude` and `codex` CLIs only
+argus supervisor: archiver watcher pid 25094 for /private/var/folders/rx/w6wxv0p97bv7hpvzqlv9jy7r0000gn/T/argus-harness-E6Op8u/scratch-argus-harness-E6Op8u exited with code 137; restart 1/5 in 25ms
 
 live evidence:
   claude: exit 0 from claude (20 bytes of stdout)
@@ -48,7 +79,7 @@ live evidence:
   agents: 2 sentinel reply/replies across 2 live leg(s)
   repo-scoped source: 2 of 2 live sentinel reply/replies visible to the watchers
   archiver: 2 live message(s) in archive.db
-  archiver death: pid 36538 killed, pid 36552 backfilled 2/2 live message(s)
+  archiver death: pid 25094 killed, pid 25099 backfilled 2/2 live message(s)
   USER.md: 216 bytes unchanged across the live journey
 
 SPEC §13 verdicts — STRUCTURAL means real code paths over substituted components.
@@ -89,5 +120,4 @@ A slot reaches LIVE only by recording evidence from an agent it actually spawned
  11 pass
  0 fail
  50 expect() calls
-Ran 11 tests across 1 file. [10.08s]
-FULL_JOURNEY_EXIT=0
+Ran 11 tests across 1 file. [8.02s]
