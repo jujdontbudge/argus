@@ -1,0 +1,178 @@
+==============================================================================
+TRANSCRIBED FROM A GITHUB COMMENT — NOT A FRESH RUN
+==============================================================================
+This file is NOT a measurement. Every number and quotation below was recorded
+by the author of ticket #77 in a comment on that issue, and is copied here by
+ticket #101 so that it survives `git clone`. Nothing here was re-executed.
+
+  source        github.com/JohanSardar/argus issue #77, comment by JohanSardar
+  comment date  2026-08-26T11:19:28Z (implementation), 2026-08-26T11:36:08Z (merge)
+  transcribed   2026-08-26 by ticket #101
+  code state    the run was made on `build/real-brains` @ d6b1cb3, merged as
+                847f7e9. `main` is ~16 merges past that as of transcription.
+
+A transcription is WEAKER EVIDENCE THAN A FRESH RUN. It cannot be diffed
+against the code it describes, because nobody re-derived it from the code.
+
+  gate      ARGUS_LIVE_WATCHER_BRAINS   (src/eyes/live-gate.ts:6)
+  driver    src/harness/real-brains.ts
+  opened by ARGUS_LIVE_WATCHER_BRAINS=1 bun test src/harness/real-brains.test.ts
+
+------------------------------------------------------------------------------
+WHY THIS FILE EXISTS WHEN THE GATE ALREADY HAS ONE
+------------------------------------------------------------------------------
+This gate DOES have a current, freshly-measured file:
+`docs/acceptance/watcher-brains-correct.txt`, from #91 (merged 2026-08-26
+18:07). That file is the better evidence and should be cited in preference to
+this one for anything about brain CORRECTNESS.
+
+But #91 re-ran the gate to answer a DIFFERENT question. #91's own text says so:
+
+  "The gate has run before (#77) and it proved a real brain returned something
+   the code could PARSE. It did not prove the answer was RIGHT."
+
+#77's distinct result — WHICH double was retired in each of eight slots, and
+the per-slot call distribution — appears in no file in the tree. Two different
+measurements of one gate. This transcribes the earlier one; #91's file stands
+on its own.
+
+------------------------------------------------------------------------------
+1. THE OUTCOME, STATED UP FRONT IN THE COMMENT
+------------------------------------------------------------------------------
+"The outcome is deliberately 8 STRUCTURAL, 0 LIVE. Each opt-in rendering reruns
+its own slot and assertions with production's existing `createCodexBrain` path
+at the settled ADR-0002 default (`gpt-5.6-luna`, low). No scenario spawns a live
+agent and none calls `recordLiveEvidence`, so a real watcher brain does not buy
+a LIVE label."
+
+------------------------------------------------------------------------------
+2. PER-SLOT BEFORE -> AFTER, VERBATIM FROM THE COMMENT'S TABLE
+------------------------------------------------------------------------------
+Coverage is `covered / partial / uncovered`. The AFTER column is the
+`*-real-brain` rendering. In every row the exact double retired is `brain`.
+
+  slot 1  Autonomous batch
+    BEFORE  STRUCTURAL; `agent, brain, tracker`; 0/7/0
+    AFTER   STRUCTURAL; `agent, tracker`;        3/4/0
+    remains The Reviewer, Digest, and completion review all used the real
+            watcher brain (4 calls). The worker/gates remain fixtures,
+            transcript rows are synthesized, and `gh` is still fake.
+
+  slot 2  Fake-Johan takeover
+    BEFORE  STRUCTURAL; `agent, brain, cmux, honcho`; 0/3/1
+    AFTER   STRUCTURAL; `agent, cmux, honcho`;        1/2/1
+    remains Reviewer, Digest, and scope-drift Retro used the real brain
+            (4 calls). No driver attached, no `cmux send` occurred, the
+            takeover is a fixture row, and Honcho is still in-memory.
+
+  slot 3  Rogue session
+    BEFORE  STRUCTURAL; `agent, brain, tracker`; 0/4/0
+    AFTER   STRUCTURAL; `agent, tracker`;        1/3/0
+    remains Digest and Retro used the real brain (2 calls). The unregistered
+            session is still synthesized and filing still goes through
+            `createFakeGh`.
+
+  slot 6  Watcher death
+    BEFORE  STRUCTURAL; `agent, brain`; 1/2/0
+    AFTER   STRUCTURAL; `agent`;        1/2/0
+    remains "This slot asks no judgment question, so it honestly spent 0 calls
+            rather than inventing one." Watchers/restarts are real; the
+            transcript they die over remains synthesized.
+
+  slot 7  Signal paths
+    BEFORE  STRUCTURAL; `agent, brain, cmux, hooks`; 1/3/0
+    AFTER   STRUCTURAL; `agent, cmux, hooks`;        1/3/0
+    remains Digest used the real brain (1 call). Sessions remain fixture
+            transcripts; `cmux` is stubbed and native hooks are still called
+            in-process.
+
+  slot 8  Self-learning loop
+    BEFORE  STRUCTURAL; `agent, brain`; 0/3/0
+    AFTER   STRUCTURAL; `agent`;        2/1/0
+    remains Reviewer extraction + skills and Curator used the real brain
+            (3 calls). The repeated procedure is still two scripted fixture
+            sessions, not an observed repeat across live agents.
+
+  slot 9  Semantic isolation
+    BEFORE  STRUCTURAL; `agent, brain, honcho`; 0/2/1
+    AFTER   STRUCTURAL; `agent, honcho`;        0/2/1
+    remains "This path has no watcher-brain judgment, so it spent 0 calls."
+            `FixtureHoncho` still proves peer routing, not a derived
+            representation; the separate #76 Honcho rendering remains the
+            real-service evidence.
+
+  slot 10 Blast-radius zero
+    BEFORE  STRUCTURAL; `agent, brain`; 2/0/0
+    AFTER   STRUCTURAL; `agent`;        2/0/0
+    remains "The idle peer eyes ask no judgment question, so this spent 0
+            calls." Its production watcher processes/archiver are real, but no
+            live agent session supplies work.
+
+"The core ten are unchanged and still print their fixture-brain doubles in
+default `bun test`; these are ADDITIVE renderings, never a re-grade of a run
+that did not use the real brain."
+
+------------------------------------------------------------------------------
+3. ASSERTION AUDIT
+------------------------------------------------------------------------------
+  Removed `expect(`   0
+  Added   `expect(`   21
+
+"No existing default fixture predicate was loosened: exact slug/text/title
+assertions stay on the fixture path. The new injected-model path adds semantic
+checks for model-chosen slugs and paraphrases while retaining the same
+SPEC-addressed assertion descriptions. No assertion was removed to improve a
+verdict."
+
+From the merge comment, on the two `assert(` lines that appeared as removed in
+the diff: "They are MOVED, not deleted — into an `if (scenarioBrain ===
+undefined)` branch that keeps the exact fixture assertions (`metro-port.md`,
+'Metro runs on 8082.'), with a real-brain counterpart under the SAME assertion
+description strings. The counterpart is STRICTER, not looser:
+`matching.length === 1` is an exact cardinality where the fixture path had a
+substring check. Pinning the fixture's slug on a model path would test spelling,
+not judgment."
+
+------------------------------------------------------------------------------
+4. GATE NUMBERS AS REPORTED IN THE COMMENT
+------------------------------------------------------------------------------
+  default `bun test`, gate unset
+      explicit `gate-unset` / SKIPPED banner, 0 watcher-brain calls, core
+      verdicts unchanged. 894 pass / 18 skip / 0 fail (912 tests, 127 files).
+
+  ARGUS_LIVE_WATCHER_BRAINS=1 bun test src/harness/real-brains.test.ts
+      gate reached `run`. 14 calls observed, sequential, distributed:
+          slot 1 = 4, slot 2 = 4, slot 3 = 2, slot 6 = 0,
+          slot 7 = 1, slot 8 = 3, slot 9 = 0, slot 10 = 0
+      5 pass / 0 fail, all eight graded STRUCTURAL, zero live evidence.
+
+  "A full suite with that shared gate open would ALSO run the four pre-existing
+   watcher-brain integration cases (Reviewer 1, Curator 1, Retro 2): 18 nominal
+   calls total before any production retry. I ran the new harness target, not
+   the whole gated suite." — noted here because it is a live cost fact that is
+   easy to under-count.
+
+  Gate set with no Codex CLI is tested as `not-run`, never a silent pass.
+  Missing API keys are not blockers.
+
+  bun x tsc --noEmit                 clean
+  pgrep -f 'bin/bun.*cli\.ts watch'  0
+  after merge to main @ 94a6fc7      909 pass / 19 skip / 0 fail, 928 tests
+                                     across 128 files
+
+------------------------------------------------------------------------------
+5. AN UNREQUESTED CHANGE THAT WAS KEPT — recorded because it is a SPEC §1 fact
+------------------------------------------------------------------------------
+"`createCodexBrain` now strips `OPENAI_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN`
+alongside the Anthropic pair, and does it at the brain seam instead of inside
+`defaultSpawn`. That is Directive 12 / SPEC §1 item 8 enforced where it belongs
+— an inherited provider credential can no longer turn the same `codex exec`
+into metered API access. Making `SpawnRequest.env` required rather than ambient
+forces every call site to be explicit; tsc confirms they all are."
+
+------------------------------------------------------------------------------
+6. WHAT #101 DID NOT DO
+------------------------------------------------------------------------------
+#101 did not re-derive any number above from the code. For this gate's CURRENT
+evidence see `watcher-brains-correct.txt` (#91). See GATE-EVIDENCE-MAP.md for
+the currency assessment and gate-rerun-101.txt for #101's own runs.

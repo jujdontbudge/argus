@@ -1,0 +1,341 @@
+==============================================================================
+TICKET #101 HALF 2 — GATES RE-RUN FRESH, AND GATES REFUSED
+==============================================================================
+Unlike the three transcription files this ticket also produced, EVERYTHING IN
+THIS FILE WAS MEASURED. Every number below came out of a command run on this
+machine on the date shown.
+
+  run on          2026-08-26, this machine
+  worktree        /Users/johansardar/argus-worktrees/evidence-audit
+  branch          build/evidence-audit
+  base commit     4a49096 (merge of #100 — the newest commit on `main`)
+  bun             1.3.12
+  claude          2.1.247 (Claude Code), native install ~/.local/bin/claude
+  codex           codex-cli 0.149.1
+  load at start   5.84    load before the suite   6.98
+  contention      #99 held the live watcher fleet lease and was running a live
+                  Hermes drive throughout. Nothing here started a watcher
+                  fleet, created a cmux workspace, or touched Hermes.
+
+Credential checksums, verified BEFORE the first run and again AFTER the last.
+Unchanged across every gate below:
+
+  hermes  da742362b9e49833760e31672d012dd9e894389617a965074a3244eb2b349220
+  codex   670a91106a15b04c48f5504375c448c3115ed3ade0aa3cef083a4fc603233e3a
+
+~/.claude/.credentials.json was never read, copied or opened. No
+`claude setup-token`, `/login`, `/logout` or `claude auth` was invoked. No
+default, model or effort was changed (#54 stays settled: luna@low).
+
+------------------------------------------------------------------------------
+1. FOUR GATES RUN FRESH
+------------------------------------------------------------------------------
+All four reached #43's `run`. None was `gate-unset` or `not-run`.
+
+  ARGUS_LIVE_HONCHO                        run
+  ARGUS_LIVE_SLOTS                         run
+  ARGUS_LIVE_CLAUDE_SUBSCRIPTION           run
+  ARGUS_LIVE_CODEX_DEPLOY                  run
+
+The first two were chosen because their only prior record was a GitHub comment
+— they are the gaps this ticket exists to close. The second two were chosen
+because GATE-EVIDENCE-MAP.md grades their evidence STALE: #55's file claims to
+drive "deployWorker itself", and #96 has since inserted a pre-trust step into
+that primitive.
+
+..............................................................................
+1a. ARGUS_LIVE_HONCHO — fresh, and it agrees with #76's transcription
+..............................................................................
+  command   ARGUS_LIVE_HONCHO=1 bun test src/harness/honcho-isolation.test.ts \
+              src/eyes/honcho/live.test.ts
+  result    7 pass  0 fail  23 expect()  [3.00s]
+  gate line "ARGUS_LIVE_HONCHO=1 — the §13.9 LIVE Honcho isolation slot is RUN:
+             gate set, credentials configured, and the local Honcho service is
+             healthy"
+  service   local Honcho, http://localhost:8000, /health -> 200
+  spend     ZERO model calls. SPEC §1: a LOCAL self-hosted Honcho only.
+
+  verdict   9-live  STRUCTURAL  1 covered / 2 partial / 1 uncovered
+            doubles: agent, brain
+            1 of 1 scenarios STRUCTURAL; 0 of 1 LIVE.
+
+  workspaces observed live:
+    primary  argus-scratch-argus-harness-ov2zgv-c5c3999b79037484ff2f54d8ce88dc8c92b8c6e4e176d4ff5b7f3d9b04851600
+    peer     argus-scratch-argus-harness-65ugty-66156446a72b4090e15878b66d80c65f98b821b4cd0cea8d6f1a66f0325e4e26
+    johan representation, primary: ""   peer: ""
+
+  AGREEMENT WITH THE TRANSCRIPTION. #76's comment reported 7 pass / 0 fail,
+  ~3s, STRUCTURAL, 1 covered / 2 partial / 1 uncovered, and an empty
+  representation. Every one of those reproduced exactly. The transcription is
+  now corroborated by a measurement — but note the ordering: the transcription
+  is still a transcription, and this run is what makes it trustworthy, not the
+  other way round.
+
+  ONE DRIFT THE FRESH RUN CAUGHT, which the transcription could not have.
+  `13.9.repo-isolation`'s shortfall text has been REWRITTEN since #76. #76's
+  comment said only that "AUDIT.md §4 item 11's `argus-<basename>` collision is
+  still not exercised". Current source says more, and it is a correction:
+
+    "#79: that collision is CLOSED in production (`repoIdentity` returns
+     `argus-<slug>-<sha256(canonical repo)>`, `src/up/bindings.ts:207-211`);
+     what goes unexercised here is the derivation that closes it, not a live
+     bug"
+
+  A reader working from #76's comment alone would still believe there is an
+  open collision bug. There is not. This is exactly the failure mode the ticket
+  describes — a comment cannot be diffed when the claim under it changes.
+
+..............................................................................
+1b. ARGUS_LIVE_SLOTS — fresh, six real CLI turns
+..............................................................................
+  command   ARGUS_LIVE_SLOTS=1 bun test src/harness/live-slots.test.ts
+  result    10 pass  0 fail  46 expect()  [59.12s]
+  gate line "ARGUS_LIVE_SLOTS=1 — §13 slots 4 and 5 run against REAL agents
+             (this spends Johan's subscription)"
+              claude  RUN   gate set, the CLI is present and no API key or
+                            token is needed
+              codex   RUN   gate set, the CLI is present and no API key or
+                            token is needed
+  spend     6 real CLI turns — 4 codex, 2 claude. Subscription only.
+
+  slot 4 (codex) live evidence, session 01a040db-4fa8-7f93-acbd-ce6a9ab60412:
+    exit 0 from the simulation driver's dispatch (13 bytes of stdout)
+    exit 0 on a resumed turn (39 bytes)
+    exit 0 on a resumed turn (82 bytes)
+    exit 0 on a resumed turn (121 bytes)
+
+  slot 5 (claude) live evidence, session c5638124-8d01-45d3-ae4d-5da7c1098f41:
+    exit 0 from the simulation driver's dispatch (13 bytes of stdout)
+    exit 0 on a resumed turn (195 bytes)
+
+  verdicts  4. STRUCTURAL  1 covered / 2 partial / 0 uncovered  doubles: cmux, hermes
+            5. STRUCTURAL  1 covered / 2 partial / 0 uncovered  doubles: cmux, hermes
+            2 of 2 scenarios STRUCTURAL; 0 of 2 LIVE.
+
+  AGREEMENT WITH THE TRANSCRIPTION. #78 reported 10 pass / 0 fail, 46 expect(),
+  55.2s and 57.2s on two consecutive runs, 6 CLI turns split 4 codex / 2
+  claude, both slots STRUCTURAL with `agent` retired and `cmux, hermes`
+  standing. All of it reproduced. This is a third consecutive green run of a
+  drive that spends real quota, on a tree ~14 merges newer than the one #78
+  measured — which is the useful part: slots 4 and 5 survived #94, #95, #89,
+  #90, #96, #97 and #100 without a change to their verdicts.
+
+  ONE DRIFT THE FRESH RUN CAUGHT. `13.5.failure-visible`'s shortfall has been
+  substantially rewritten since #78, again by #79, and again in the direction
+  of "the production bug is fixed":
+
+    "#79: the production half of AUDIT.md §4 item 8 is CLOSED — audits no
+     longer print into /dev/null. `recordAudits` writes one durable deduped
+     file per audit under `.argus/audits` with an atomic `wx` temp + `link`
+     (`src/audits/store.ts:71-104`), `argus watch` routes every provenance
+     audit through it before logging (`src/watch.ts:82-90`), and `argus status`
+     surfaces the unacknowledged ones with `--ack <audit-id>`. The shortfall is
+     that THIS slot never touches that path"
+
+  #78's comment describes the shortfall as being about "production's
+  supervisor, which a live agent does not touch" — true then, superseded now.
+
+..............................................................................
+1c/1d. ARGUS_LIVE_CLAUDE_SUBSCRIPTION + ARGUS_LIVE_CODEX_DEPLOY — fresh
+..............................................................................
+One command opens both, exactly as #55's did. This is the re-run that #55's
+STALE file needed.
+
+  command   ARGUS_LIVE_CLAUDE_SUBSCRIPTION=1 ARGUS_LIVE_CODEX_DEPLOY=1 \
+              bun test src/deploy/live.test.ts
+  result    2 pass  0 fail  12 expect()  [24.13s]
+            (#55 recorded the same 2 pass / 12 expect() at 45.10s)
+  gate line "ARGUS_LIVE_CLAUDE_SUBSCRIPTION=1 — the subscription-mode Claude
+             drive is ENABLED
+               claude  RUN   gate set, the native claude CLI is present and no
+                             token is needed
+             argus: live Codex deploy integration RUN — gate set and the codex
+             CLI is on PATH"
+  spend     ONE real Claude subscription call. ZERO codex model calls.
+
+  claude half, against the CURRENT deployWorker (post-#95, post-#96):
+    preassigned session id  1578af03-79a5-49c7-be67-f50711baa498
+    branch                  argus/ticket-55
+    worktree                …/argus-live-deploy-eDfKiA-worktrees/ticket-55
+    transcript session ids  ["1578af03-79a5-49c7-be67-f50711baa498"]
+    registry row            agent=claude, ticket=55,
+                            ts=2026-08-27T01:36:16.106Z
+    SPEC §5 rule 1 holds: Argus NAMES the session, then starts it — the
+    transcript came back under the id Argus preassigned.
+
+  codex half:
+    announced session id    01a040dc-6e81-7de2-906c-00b69b0bf38c
+    rollout                 …/argus-codex-home-w4PRj4/sessions/2026/08/26/
+                            rollout-2026-08-26T20-36-23-01a040dc-….jsonl
+    registry row            agent=codex, ticket=55,
+                            ts=2026-08-27T01:36:23.083Z
+
+  WHAT I CHECKED AND DID NOT FIND. The codex half writing a rollout with a real
+  session id looked at first like a change from #55, which records "scratch
+  CODEX_HOME, NO auth (401 before any model call)". It is not a change. The
+  scratch CODEX_HOME still carries no auth and the run still 401s before the
+  model; the rollout's first user record is written BEFORE that, which is
+  precisely what #55's file and `src/deploy/live.test.ts:42-45` both say. The
+  codex half still spends nothing. Recorded here because it is the kind of
+  surface difference that would otherwise be re-investigated by the next reader.
+
+  WHAT THIS RE-RUN DOES AND DOES NOT SETTLE. It proves the deployment primitive
+  still deploys both agents correctly on current `main`. It does NOT retire
+  GATE-EVIDENCE-MAP.md's STALE grade on `deploy-primitive.txt`, because the
+  staleness there is a DESCRIPTION problem, not a behaviour problem: that file
+  claims to have driven the whole primitive, and the primitive has since grown
+  a pre-trust step (#96, `src/deploy/trust.ts`) and four new `Deployment`
+  fields — `workspace`, `surface`, `workspaceDegraded`, `trustDegraded`
+  (`src/deploy/deploy.ts:131-143`). `src/deploy/live.test.ts` does not assert
+  on any of those four. So the gate is green and the primitive is bigger than
+  the gate. That is a coverage gap this audit found and did not close.
+
+------------------------------------------------------------------------------
+2. GATES NOT RUN, AND WHAT EACH WOULD TAKE
+------------------------------------------------------------------------------
+This list is the other half of the deliverable. Each entry says WHY, not just
+THAT.
+
+  ARGUS_LIVE_WATCHER_BRAINS      needs the watcher fleet — REFUSED
+    `REAL_BRAIN_SLOTS = [1, 2, 3, 6, 7, 8, 9, 10]`
+    (`src/harness/real-brains.ts:51`) includes slots 6 and 10. Slot 6 is
+    "Watcher death" and slot 10 starts the peer's five eyes, both through the
+    real `WatcherSupervisor` — so opening this gate STARTS REAL `argus watch`
+    PROCESSES. #99 holds the live watcher fleet lease. Declined on that
+    ground alone, not for cost.
+    TO RUN IT: the fleet lease. Then
+    `ARGUS_LIVE_WATCHER_BRAINS=1 bun test src/harness/real-brains.test.ts`,
+    ~14 codex calls at luna/low (18 if the whole gated suite runs, per #77's
+    accounting), no metered spend. Its evidence is already CURRENT via #91.
+
+  ARGUS_LIVE_FULL_JOURNEY        needs the watcher fleet + agents — REFUSED
+    The most composed drive in the repo: it converges a sandbox with
+    `argus up` (which starts eyes) and deploys real agents. Contends with the
+    fleet on both counts.
+    TO RUN IT: the fleet lease, plus subscription quota for a full journey.
+    `ARGUS_LIVE_FULL_JOURNEY=1 bun test src/harness/full-journey.test.ts`.
+    HIGH VALUE — its evidence is STALE and it is the drive most exposed to
+    #94/#95/#89/#96/#100 simultaneously. This is the single most worthwhile
+    gate for whoever gets the lease next.
+
+  ARGUS_LIVE_AGENTS              needs the watcher fleet — REFUSED
+    The drive behind it runs `argus up` in its sandbox, which starts eyes.
+    TO RUN IT: the fleet lease + subscription quota. Evidence is STALE
+    (2026-08-25, ~25 merges back).
+
+  ARGUS_LIVE_BATCH_SEARCH        needs cmux surfaces — REFUSED
+    SPEC §14 bullet 2 requires "every ticket a fresh attachable cmux session".
+    Directive 14 forbids creating cmux workspaces and closing surfaces I did
+    not create.
+    TO RUN IT: authorization to open cmux surfaces, plus a committed runner —
+    `runBatchAndSearch` (`src/harness/batch-search.ts:679`) has no
+    `import.meta.main` and no script under `scripts/acceptance/`. Evidence is
+    CURRENT (#92), so this is low priority.
+
+  ARGUS_LIVE_CMUX                needs cmux surfaces — REFUSED
+    The gate's entire purpose is to drive the real cmux binary and assert the
+    ref/UUID fail-open/fail-closed asymmetry (#90). Cannot be run without
+    touching cmux.
+    TO RUN IT: authorization to open and close cmux surfaces. Evidence is
+    CURRENT (#90) and is the best-written file in the directory — it states
+    what moved under it. Low priority.
+
+  ARGUS_LIVE_GRILL               needs cmux + Hermes + Johan — REFUSED
+    SPEC §14 bullet 1 is "a grill session run through Hermes". #99 was running
+    a live Hermes drive; the grill also needs a cmux surface and a human on the
+    other end for the HITL leg.
+    TO RUN IT: the Hermes drive to finish, cmux authorization, Johan's
+    availability, and a committed runner (`runGrillLive`,
+    `src/harness/grill-live.ts:396`, has no entry point either).
+    SEE THE WARNING IN GATE-EVIDENCE-MAP.md before refreshing this one: the
+    trust-dialog hang `grill-live.txt` documents is the finding #96 was filed
+    to fix, so a naive re-run that overwrites the file deletes #96's
+    provenance. Re-run it ALONGSIDE the old file, not over it.
+
+  ARGUS_LIVE_HERMES              needs Hermes — REFUSED
+    #99 was mid-drive against Hermes. Running this concurrently would contend
+    for the same binary and state.db.
+    TO RUN IT: #99 to finish. Then
+    `ARGUS_LIVE_HERMES=1 bun test src/harness/hermes-live-gate.test.ts
+    src/tailing/hermes.live.test.ts`. NOTE ITS HALF-GATE: #47 recorded the
+    `real` half as `not-run` because `~/.hermes/profiles` did not exist. That
+    half has never run and closing it needs a real Hermes profile to exist,
+    which is Johan's call, not a harness change.
+
+  ARGUS_LIVE_LAUNCHD_SMOKE       needs to install a launchd job — DECLINED
+    The gate installs a real LaunchAgent plist. Ticket #101's own cleanup
+    contract requires `launchctl list | grep -ci argus` to be 0, and #99 is
+    live; a failed teardown would leave a registered job behind while another
+    ticket owns the machine's supervisor state.
+    TO RUN IT: a window where no other ticket holds supervisor state, then
+    `ARGUS_LIVE_LAUNCHD_SMOKE=1 bun test src/supervisor/launchd-live.test.ts`.
+    Its evidence is CURRENT (#85) and the supervisor path was untouched by all
+    nine of today's merges, so this is low priority.
+
+  SUMMARY: 4 of 12 run fresh. Of the 8 not run — 3 need the watcher fleet, 3
+  need cmux, 1 needs Hermes, 1 needs a launchd window. NONE was skipped for
+  cost, difficulty or time. Two of the eight (GRILL, BATCH_SEARCH) additionally
+  cannot be reproduced from the tree at all without first writing a runner.
+
+------------------------------------------------------------------------------
+3. THE REPOSITORY GATE
+------------------------------------------------------------------------------
+  bun x tsc --noEmit          clean (exit 0)
+  bun test                    1014 pass / 21 skip / 0 fail
+                              1035 tests across 140 files
+                              3551 expect() calls, 155.82s
+  load during the suite       6.98 — well under the 20 at which a failure is a
+                              load artifact. Nothing was re-run to make it pass.
+
+  The 21 skips are the live gates printing #43's SKIPPED banner on the default
+  path, which is the design: LAUNCHD_SMOKE, WATCHER_BRAINS (reviewer, digest,
+  curator, retro) and HONCHO each name themselves and say which variable would
+  open them.
+
+  A NOTE ON `bun test` AND THE WATCHER PROHIBITION, because it is a real
+  tension and should not be papered over. The default suite DOES spawn real
+  `argus watch` child processes — slot 6 kills and restarts them through an
+  in-process supervisor (`src/harness/index.ts:422-548`). Those are sandboxed,
+  harness-owned and harness-reaped, and `bun test` is this ticket's required
+  gate, so it was run. It is not the persistent fleet #99 holds the lease on.
+  The count returned to 0 afterwards (§4).
+
+------------------------------------------------------------------------------
+4. CLEANUP — the four checks, measured after everything above
+------------------------------------------------------------------------------
+  ps -eo args | grep 'cli\.ts watch' | grep -v grep | wc -l      0
+  launchctl list | grep -ci argus                                0
+  cmux --id-format both tree --all | grep -c "workspace "        8   UNCHANGED
+  ls -d /private/tmp/argus-*                                     (none)
+
+  Credential checksums re-verified after the last run, both unchanged from the
+  baselines at the top of this file.
+
+  All five sandboxes this ticket created removed themselves — verified by name:
+  argus-live-deploy-eDfKiA, argus-codex-home-w4PRj4, argus-harness-ov2zgv,
+  argus-harness-65ugty, argus-live-codex-Bt2N8h. All 0 present.
+
+  ONE OBSERVATION, NOT MINE TO FIX. `/var/folders/.../T/` holds 1064
+  `argus-*` entries, the oldest from 13:06 today. They are empty 64-byte
+  directory stubs left by harness sandboxes across many tickets, not leaked
+  content, and not specific to this ticket's runs. Flagged because 1064 is the
+  kind of number that stops being harmless eventually; no ticket owns it today.
+
+------------------------------------------------------------------------------
+5. WHAT THIS TICKET REFUSED TO DO
+------------------------------------------------------------------------------
+  * Did not start a watcher fleet, and did not run the two gates that would
+    have (WATCHER_BRAINS, FULL_JOURNEY) — #99 holds the lease.
+  * Did not create, close or touch any cmux workspace or surface. The count is
+    8, the same 8 as at the start.
+  * Did not kill any process it did not spawn.
+  * Did not read, copy or checksum ~/.claude/.credentials.json. Hermes and
+    codex auth.json were checksummed only, never opened.
+  * Did not present any transcription as a fresh run. The three transcribed
+    files carry a banner saying so and this file says which four gates were
+    actually measured.
+  * Did not overwrite `grill-live.txt` to make ARGUS_LIVE_GRILL look current —
+    doing so would delete the provenance of #96.
+  * Did not upgrade any verdict. Every slot that came out STRUCTURAL went in
+    STRUCTURAL; 0 of 12 scenarios observed reached LIVE, and none is claimed to.
+  * Did not push, merge or close anything.

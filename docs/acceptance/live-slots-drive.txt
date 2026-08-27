@@ -1,0 +1,192 @@
+==============================================================================
+TRANSCRIBED FROM A GITHUB COMMENT — NOT A FRESH RUN
+==============================================================================
+This file is NOT a measurement. Every number and quotation below was recorded
+by the author of ticket #78 in a comment on that issue, and is copied here by
+ticket #101 so that it survives `git clone`. Nothing here was re-executed.
+
+  source        github.com/JohanSardar/argus issue #78, comment by JohanSardar
+  comment date  2026-08-26T11:26:33Z (implementation), 2026-08-26T11:36:28Z (merge)
+  transcribed   2026-08-26 by ticket #101
+  code state    the run was made on `build/real-agents` @ 1bdf389, merged as
+                94a6fc7. `main` is ~14 merges past that as of transcription,
+                including #94, #95, #89, #90, #96, #97 and #100.
+
+A transcription is WEAKER EVIDENCE THAN A FRESH RUN. It cannot be diffed
+against the code it describes, because nobody re-derived it from the code. If
+you need to know whether ARGUS_LIVE_SLOTS still behaves this way, run it — do
+not cite this file.
+
+  gate      ARGUS_LIVE_SLOTS   (src/harness/live-slots.ts:101)
+  driver    src/harness/live-slots.ts — a real `ProvenanceScenarioDriver`
+  opened by ARGUS_LIVE_SLOTS=1 bun test src/harness/live-slots.test.ts
+
+This gate is opened by nothing else. Quoted: "a gate nothing else opens."
+
+------------------------------------------------------------------------------
+1. WHAT THE GATE DRIVES
+------------------------------------------------------------------------------
+Not a new journey and not a new scenario — the seam #25 shipped on day one,
+whose docblock has always said "the live harness swaps in a driver that deploys
+real agents and tails their real transcripts, leaving the scenario bodies
+untouched." The bodies are untouched.
+
+Behind ARGUS_LIVE_SLOTS=1, SPEC §13 slots 4 and 5 run their own code, their own
+assertions and their own manifests with a live CLI on the other end of every
+message — multi-turn, through `codex exec resume` and `claude -p --resume`,
+both verified to append to one transcript under one session id.
+
+------------------------------------------------------------------------------
+2. PER-SLOT VERDICTS, VERBATIM FROM THE COMMENT'S TABLE
+------------------------------------------------------------------------------
+  slot 4 — poisoning
+    BEFORE (fixture)  STRUCTURAL — doubles `agent, cmux, hermes` — 0 covered /
+                      3 partial
+    AFTER, gate open  STRUCTURAL — doubles `cmux, hermes` — 1 covered /
+                      2 partial
+    double retired    `agent`
+    what remains      `hermes`: the registry rows are appended by the harness,
+                      not written by a Hermes process. `cmux`: the nudges
+                      arrive by `codex exec resume`, not a send into a deployed
+                      tab. `13.4.user-md-untouched` stays PARTIAL — this slot
+                      still never opens the file; #74's journey is the only
+                      place the bytes are compared.
+
+  slot 5 — unlogged send
+    BEFORE (fixture)  STRUCTURAL — doubles `agent, cmux, hermes` — 1 covered /
+                      2 partial
+    AFTER, gate open  STRUCTURAL — doubles `cmux, hermes` — 1 covered /
+                      2 partial
+    double retired    `agent`
+    what remains      Same two. The landing is real and genuinely unlogged; the
+                      DOOR is still a double. `13.5.failure-visible` unchanged
+                      — AUDIT.md §4 item 8's /dev/null finding is about
+                      production's supervisor, which a live agent does not
+                      touch.
+
+  slots 1, 2, 3, 7, 9   unchanged, no double retired
+    "Each chains a half that calls `agentSays(text)` — scripting what the
+     ASSISTANT says. No live agent can be made to; the only way to force it is
+     a prompt, which is a user-role row nobody logged, which the classifier
+     correctly reads as a Johan takeover — breaking the very slots it was meant
+     to serve." Slot 1 additionally chains three halves (archiver, hermes,
+     codex) tailing their own fixture transcripts, so a live provenance driver
+     would leave `agent` HALF-retired, "which is not retired."
+
+  slots 6, 8, 10        unchanged, no double retired
+    Take no `ProvenanceScenarioDriver` at all: 6 and 10 drive real supervisor
+    processes, 8 drives a reviewer brain. #74 already renders 6 live from the
+    FULL journey.
+
+NO SLOT REACHED LIVE, AND NONE IS CLAIMED TO HAVE. Quoted: "`verdictFor` is
+untouched: LIVE is still zero doubles plus recorded evidence. Retiring `agent`
+leaves two doubles standing, so the honest word is still STRUCTURAL. Widening
+LIVE to mean 'a real agent was involved' is the trade #76 refused and this
+refuses it too."
+
+------------------------------------------------------------------------------
+3. THE ANTI-VACUITY AND ANTI-SEAM GUARDS
+------------------------------------------------------------------------------
+  * `agentSays` THROWS rather than pretending — "a live agent cannot be
+    scripted to say a specific sentence — this slot is not live-drivable". That
+    refusal is what scoped the ticket to slots 4 and 5 instead of claiming all
+    ten.
+  * `liveSlotScenario` THROWS if a live drive completes without spawning a
+    single agent turn, so a live leg cannot pass vacuously.
+  * Retirement is evidence-gated exactly like LIVE: `gradeScenario` subtracts
+    `retiredByLiveDrive` only from a report whose `liveEvidence` is non-empty,
+    and `recordLiveEvidence` is reachable only from code that spawned an agent.
+    `effectiveDoubles` returns the manifest's doubles unchanged when
+    `liveEvidence.length === 0`. A manifest edit retires nothing.
+  * Every spawn goes through production spawners
+    (`createSubscriptionAgentSpawner` / `createIsolatedAgentSpawner`). Every
+    `fake|mock|stub|double|synthetic` hit in the added lines is a comment, a
+    test name, or the pre-existing `syntheticEnvelopeTag`. No spawner seam was
+    added.
+  * `all-scenarios.test.ts`'s pinned counts and ten STRUCTURAL verdicts are
+    BYTE-IDENTICAL on the default path.
+
+------------------------------------------------------------------------------
+4. TWO PRODUCTION DEFECTS THE LIVE DRIVE FOUND
+------------------------------------------------------------------------------
+"Neither reachable from a fixture, and both of which would have made machine
+output read as a JOHAN TAKEOVER — i.e. land in USER.md and flip
+`johan_touched`."
+
+  1. A Hermes bang-send lands verbatim headlessly.
+     `derived-forms.ts` said "the `!` never lands" — true of the door it was
+     measured through. In `claude -p --resume` (2.1.246) and `codex exec
+     resume`, bash mode is a TUI feature and there is no TUI, so
+     `!git log --oneline -3` lands as itself and matched nothing. #50's lesson
+     again. Both forms are derived now; widening can only newly match text
+     Hermes had already logged.
+
+  2. codex-cli packs two envelopes into one preamble item.
+     `<recommended_plugins>…</recommended_plugins><environment_context>…
+     </environment_context>` in a single user-role row. The single-envelope
+     filter opened on the first tag, looked for it at the end, found the other,
+     returned `null`. This is #36 F3 one CLI version later. The filter now
+     accepts a CHAIN of complete envelopes and nothing else;
+     `"<recommended_plugins>…</recommended_plugins>\nwhy is this here?"` still
+     classifies Johan.
+
+------------------------------------------------------------------------------
+5. ASSERTIONS: 46 ADDED, 1 REMOVED
+------------------------------------------------------------------------------
+The one removal is `expect(derivedForms("!ls")).toEqual(["<bash-input>ls
+</bash-input>"])`, replaced in place by a stronger version of itself — it now
+asserts both derived forms. Nothing else was deleted.
+
+Slot 4 GAINS an assertion rather than losing one: the CLI's injected preamble
+must be NON-EMPTY before it is graded, so a live leg whose CLI injects nothing
+fails loudly instead of passing vacuously. Previously the scenario compared
+against the constant it had just handed itself.
+
+Two predicates were WIDENED, NOT WEAKENED — `via === "synthetic-preamble"`
+became "either route by which the classifier takes machine content off Johan".
+The live drive found the real injection taking the SAFER route: the codex
+source refuses it candidacy before the classifier's shape filter is reached,
+recording `non-candidate`. "Pinning one route made the assertion about the
+mechanism rather than the property." The author check stays `system`, and "all
+four sent messages landed" stays exactly four.
+
+------------------------------------------------------------------------------
+6. GATE NUMBERS AS REPORTED IN THE COMMENT
+------------------------------------------------------------------------------
+  bun x tsc --noEmit                    clean
+  bun test (default, gate shut)         905 pass / 18 skip / 0 fail,
+                                        3168 expect()
+  ARGUS_LIVE_SLOTS=1 bun test src/harness/live-slots.test.ts
+                                        10 pass / 0 fail on TWO CONSECUTIVE
+                                        runs (55.2s, 57.2s), 46 expect()
+  real CLI turns per run                6 — 4 codex (slot 4), 2 claude (slot 5)
+  pgrep -f 'bin/bun.*cli\.ts watch'     0
+  after merge to main @ 94a6fc7         909 pass / 19 skip / 0 fail,
+                                        928 tests across 128 files
+
+"Before it was green it failed THREE times, each on one of the two real defects
+above plus the `via` over-specification. Those failures are the reason this
+ticket was worth its quota."
+
+SPEC §1 items 7 and 8 as reported: subscriptions only. No API key, no token, no
+metered access; the Claude leg is `createSubscriptionAgentSpawner` under the
+real HOME, and the only blocking reason on that side is a missing CLI. Codex's
+one permitted touchpoint is a copy of `auth.json` into the sandbox's scratch
+CODEX_HOME. Defaults untouched (#54 stays settled). No launchd job. No process
+killed that the ticket did not spawn.
+
+------------------------------------------------------------------------------
+7. ONE REGRESSION FILED, NOT BLOCKING
+------------------------------------------------------------------------------
+Filed as #80: the `consumesEntirely` rewrite backtracks exponentially on input
+that fails to decompose. Measured on that merge: n=20 -> 137ms, n=22 -> 478ms,
+n=24 -> 1960ms (~4x per +2), from a ~240-byte input. The pre-#78 `endsWith` was
+O(n). (#80 subsequently merged as 234e7ec, "fix(matching): scan synthetic
+envelopes linearly".)
+
+------------------------------------------------------------------------------
+8. WHAT #101 DID NOT DO
+------------------------------------------------------------------------------
+#101 did not re-derive any number above from the code. See
+GATE-EVIDENCE-MAP.md for this gate's currency assessment and
+gate-rerun-101.txt for whether #101 re-ran it fresh.
