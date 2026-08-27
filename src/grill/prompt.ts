@@ -23,18 +23,20 @@
  * construction). So the prompt says that outright rather than leaving the
  * session to discover it by being reported.
  */
-import { GRILL_MODES, type ResolvedGrillSkill } from "./skills.ts";
+import type { GrillInvocation } from "./dispatch.ts";
+import { GRILL_MODES } from "./skills.ts";
 
 export interface GrillPromptInput {
-  resolved: ResolvedGrillSkill;
+  /** #97: the skill AND the form the session can actually reach it by. */
+  invocation: GrillInvocation;
   /** SPEC §7.2's "X": what Johan wants to be grilled about. */
   topic: string;
 }
 
 export function grillPrompt(input: GrillPromptInput): string {
-  const { charter } = GRILL_MODES[input.resolved.mode];
+  const { charter } = GRILL_MODES[input.invocation.mode];
   return [
-    `Use the ${input.resolved.skill} skill and ${charter}.`,
+    ...opening(input.invocation, charter),
     "",
     "The topic:",
     "",
@@ -51,4 +53,26 @@ export function grillPrompt(input: GrillPromptInput): string {
     "that leaves commits behind is what the Retro watcher files a sub-issue about.",
     "The output of this session is decisions: a spec, tickets, or a written answer.",
   ].join("\n");
+}
+
+/**
+ * The one thing #97 changed, and the only place the form is spent (ticket #97).
+ *
+ * `skill`: byte-for-byte the sentence every grill has always opened with. The
+ * three modes that were always model-invocable get an unchanged prompt, so the
+ * §5 dispatch-hash match they already pass is not disturbed by this fix.
+ *
+ * `slash`: the id ALONE on the first line, because that is the only shape
+ * `claude` expands. Everything after it becomes the command's arguments and
+ * still reaches the model — measured on 2.1.247 against a
+ * `disable-model-invocation: true` skill, both single-line and in this exact
+ * multi-line shape (`docs/acceptance/grill-invocation-probe.txt`). The charter
+ * moves down one line into "Use it to …" rather than being dropped: a slash
+ * command carries the skill, not the reason for it.
+ */
+function opening(invocation: GrillInvocation, charter: string): string[] {
+  if (invocation.form === "skill") {
+    return [`Use the ${invocation.skill} skill and ${charter}.`];
+  }
+  return [`/${invocation.skill}`, "", `Use it to ${charter}.`];
 }

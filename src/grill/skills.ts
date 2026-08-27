@@ -30,9 +30,14 @@
  * there), that copy is what the session should read, and Claude reaches it
  * through the `.claude/skills -> ../.argus/skills` symlink `argus up` writes.
  * The plugin id is the fallback, never the override.
+ *
+ * That precedence used to be implemented twice — once here as
+ * `resolveGrillSkill`, once in `./installed.ts` as `verifyGrillSkill` — and the
+ * copy here could not see frontmatter, so its answer for `spec` was
+ * "resolved: pocock-plus:to-spec", which is the wrong answer #97 is about. It
+ * was deleted rather than kept in step: this module now holds the TABLE, and
+ * `./dispatch.ts` holds the one resolution the session is dispatched against.
  */
-import { join } from "node:path";
-
 export type GrillMode =
   /** §7.2 itself: Johan is grilled about X for repo R. */
   | "grilling"
@@ -100,23 +105,3 @@ export function isGrillMode(value: string): value is GrillMode {
   return Object.hasOwn(GRILL_MODES, value);
 }
 
-export async function resolveGrillSkill(
-  repo: string,
-  mode: GrillMode = "grilling",
-): Promise<ResolvedGrillSkill> {
-  const route = GRILL_MODES[mode];
-  if (route === undefined) {
-    throw new Error(
-      `unknown grill mode '${mode}'; known modes: ${Object.keys(GRILL_MODES).join(", ")}`,
-    );
-  }
-  const canonical = join(repo, ".argus", "skills", route.name, "SKILL.md");
-  const source = (await Bun.file(canonical).exists())
-    ? "argus-canonical"
-    : "pocock-plus";
-  return {
-    mode,
-    skill: source === "argus-canonical" ? route.name : route.skill,
-    source,
-  };
-}

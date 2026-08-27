@@ -1,0 +1,88 @@
+Ticket #97 — is the slash form REAL? Measured against the installed `claude`,
+not read off a manual.
+
+The fix routes a `disable-model-invocation: true` skill through `/<id>` as the
+session's first message. That is a claim about the CLI, so it was probed
+against the CLI before the route was changed. `bun test` cannot assert it: it
+would be asserting someone else's binary.
+
+  binary   claude 2.1.247 (Claude Code)
+  machine  darwin 25.5.0, subscription auth, 2026-08-26
+  fixture  /private/tmp/argus-97-probe (scratch; removed after the run)
+           .claude/skills/argus-probe-slash/SKILL.md   disable-model-invocation: true
+           .claude/skills/argus-probe-tail/SKILL.md    disable-model-invocation: true
+           Each body asks for one line containing a token that appears NOWHERE
+           except inside the SKILL.md, so the token can only be produced by
+           having LOADED the skill.
+  guard    --disallowed-tools Read Grep Glob Bash Task WebFetch WebSearch Edit
+           Write NotebookEdit — the model cannot go and read the file instead.
+
+A. MODEL INVOCATION — what the dispatch prompt did before #97.
+   prompt: "Use the argus-probe-slash skill and reply as it instructs."
+   result: NO token. The session answered:
+
+     "There's no skill named `argus-probe-slash` available in this session, so
+      there are no instructions for me to follow. […] The available-skills list
+      for this session — no entry named `argus-probe-slash` […] I'm not going
+      to guess at a similarly-named skill and run that instead."
+
+   The skill is on disk, it is loadable, and it is NOT in the session's
+   available-skills list. This is the bug, reproduced: the session did not
+   fail. It carried on. This one happened to refuse to guess; a grill prompt
+   also carries a topic and a charter, which is all a session needs to do
+   something adjacent instead.
+
+B. SLASH, single-line argument (stdin).
+   prompt: "/argus-probe-slash ARGUS-ARG-XYZ"
+   result: PROBE-TOKEN-7Q4K ARGS=ARGUS-ARG-XYZ
+   The skill loaded, and the argument reached the model.
+
+C. SLASH, multi-line — the grill dispatch prompt's exact shape (stdin).
+   prompt: "/argus-probe-slash\n\nThe topic:\n\nARGUS-ARG-XYZ …\n\nThis is an
+            Argus planning session (SPEC 7.2)."
+   result: PROBE-TOKEN-7Q4K ARGS=The topic:
+   The skill loaded from a first line that is the id ALONE, with the rest of
+   the message following it. (The one-line answer is the fixture's own
+   instruction, not a truncation — D settles that.)
+
+D. SLASH, multi-line — does the WHOLE remainder arrive? (stdin)
+   fixture asks for the FIRST and LAST word of the text following the command.
+   result: PROBE-TAIL-9M2X FIRST=The LAST=ARGUSTAIL
+   ARGUSTAIL is the last word of the last line. The entire multi-line body
+   reaches the model, not just the first line.
+
+E. SLASH, as a POSITIONAL prompt argument — the shape the grill actually uses.
+   `launchLine()` builds `claude --session-id … $'<prompt>'`: the prompt is
+   argv, not stdin. A/B/C/D went in on stdin, so this repeats D as a positional
+   argument.
+   result: PROBE-TAIL-9M2X FIRST=The LAST=ARGUSTAIL
+   Identical. The route the grill uses expands the command.
+
+WHAT THIS DOES NOT SHOW. Every probe ran under `--print`. The grill starts an
+INTERACTIVE session (`./route.ts` passes the prompt positionally and omits
+`-p`), which cannot be driven headlessly here — driving it would mean a cmux
+surface, and #92 holds the live fleet lease. E narrows the gap to the one
+remaining difference (`--print` vs interactive) with the argv shape held
+identical. The interactive rendering belongs to the next `grill-live` run,
+which now reports the form beside the id for exactly this reason.
+
+F. THE PRODUCTION PATH, on this machine, against the real
+   `~/.claude/plugins/installed_plugins.json` — no fixture, no injection:
+
+     $ bun src/cli.ts grill "…" --mode spec --dry-run
+     repo:  /Users/johansardar/argus-worktrees/grill-modes
+     skill: pocock-plus:to-spec (pocock-plus, slash)
+     from:  …/pocock-plus/1.2.3-johan.7/skills/engineering/to-spec/SKILL.md
+     prompt:
+     /pocock-plus:to-spec
+
+     Use it to turn the decisions into a spec.
+     …
+
+     $ bun src/cli.ts grill "…" --mode grilling --dry-run
+     skill: pocock-plus:grilling (pocock-plus, skill)
+     prompt:
+     Use the pocock-plus:grilling skill and grill Johan until the thinking holds up.
+
+   Two modes, one table, no per-mode literal: the form came off the two
+   SKILL.md files named in `from:`.

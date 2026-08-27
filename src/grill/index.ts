@@ -21,6 +21,12 @@ export {
   type GrillResult,
 } from "./grill.ts";
 export {
+  resolveGrillDispatch,
+  type GrillDispatch,
+  type GrillInvocation,
+  type GrillInvocationForm,
+} from "./dispatch.ts";
+export {
   installedPluginSkills,
   verifyEveryGrillSkill,
   verifyGrillSkill,
@@ -40,7 +46,6 @@ export { CLAUDE_GRILL_ROUTE } from "./route.ts";
 export {
   GRILL_MODES,
   isGrillMode,
-  resolveGrillSkill,
   type GrillMode,
   type GrillModeRoute,
   type ResolvedGrillSkill,

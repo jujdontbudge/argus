@@ -62,8 +62,9 @@ import {
 import { runCmux, type CmuxRun } from "../events";
 import { CLAUDE_GRILL_ROUTE } from "./route.ts";
 import { createCmuxLaunch } from "./launch.ts";
+import { resolveGrillDispatch } from "./dispatch.ts";
 import { grillPrompt } from "./prompt.ts";
-import { resolveGrillSkill, type GrillMode } from "./skills.ts";
+import { type GrillMode } from "./skills.ts";
 
 export interface GrillRequest {
   /** SPEC §7.2's "repo R": the repo the grill is about and runs in. */
@@ -84,6 +85,13 @@ export interface GrillRequest {
 export interface GrillOptions {
   /** The one cmux seam: workspace creation, the launch send, the notify. */
   cmux?: CmuxRun;
+  /**
+   * The `installed_plugins.json` the routed skill is resolved against (#97).
+   * Defaults to this machine's. Named so a test can describe a machine instead
+   * of reading the developer's real plugin cache, which passes or fails for
+   * reasons that have nothing to do with this repo.
+   */
+  manifestFile?: string;
   env?: Readonly<Record<string, string | undefined>>;
   git?: GitRun;
   newSessionId?: () => string;
@@ -119,8 +127,27 @@ export async function startGrill(
   options: GrillOptions = {},
 ): Promise<GrillResult> {
   const cmux = options.cmux ?? runCmux;
-  const resolved = await resolveGrillSkill(request.repo, request.mode ?? "grilling");
-  const prompt = grillPrompt({ resolved, topic: request.topic });
+
+  // 0. CAN THIS MODE WORK AT ALL? (#97) Before the tab, before the row, before
+  //    the prompt exists — because the failure being refused here is not a
+  //    crash, it is a session that starts, cannot honour its first sentence,
+  //    and does something adjacent instead. #89 measured two modes in that
+  //    state on this machine. A refusal that names the mode, the id and the
+  //    reason is the only outcome an operator can act on; starting anyway is
+  //    the silent wrong answer.
+  const dispatch = await resolveGrillDispatch(
+    request.repo,
+    request.mode ?? "grilling",
+    options.manifestFile,
+  );
+  if (dispatch.status === "refused") {
+    return {
+      reason: `${dispatch.reason}; nothing was registered and no cmux tab was opened`,
+      status: "refused",
+    };
+  }
+  const resolved = dispatch.invocation;
+  const prompt = grillPrompt({ invocation: resolved, topic: request.topic });
   // Minted here rather than inside `deployWorker` so a deployment that fails
   // AFTER the row is durable can name the session it left behind. A row is
   // never retracted (#55), so naming it is the only way the operator can find

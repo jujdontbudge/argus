@@ -82,7 +82,15 @@ import {
   honchoQuery,
   probeLiveHoncho,
 } from "../eyes/honcho/live-probe.ts";
-import { startGrill, verifyEveryGrillSkill, type GrillSkillVerification } from "../grill/index.ts";
+import {
+  GRILL_MODES,
+  resolveGrillDispatch,
+  startGrill,
+  verifyEveryGrillSkill,
+  type GrillDispatch,
+  type GrillMode,
+  type GrillSkillVerification,
+} from "../grill/index.ts";
 import { loadRegistry, registryPaths } from "../provenance/index.ts";
 import {
   EYE_NAMES,
@@ -156,6 +164,12 @@ export interface GrillLiveReport {
   gate: LiveHalfOutcome;
   /** Every mode's routed id, resolved against THIS machine. */
   skills: GrillSkillVerification[];
+  /**
+   * #97: and how — or whether — a session can invoke each of them. "Resolved"
+   * was the half-truth that let `spec` and `tickets` start against a skill no
+   * model could use, so the live report says the FORM beside the id.
+   */
+  dispatch: GrillDispatch[];
   /** The grilling mode's id and where it came from. */
   routedSkill: string;
   routedSource: string;
@@ -396,6 +410,7 @@ export async function runGrillLive(
     peakFleetRssKib: 0,
     routedSkill: "",
     routedSource: "",
+    dispatch: [],
     rssSamples,
     launchScreen: null,
     sessionId: null,
@@ -473,6 +488,11 @@ export async function runGrillLive(
 
     report.honchoWorkspace = await boundHonchoWorkspace(repo);
     report.skills = await verifyEveryGrillSkill(repo);
+    report.dispatch = await Promise.all(
+      (Object.keys(GRILL_MODES) as GrillMode[]).map((mode) =>
+        resolveGrillDispatch(repo, mode),
+      ),
+    );
     const grilling = report.skills.find(({ mode }) => mode === "grilling")!;
     report.routedSkill = grilling.id;
     report.routedSource =

@@ -7,6 +7,7 @@ import { sendToWorker, type GitRun, type GitRunResult } from "../deploy";
 import type { CmuxRun, CmuxRunResult } from "../events";
 import { classifierFromRegistry, loadRegistry, registryPaths } from "../provenance";
 import type { MessageEvent } from "../tailing";
+import { fakeMachine, withFrontmatter } from "./machine.fixture.ts";
 import { startGrill } from "./index.ts";
 
 /**
@@ -37,6 +38,15 @@ import { startGrill } from "./index.ts";
  * Every cmux seam here is the PRODUCTION one (`createCmuxSend` over the
  * injected runner), so the resolve-guard under test is #7's, not a copy.
  */
+/**
+ * #97: the machine the routed skill is resolved against, described here rather
+ * than read off the developer's real plugin cache — a test that reads
+ * `~/.claude/plugins/installed_plugins.json` passes or fails for reasons that
+ * have nothing to do with this repo. Every `startGrill` below is dispatched
+ * against it.
+ */
+const MACHINE = await fakeMachine();
+
 const SESSION = "11111111-2222-4333-8444-555555555555";
 const TOPIC = "the retro eye's scope-drift question";
 
@@ -172,6 +182,7 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
           cmux: cmux.run,
           env: GRILL_ENV,
           git: git.run,
+          manifestFile: MACHINE.manifest,
           newSessionId: () => SESSION,
           now: () => new Date("2026-08-26T09:00:00.000Z"),
         },
@@ -223,6 +234,7 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
         {
           cmux: cmux.run,
           git: gitStub().run,
+          manifestFile: MACHINE.manifest,
           newSessionId: () => SESSION,
           now: () => new Date("2026-08-26T09:00:00.000Z"),
         },
@@ -262,7 +274,8 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
       const cmux = cmuxStub();
       const started = await startGrill(
         { repo, topic: TOPIC },
-        { cmux: cmux.run, env: GRILL_ENV, git: gitStub().run, newSessionId: () => SESSION },
+        { cmux: cmux.run, env: GRILL_ENV, git: gitStub().run, manifestFile: MACHINE.manifest,
+          newSessionId: () => SESSION },
       );
       expect(started.status).toBe("started");
 
@@ -294,7 +307,8 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
       const cmux = cmuxStub();
       await startGrill(
         { repo, topic: TOPIC },
-        { cmux: cmux.run, env: GRILL_ENV, git: gitStub().run, newSessionId: () => SESSION },
+        { cmux: cmux.run, env: GRILL_ENV, git: gitStub().run, manifestFile: MACHINE.manifest,
+          newSessionId: () => SESSION },
       );
       // It is a SHELL command line, not a prompt into a session. Logging it
       // would put a Hermes attribution in the matcher's window that no
@@ -319,7 +333,8 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
       const cmux = cmuxStub({ surfaceSets: [[DISPATCHER], [DISPATCHER]] });
       const result = await startGrill(
         { repo, topic: TOPIC },
-        { cmux: cmux.run, env: GRILL_ENV, git: gitStub().run, newSessionId: () => SESSION },
+        { cmux: cmux.run, env: GRILL_ENV, git: gitStub().run, manifestFile: MACHINE.manifest,
+          newSessionId: () => SESSION },
       );
       expect(result.status).toBe("refused");
       expect(cmux.calls.some((a) => a[0] === "send")).toBe(false);
@@ -338,7 +353,8 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
       });
       const result = await startGrill(
         { repo, topic: TOPIC },
-        { cmux: cmux.run, env: GRILL_ENV, git: gitStub().run, newSessionId: () => SESSION },
+        { cmux: cmux.run, env: GRILL_ENV, git: gitStub().run, manifestFile: MACHINE.manifest,
+          newSessionId: () => SESSION },
       );
       expect(result.status).toBe("failed");
       if (result.status === "failed") {
@@ -368,7 +384,8 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
       };
       const result = await startGrill(
         { repo, topic: TOPIC },
-        { cmux: guarded, env: GRILL_ENV, git: gitStub().run, newSessionId: () => SESSION },
+        { cmux: guarded, env: GRILL_ENV, git: gitStub().run, manifestFile: MACHINE.manifest,
+          newSessionId: () => SESSION },
       );
       expect(result.status).toBe("started");
       expect(cmux.calls.some((a) => a[0] === "hooks")).toBe(false);
@@ -383,7 +400,8 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
       const cmux = cmuxStub({ notify: fail("notification centre is not available") });
       const result = await startGrill(
         { repo, topic: TOPIC },
-        { cmux: cmux.run, env: GRILL_ENV, git: gitStub().run, newSessionId: () => SESSION },
+        { cmux: cmux.run, env: GRILL_ENV, git: gitStub().run, manifestFile: MACHINE.manifest,
+          newSessionId: () => SESSION },
       );
       expect(result.status).toBe("started");
       if (result.status !== "started") return;
@@ -404,7 +422,8 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
     try {
       const result = await startGrill(
         { repo, topic: TOPIC },
-        { cmux: cmuxStub().run, env: GRILL_ENV, git: gitStub().run, newSessionId: () => SESSION },
+        { cmux: cmuxStub().run, env: GRILL_ENV, git: gitStub().run, manifestFile: MACHINE.manifest,
+          newSessionId: () => SESSION },
       );
       expect(result.status).toBe("started");
       if (result.status !== "started") return;
@@ -412,6 +431,89 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
       expect(result.prompt).toContain("pocock-plus:grilling");
       expect(result.prompt).toContain(TOPIC);
       expect(result.prompt).toMatch(/planning session/i);
+    } finally {
+      await rm(repo, { force: true, recursive: true });
+    }
+  });
+
+  /**
+   * #97 — THE DISPATCH-TIME REFUSAL, and the failure it replaces.
+   *
+   * The mode resolves. It resolved for the whole time the bug shipped. What it
+   * cannot do is be INVOKED: a skill carrying both `disable-model-invocation:
+   * true` and `user-invocable: false` is reachable by neither the model nor a
+   * `/<id>` command, and `claude` offers no third way. Before this, the grill
+   * opened a tab, wrote a durable row, typed a launch line and started a real
+   * session that read a first sentence it could not honour — and then did
+   * something adjacent, which is the whole of #97.
+   *
+   * So the check runs FIRST, ahead of the tab and ahead of the row, and the
+   * assertion is that NOTHING happened: no cmux call at all, and no registry.
+   */
+  test("a mode no session could invoke is refused before a tab or a row exists", async () => {
+    const repo = await sandboxRepo();
+    const dead = await fakeMachine(
+      withFrontmatter("to-spec", { modelOnly: true, slashOnly: true }),
+    );
+    try {
+      const cmux = cmuxStub();
+      const result = await startGrill(
+        { mode: "spec", repo, topic: TOPIC },
+        {
+          cmux: cmux.run,
+          env: GRILL_ENV,
+          git: gitStub().run,
+          manifestFile: dead.manifest,
+          newSessionId: () => SESSION,
+        },
+      );
+
+      expect(result.status).toBe("refused");
+      if (result.status !== "refused") return;
+      // Named, because "grill refused" is unactionable: the operator has to be
+      // able to go and read the frontmatter this is about.
+      expect(result.reason).toContain("grill mode 'spec'");
+      expect(result.reason).toContain("pocock-plus:to-spec");
+      expect(result.reason).toContain("disable-model-invocation: true");
+      expect(result.reason).toContain("user-invocable: false");
+      expect(result.reason).toContain("nothing was registered and no cmux tab was opened");
+
+      // Nothing was started, which is the point: not a tab, not a row, not a
+      // keystroke. #55's rule is that a row is never retracted, so the only
+      // safe place to refuse is before one exists.
+      expect(cmux.calls).toEqual([]);
+      expect((await loadRegistry(registryPaths(repo))).sessions).toEqual([]);
+    } finally {
+      await rm(repo, { force: true, recursive: true });
+    }
+  });
+
+  /** The same mode on a machine where it is merely slash-only still runs. */
+  test("a slash-only mode is dispatched, and the launch line carries /<id>", async () => {
+    const repo = await sandboxRepo();
+    const slash = await fakeMachine(withFrontmatter("to-spec", { slashOnly: true }));
+    try {
+      const cmux = cmuxStub();
+      const result = await startGrill(
+        { mode: "spec", repo, topic: TOPIC },
+        {
+          cmux: cmux.run,
+          env: GRILL_ENV,
+          git: gitStub().run,
+          manifestFile: slash.manifest,
+          newSessionId: () => SESSION,
+        },
+      );
+
+      expect(result.status).toBe("started");
+      if (result.status !== "started") return;
+      expect(result.prompt).toStartWith("/pocock-plus:to-spec\n");
+      expect(result.prompt).not.toContain("Use the pocock-plus:to-spec skill");
+      // And it reaches the terminal in that shape: the registry's copy and the
+      // typed copy are the same string, so the §5 dispatch match still holds.
+      const typed = cmux.calls.find((a) => a[0] === "send")?.at(-1) ?? "";
+      expect(typed).toContain("/pocock-plus:to-spec");
+      expect(typed.split("\n")).toHaveLength(1);
     } finally {
       await rm(repo, { force: true, recursive: true });
     }

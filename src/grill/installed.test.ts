@@ -1,12 +1,16 @@
 /**
  * Ticket #89 — the routed skill id, resolved against a machine.
  *
- * `skills.test.ts:42-44` asserts `GRILL_MODES.spec.skill` equals the literal
+ * `skills.test.ts` asserts `GRILL_MODES.spec.skill` equals the literal
  * `"pocock-plus:to-spec"` it was built from, which is a constant compared to
  * a constant: the upstream rename its docblock warns about cannot fail it.
  * Every case below therefore builds a FAKE plugin tree and a FAKE manifest and
  * asks the resolver about it, so the rename, the uninstall and the
  * slash-only frontmatter are each a real state some machine can be in.
+ *
+ * What this file still does NOT decide is what a session should then be told.
+ * It reports both invocation surfaces; `dispatch.test.ts` (#97) is where a
+ * report becomes an invocation or a refusal.
  *
  * The live rendering of this — the same resolver run against THIS machine's
  * `installed_plugins.json`, with the answer written into
@@ -15,64 +19,16 @@
  * passes or fails for reasons that have nothing to do with this repo.
  */
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { installedPluginSkills, verifyGrillSkill } from "./installed.ts";
+import {
+  fakeMachine as machine,
+  INSTALLED,
+  withFrontmatter,
+} from "./machine.fixture.ts";
 import { GRILL_MODES } from "./skills.ts";
-
-interface FakeSkill {
-  category: string;
-  name: string;
-  slashOnly?: boolean;
-}
-
-async function machine(
-  skills: readonly FakeSkill[],
-  options: { version?: string; qualifier?: string } = {},
-): Promise<{ manifest: string; repo: string; root: string }> {
-  const root = await mkdtemp(join(tmpdir(), "argus-grill-skills-"));
-  const version = options.version ?? "1.2.3-johan.7";
-  const installPath = join(root, "cache", "pocock-plus", version);
-  for (const skill of skills) {
-    const directory = join(installPath, "skills", skill.category, skill.name);
-    await mkdir(directory, { recursive: true });
-    const frontmatter = [
-      "---",
-      `name: ${skill.name}`,
-      "description: a fixture skill",
-      ...(skill.slashOnly === true ? ["disable-model-invocation: true"] : []),
-      "---",
-      "",
-      "body",
-    ].join("\n");
-    await Bun.write(join(directory, "SKILL.md"), frontmatter);
-  }
-  const manifest = join(root, "installed_plugins.json");
-  await Bun.write(
-    manifest,
-    JSON.stringify({
-      plugins: {
-        [`${options.qualifier ?? "pocock-plus"}@johan-plugins`]: [
-          { installPath, scope: "user", version },
-        ],
-      },
-      version: 2,
-    }),
-  );
-  const repo = join(root, "repo");
-  await mkdir(repo, { recursive: true });
-  return { manifest, repo, root };
-}
-
-const INSTALLED: readonly FakeSkill[] = [
-  { category: "productivity", name: "grilling" },
-  { category: "engineering", name: "code-review" },
-  { category: "engineering", name: "diagnosing-bugs" },
-  { category: "engineering", name: "to-spec" },
-  { category: "engineering", name: "to-tickets" },
-];
 
 describe("verifyGrillSkill", () => {
   test("resolves a routed id to the SKILL.md that actually backs it", async () => {
@@ -126,11 +82,7 @@ describe("verifyGrillSkill", () => {
    * the only thing the grill dispatch prompt ever asks for.
    */
   test("a slash-only skill resolves but reports that a model cannot invoke it", async () => {
-    const { manifest, repo } = await machine(
-      INSTALLED.map((skill) =>
-        skill.name === "to-spec" ? { ...skill, slashOnly: true } : skill,
-      ),
-    );
+    const { manifest, repo } = await machine(withFrontmatter("to-spec", { slashOnly: true }));
 
     const spec = await verifyGrillSkill(repo, "spec", manifest);
     const grilling = await verifyGrillSkill(repo, "grilling", manifest);
@@ -142,6 +94,43 @@ describe("verifyGrillSkill", () => {
     expect(grilling.resolution.status).toBe("resolved");
     if (grilling.resolution.status !== "resolved") return;
     expect(grilling.resolution.skill.modelInvocable).toBe(true);
+
+    // #97: and the OTHER axis is untouched by this one. `to-spec` is still
+    // reachable as `/pocock-plus:to-spec`, which is the surface the fix routes
+    // it through — a resolver that collapsed both keys into one boolean could
+    // not tell "invoke it differently" from "refuse it".
+    expect(spec.resolution.skill.userInvocable).toBe(true);
+    expect(grilling.resolution.skill.userInvocable).toBe(true);
+  });
+
+  /**
+   * #97 — the second frontmatter key, and the state that has no route at all.
+   * `user-invocable: false` closes the `/<id>` command surface exactly as
+   * `disable-model-invocation: true` closes the model's, and both live on this
+   * machine today (`codex:codex-cli-runtime` carries the former alone). A skill
+   * with both is present, resolvable, and reachable by nothing.
+   */
+  test("user-invocable: false is read as its own axis, independent of the model's", async () => {
+    const { manifest, repo } = await machine([
+      ...withFrontmatter("to-spec", { modelOnly: true }).filter(
+        ({ name }) => name !== "to-tickets",
+      ),
+      { category: "engineering", modelOnly: true, name: "to-tickets", slashOnly: true },
+    ]);
+
+    const spec = await verifyGrillSkill(repo, "spec", manifest);
+    const tickets = await verifyGrillSkill(repo, "tickets", manifest);
+
+    expect(spec.resolution.status).toBe("resolved");
+    if (spec.resolution.status !== "resolved") return;
+    // Model-only: the Skill tool still reaches it, `/id` does not.
+    expect(spec.resolution.skill.modelInvocable).toBe(true);
+    expect(spec.resolution.skill.userInvocable).toBe(false);
+
+    expect(tickets.resolution.status).toBe("resolved");
+    if (tickets.resolution.status !== "resolved") return;
+    expect(tickets.resolution.skill.modelInvocable).toBe(false);
+    expect(tickets.resolution.skill.userInvocable).toBe(false);
   });
 
   /** SPEC §8.2: "The plugin id is the fallback, never the override." */
