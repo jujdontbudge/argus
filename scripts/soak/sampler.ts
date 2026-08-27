@@ -20,26 +20,61 @@
  *   wal/db   a store that grows without bound is the same failure as the RSS
  *            leak, just slower.
  *   search   a query that degrades over hours, likewise.
+ *
+ * ADDED FOR #109, both additive and both optional:
+ *   phase    the pre-registered phase label and traffic rate in force at this
+ *            sample (./phases.ts). Written only when the run start epoch is
+ *            passed, i.e. only for a phased run. Recorded rather than
+ *            recomputed at analysis time so the series states its own design:
+ *            if `phases.ts` were ever edited after the fact, the series would
+ *            still say what actually ran.
+ *   sqlite   page_size / page_count / freelist_count / cache_size, read off
+ *            the readonly handle this file ALREADY opens. Bun exposes no
+ *            `sqlite3_memory_used()` and no
+ *            `sqlite3_db_status(SQLITE_DBSTATUS_CACHE_USED)` — the `Database`
+ *            surface is open/close/exec/query/prepare/run/transaction/
+ *            serialize/fileControl/loadExtension/clearQueryCache and nothing
+ *            more — so SQLite's ACTUAL cache occupancy cannot be measured from
+ *            here. What these four give is a hard UPPER BOUND,
+ *            min(cache_size, page_count) * page_size, and a bound is enough to
+ *            REFUTE the page-cache hypothesis even though it cannot confirm
+ *            it. That asymmetry is the whole reason to collect it: #105 §7(4)
+ *            named "a growing SQLite page cache" as one of three
+ *            indistinguishable causes, and a small bound removes it from the
+ *            list.
  */
 import { Database } from "bun:sqlite";
 import { appendFileSync, readFileSync, statSync } from "node:fs";
 import { loadavg } from "node:os";
 import { join } from "node:path";
 
-const [, , scratchRoot, intervalArgument, deadlineArgument, ownerArgument] = process.argv;
+import { phaseAt, rateName } from "./phases.ts";
+
+const [, , scratchRoot, intervalArgument, deadlineArgument, ownerArgument, epochArgument] =
+  process.argv;
 if (!scratchRoot || !intervalArgument || !deadlineArgument || !ownerArgument) {
-  throw new Error("usage: sampler.ts <scratch-root> <interval-ms> <deadline-epoch-ms> <owner-pid>");
+  throw new Error(
+    "usage: sampler.ts <scratch-root> <interval-ms> <deadline-epoch-ms> <owner-pid> [run-start-epoch-ms]",
+  );
 }
 const root: string = scratchRoot;
 const intervalMilliseconds = Number(intervalArgument);
 const deadline = Number(deadlineArgument);
 const owner = Number(ownerArgument);
+/** Set only for a phased run; see the docblock on `phase`. */
+const phaseEpoch = epochArgument === undefined ? null : Number(epochArgument);
 
 const repo = join(root, "repo");
 const seriesPath = join(root, "series.jsonl");
 const statusPath = join(root, "supervisor-status.json");
 const archivePath = join(repo, ".argus", "archive.db");
-const startedAt = Date.now();
+/**
+ * For an unphased run this is this process's start, exactly as #105 had it.
+ * For a phased run it is the RUN's start, shared with `traffic.ts`, so the
+ * instant at which the rate changes and the instant labelled with that rate
+ * are the same instant.
+ */
+const startedAt = phaseEpoch ?? Date.now();
 
 const SEARCH_QUERIES = ["provenance cursor", "soak traffic", "sqlite backlog"];
 
@@ -94,9 +129,51 @@ async function readStatus(): Promise<StatusWatcher[]> {
   }
 }
 
+interface SqliteShape {
+  /** Configured max cache. Positive = pages, negative = KiB (SQLite's own convention). */
+  cacheSize: number | null;
+  freelistCount: number | null;
+  pageCount: number | null;
+  pageSize: number | null;
+  /** min(cache, page_count) * page_size. An UPPER BOUND, never an occupancy. */
+  pageCacheBoundBytes: number | null;
+}
+
+function sqliteShape(database: Database): SqliteShape {
+  const scalar = (pragma: string): number | null => {
+    try {
+      const row = database.query<Record<string, number>, []>(`PRAGMA ${pragma}`).get();
+      const value = row === null ? undefined : Object.values(row)[0];
+      return typeof value === "number" ? value : null;
+    } catch {
+      return null;
+    }
+  };
+  const cacheSize = scalar("cache_size");
+  const pageCount = scalar("page_count");
+  const pageSize = scalar("page_size");
+  let pageCacheBoundBytes: number | null = null;
+  if (cacheSize !== null && pageCount !== null && pageSize !== null) {
+    // SQLite reads a NEGATIVE cache_size as KiB and a positive one as pages.
+    // Both are handled because the default differs by build and this bound is
+    // only worth recording if it is right.
+    const cachePages =
+      cacheSize < 0 ? Math.floor((-cacheSize * 1024) / pageSize) : cacheSize;
+    pageCacheBoundBytes = Math.min(cachePages, pageCount) * pageSize;
+  }
+  return {
+    cacheSize,
+    freelistCount: scalar("freelist_count"),
+    pageCacheBoundBytes,
+    pageCount,
+    pageSize,
+  };
+}
+
 function archiveMetrics(): {
   rows: number | null;
   searchMs: Record<string, number> | null;
+  sqlite: SqliteShape | null;
   walPages: number | null;
 } {
   let database: Database | undefined;
@@ -125,9 +202,9 @@ function archiveMetrics(): {
         .all(match);
       searchMs[query] = Number(((Bun.nanoseconds() - started) / 1e6).toFixed(3));
     }
-    return { rows, searchMs, walPages: null };
+    return { rows, searchMs, sqlite: sqliteShape(database), walPages: null };
   } catch {
-    return { rows: null, searchMs: null, walPages: null };
+    return { rows: null, searchMs: null, sqlite: null, walPages: null };
   } finally {
     database?.close(false);
   }
@@ -157,19 +234,31 @@ async function sample(): Promise<void> {
   }
   const archive = archiveMetrics();
   const [one, five, fifteen] = loadavg();
+  const elapsedMinutes = Number(((Date.now() - startedAt) / 60_000).toFixed(3));
+  const phase = phaseEpoch === null ? null : phaseAt(elapsedMinutes);
   appendFileSync(
     seriesPath,
     `${JSON.stringify({
       at: new Date().toISOString(),
       archiveBytes: sizeOf(archivePath),
-      elapsedMinutes: Number(((Date.now() - startedAt) / 60_000).toFixed(3)),
+      elapsedMinutes,
       eyeCount: watchers.length,
       eyes,
       load: { fifteen, five, one },
       missingRss: missing,
+      phase:
+        phase === null
+          ? null
+          : {
+              label: phase.label,
+              rate: rateName(phase.rowsPerSample),
+              rowsPerSample: phase.rowsPerSample,
+              startMinute: phase.startMinute,
+            },
       restartLines: restartCount(),
       rows: archive.rows,
       searchMs: archive.searchMs,
+      sqlite: archive.sqlite,
       shmBytes: sizeOf(`${archivePath}-shm`),
       totalRssMiB: Number((totalKiB / 1024).toFixed(2)),
       walBytes: sizeOf(`${archivePath}-wal`),
