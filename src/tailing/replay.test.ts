@@ -35,7 +35,12 @@ function project(event: TailEvent) {
 
 describe("edge-case fixture replay (ticket #21 / #11 findings)", () => {
   test("the full event stream is exactly the hand-derived expectation", async () => {
-    const events = await replayFixture();
+    const all = await replayFixture();
+    // #100's canary emits BESIDE the stream, never instead of it. Separating
+    // the two here keeps this test pinning exactly what it always pinned —
+    // that the tailer fabricates nothing in the /help gap — and adds the
+    // drift the fixture genuinely carries rather than hiding it.
+    const events = all.filter(({ type }) => type !== "shape-drift");
 
     // The fixture also encodes the /help zero-record command by absence
     // (sent between u12 and the next-morning resume): exact equality below

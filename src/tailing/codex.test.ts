@@ -297,7 +297,12 @@ describe("Codex rollout source", () => {
       ).text();
       await writeFile(rollout, fixture.replaceAll("__CWD__", repo));
 
-      const events = await new Tailer(createCodexSource({ codexHome })).catchUp();
+      const all = await new Tailer(createCodexSource({ codexHome })).catchUp();
+      // The pre-0.32 flat rollout is, correctly, an unfamiliar shape today:
+      // #100's canary reports it and the parse continues unchanged. Splitting
+      // the two keeps this test's exact stream pin intact.
+      const events = all.filter(({ type }) => type !== "shape-drift");
+      expect(all.some(({ type }) => type === "shape-drift")).toBe(true);
 
       expect(events.map((event) => event.type)).toEqual([
         "session-meta",

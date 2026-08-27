@@ -6,6 +6,8 @@ import { pathToFileURL } from "node:url";
 
 import { repositoryFor } from "./codex";
 import type { SourceParser, TailEvent, TranscriptSource } from "./events";
+import { hermesSchemaFacts } from "./shape/contract";
+import { ShapeWatcher } from "./shape/watcher";
 import type { ReadResult } from "./line-reader";
 
 export interface HermesSourceOptions {
@@ -52,10 +54,27 @@ function decodedText(content: string): string {
   return JSON.stringify(decoded);
 }
 
+/**
+ * Hermes's contract is a DATABASE SCHEMA, not a JSON record, and the reader's
+ * own `SELECT` filters `role IN ('user','assistant')` — so a third role, or a
+ * renamed column, could never reach the parser to be noticed there. The reader
+ * therefore reads the schema off the database with PRAGMA (the closest thing
+ * Hermes has to #89's active-install manifest) and hands it to the parser on
+ * this line, once per file. It is not a row and is never parsed as one.
+ */
+const SCHEMA_LINE = "__argusShapeSchema";
+
+interface HermesSchema {
+  [SCHEMA_LINE]: { columns: Record<string, string[]>; roles: string[] };
+}
+
 class HermesParser implements SourceParser {
   private readonly sessions = new Set<string>();
+  private readonly shape: ShapeWatcher;
 
-  constructor(private readonly file: string) {}
+  constructor(private readonly file: string) {
+    this.shape = new ShapeWatcher("hermes", file);
+  }
 
   parseLine(line: string): TailEvent[] {
     let row: HermesRow;
@@ -64,9 +83,14 @@ class HermesParser implements SourceParser {
     } catch {
       return [{ type: "lifecycle", kind: "parse-error", content: line, file: this.file }];
     }
-    if (row.role !== "user" && row.role !== "assistant") return [];
+    const schema = (row as unknown as Partial<HermesSchema>)[SCHEMA_LINE];
+    if (schema !== undefined) {
+      return this.shape.inspectFacts(hermesSchemaFacts(schema.columns, schema.roles));
+    }
+    const drift = this.shape.inspect(row, row.sessionId, undefined);
+    if (row.role !== "user" && row.role !== "assistant") return drift;
 
-    const events: TailEvent[] = [];
+    const events: TailEvent[] = [...drift];
     if (!this.sessions.has(row.sessionId)) {
       this.sessions.add(row.sessionId);
       const repo = row.cwd === null ? undefined : repositoryFor(row.cwd);
@@ -96,6 +120,7 @@ class HermesParser implements SourceParser {
 }
 
 class HermesDatabaseReader {
+  private readonly schemaRead = new Set<string>();
   private readonly sequences = new Map<string, Map<string, string[]>>();
 
   private signature(row: HermesRow): string {
@@ -160,6 +185,34 @@ class HermesDatabaseReader {
     });
   }
 
+  /**
+   * The schema as the database itself reports it, once per file per process
+   * (#100). `SELECT DISTINCT role` is the one non-PRAGMA read here and it is
+   * why this runs once: the reader's row query can never surface a role it
+   * filters out, so the only place a new role is visible is the table.
+   */
+  private schemaLine(db: Database, file: string): string[] {
+    if (this.schemaRead.has(file)) return [];
+    this.schemaRead.add(file);
+    try {
+      const columns: Record<string, string[]> = {};
+      for (const table of ["sessions", "messages"]) {
+        columns[table] = db
+          .query<{ name: string }, []>(`PRAGMA table_info(${table})`)
+          .all()
+          .map(({ name }) => name);
+      }
+      const roles = db
+        .query<{ role: string | null }, []>("SELECT DISTINCT role FROM messages")
+        .all()
+        .flatMap(({ role }) => (typeof role === "string" ? [role] : []));
+      return [JSON.stringify({ [SCHEMA_LINE]: { columns, roles } })];
+    } catch {
+      // A schema read that fails must never stop the messages being tailed.
+      return [];
+    }
+  }
+
   async read(file: string, offset: number): Promise<ReadResult> {
     const db = new Database(
       readOnlyUri(file),
@@ -212,7 +265,10 @@ class HermesDatabaseReader {
       ).get()?.id;
       const stitched = this.stitchCompressionChains(db, rows);
       return {
-        lines: this.unreplayed(file, stitched).map((row) => JSON.stringify(row)),
+        lines: [
+          ...this.schemaLine(db, file),
+          ...this.unreplayed(file, stitched).map((row) => JSON.stringify(row)),
+        ],
         offset: maximum === null || maximum === undefined ? offset : Math.max(offset, maximum),
         truncated: false,
       };

@@ -322,7 +322,17 @@ describe("claude-code parser", () => {
       JSON.stringify({ type: "summary", summary: "Old work", leafUuid: "u-l" }),
     );
 
-    expect(events).toEqual([]);
+    // What this test pins is unchanged: a summary line produces no message,
+    // no session-meta and no lifecycle event. The canary (#100) additionally
+    // reports the shape, because `type: "summary"` appears in NONE of the 913
+    // real transcripts the contract was captured from — an honest report, and
+    // the reason it is asserted here rather than filtered away.
+    expect(events.filter(({ type }) => type !== "shape-drift")).toEqual([]);
+    expect(
+      events.flatMap((event) =>
+        event.type === "shape-drift" ? [`${event.drift.dimension}|${event.drift.token}`] : [],
+      ),
+    ).toContain("value|summary");
   });
 
   test("session-meta is not repeated for later records of the same session", () => {

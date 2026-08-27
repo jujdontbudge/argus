@@ -12,6 +12,7 @@ import {
   isCodexSubagentThread,
 } from "../matching/candidates";
 import type { SourceParser, TailEvent, TranscriptSource } from "./events";
+import { ShapeWatcher } from "./shape/watcher";
 import { readNewLines, type ReadResult } from "./line-reader";
 
 export interface CodexSourceOptions {
@@ -120,8 +121,11 @@ class CodexParser implements SourceParser {
   private sessionId: string | undefined;
   private sessionTs: string | undefined;
   private version: string | undefined;
+  private readonly shape: ShapeWatcher;
 
-  constructor(private readonly file: string) {}
+  constructor(private readonly file: string) {
+    this.shape = new ShapeWatcher("codex", file);
+  }
 
   private metaEvent(ts: string | undefined): TailEvent {
     return {
@@ -140,6 +144,12 @@ class CodexParser implements SourceParser {
     };
   }
 
+  /**
+   * The canary wraps the parse rather than sitting inside it (#100): the body
+   * below has a dozen early returns, and drift must be reported even when the
+   * record is one this parser ignores entirely — an unfamiliar `payload.type`
+   * is precisely the shape a rollout starts carrying before we handle it.
+   */
   parseLine(line: string): TailEvent[] {
     let parsed: unknown;
     try {
@@ -148,6 +158,15 @@ class CodexParser implements SourceParser {
       return [{ type: "lifecycle", kind: "parse-error", content: line, file: this.file }];
     }
     const record = asRecord(parsed);
+    const drift = this.shape.inspect(
+      parsed,
+      this.sessionId ?? (record ? str(record.id) : undefined),
+      record ? str(record.timestamp) : undefined,
+    );
+    return drift.length === 0 ? this.parseRecord(record) : [...drift, ...this.parseRecord(record)];
+  }
+
+  private parseRecord(record: Rec | null): TailEvent[] {
     if (!record) return [];
     const ts = str(record.timestamp);
 

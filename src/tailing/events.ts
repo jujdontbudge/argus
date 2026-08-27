@@ -8,6 +8,7 @@
  */
 
 import type { ReadResult } from "./line-reader";
+import type { ShapeDrift } from "./shape/contract";
 
 /** A user- or assistant-authored message as recorded in a transcript. */
 export interface MessageEvent {
@@ -65,7 +66,28 @@ export interface LifecycleEvent {
   file: string;
 }
 
-export type TailEvent = MessageEvent | SessionMetaEvent | LifecycleEvent;
+/**
+ * The record-shape canary fired (#100): a source read a record exhibiting a
+ * shape fact its captured contract has never seen. Emitted BESIDE the ordinary
+ * events, never instead of them — the record is still parsed and classified by
+ * today's rules, because refusing an unfamiliar field would take the always-on
+ * eyes down over a cosmetic CLI change. See `./shape/contract.ts`.
+ */
+export interface ShapeDriftEvent {
+  type: "shape-drift";
+  /** Which source's contract drifted. */
+  source: ShapeDrift["source"];
+  drift: ShapeDrift;
+  sessionId?: string;
+  ts?: string;
+  file: string;
+}
+
+export type TailEvent =
+  | MessageEvent
+  | SessionMetaEvent
+  | LifecycleEvent
+  | ShapeDriftEvent;
 
 /** Per-file stateful parser; transcript state derives from lines fed in order. */
 export interface SourceParser {

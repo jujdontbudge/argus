@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { claudeCandidateText } from "../matching/candidates";
 import { repositoryFor } from "./codex";
 import type { SourceParser, TailEvent, TranscriptSource } from "./events";
+import { ShapeWatcher } from "./shape/watcher";
 
 /**
  * Map a project cwd to its Claude Code transcript directory: the slug is the
@@ -41,8 +42,11 @@ function str(value: unknown): string | undefined {
 
 class ClaudeCodeParser implements SourceParser {
   private metaSeen = new Set<string>();
+  private readonly shape: ShapeWatcher;
 
-  constructor(private readonly file: string) {}
+  constructor(private readonly file: string) {
+    this.shape = new ShapeWatcher("claude-code", file);
+  }
 
   parseLine(line: string): TailEvent[] {
     let parsed: unknown;
@@ -58,6 +62,9 @@ class ClaudeCodeParser implements SourceParser {
     const events: TailEvent[] = [];
     const sessionId = str(rec.sessionId);
     const ts = str(rec.timestamp);
+    // The canary runs BEFORE the record is interpreted, so an unfamiliar shape
+    // is reported even when every rule below happens to accept it (#100).
+    events.push(...this.shape.inspect(rec, sessionId, ts));
 
     // #49: emit session-meta from the first record that actually CARRIES the
     // session's identity, not merely the first one that names it. A real

@@ -45,6 +45,18 @@ function identity(audit: AuditDetails): unknown {
   switch (audit.type) {
     case "claude-origin-kind-refused":
       return { type: audit.type, kind: audit.kind };
+    // One alarm per unknown shape fact, not one per record carrying it (#100).
+    // The eyes are always-on and a drifted CLI writes the same new field on
+    // every record it produces; without this the first cosmetic rename would
+    // bury every other alarm in `argus status` within a minute.
+    case "record-shape-drift":
+      return {
+        type: audit.type,
+        source: audit.source,
+        dimension: audit.dimension,
+        path: audit.path,
+        token: audit.token,
+      };
     case "send-expired":
       return {
         type: audit.type,
