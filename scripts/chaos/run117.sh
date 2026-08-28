@@ -174,6 +174,12 @@ while [ "$(date +%s)" -lt "$SOFT_DEADLINE" ]; do
   sleep 15
   [ -f "$SCRATCH/STOP" ] && { log "STOP file present; ending"; break; }
   kill -0 "$SUPERVISOR_PID" 2>/dev/null || { log "supervisor died; ending"; break; }
+  # A dead killer means a run with no chaos in it. analyze117.ts already cannot
+  # score that as a pass (its budget check requires at least one judged kill),
+  # but it must be visible in the driver log at the time, not only afterwards.
+  kill -0 "$(cat "$SCRATCH/killer.pid")" 2>/dev/null || {
+    [ -f "$SCRATCH/KILLER-GONE" ] || { log "WARNING: killer process is gone"; touch "$SCRATCH/KILLER-GONE"; }
+  }
 
   machine=$(tail -n 1 "$SCRATCH/series.jsonl" 2>/dev/null \
     | grep -o '"machineBunRssMiB":[0-9.]*' | grep -o '[0-9.]*')

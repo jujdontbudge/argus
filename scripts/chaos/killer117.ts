@@ -63,6 +63,7 @@
  * same second — chaos next door must not cost it a message or a restart.
  */
 import { appendFileSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 
 const [, , scratchRoot, deadlineArgument, ownerArgument, epochArgument] = process.argv;
@@ -221,7 +222,10 @@ const repoPaths: string[] = [];
 for (let index = 0; index < 8; index += 1) {
   const candidate = join(root, `repo-${index}`);
   if (await Bun.file(join(candidate, ".argus", "config.yaml")).exists()) {
-    repoPaths.push(await Bun.$`cd ${candidate} && pwd -P`.text().then((t) => t.trim()));
+    // `realpath`, matching what run117.sh enrols and what the supervisor puts
+    // in its status file: /private/tmp vs /tmp would make every ownership check
+    // fail closed and the run would silently kill nothing.
+    repoPaths.push(await realpath(candidate));
   }
 }
 const resolvedTarget = repoPaths[TARGET_REPO];
