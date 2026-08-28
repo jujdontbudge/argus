@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { appendFile, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ProvenanceClassifier } from "../../provenance";
-import { createClaudeCodeSource, Tailer } from "../../tailing";
+import { createClaudeCodeSource, createCodexSource, Tailer } from "../../tailing";
 import { ArchiverEye } from "./index";
 
 const T0 = "2026-08-24T10:00:00.000Z";
@@ -143,6 +143,69 @@ describe("ArchiverEye", () => {
       expect((await eye.catchUp(new Tailer(source), classifier())).inserted).toBe(0);
       expect(eye.messageCount()).toBe(3);
       eye.close();
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  // The #117 regression, at the layer where it was actually observed. Every
+  // test above uses a Claude Code source, which is why none of them caught it:
+  // `ClaudeCodeParser` re-emits session-meta from the first record carrying a
+  // `cwd`, so a resumed Claude parser heals itself on its next user line. A
+  // Codex rollout carries its `session_meta` exactly ONCE, as line one, and a
+  // parser resumed past it emits nothing at all — silently, with a clean
+  // `backlog: 0` and no error, forever.
+  //
+  // Live shape: SIGKILL an archiver at minute 2, the supervisor restarts it
+  // inside budget, the replacement takes the lease and reports healthy, and 275
+  // of 405 sentinel messages never land.
+  test("an archiver restarted on its persisted cursors keeps archiving codex", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-archiver-resume-"));
+    try {
+      const repo = join(root, "repo");
+      const codexHome = join(root, "codex");
+      const sessions = join(codexHome, "sessions", "2026", "08", "28");
+      await mkdir(join(repo, ".git"), { recursive: true });
+      await mkdir(sessions, { recursive: true });
+      const id = "00000000-0000-0000-1170-000000117001";
+      const rollout = join(sessions, `rollout-2026-08-28T00-00-00-${id}.jsonl`);
+      const codexLine = (ordinal: number, type: "session_meta" | "response_item"): string =>
+        `${JSON.stringify(
+          type === "session_meta"
+            ? {
+                timestamp: T0,
+                type,
+                payload: { id, session_id: id, cwd: repo, cli_version: "0.149.0" },
+              }
+            : {
+                timestamp: new Date(Date.UTC(2026, 7, 28, 0, 0, ordinal)).toISOString(),
+                type,
+                payload: {
+                  type: "message",
+                  role: "user",
+                  content: [{ type: "input_text", text: `restart probe ${ordinal}` }],
+                },
+              },
+        )}\n`;
+      await writeFile(rollout, codexLine(0, "session_meta"));
+      await appendFile(rollout, codexLine(1, "response_item"));
+
+      const source = createCodexSource({ codexHome });
+      const before = await ArchiverEye.open({ repo });
+      expect((await before.catchUp(new Tailer(source), new ProvenanceClassifier())).inserted).toBe(1);
+      const cursors = before.cursors();
+
+      // The process dies here. Everything below is what the supervisor's
+      // replacement watcher constructs from persisted state alone.
+      await appendFile(rollout, codexLine(2, "response_item"));
+      const after = await ArchiverEye.open({ repo });
+      const batch = await after.catchUp(
+        new Tailer(createCodexSource({ codexHome }), { cursors }),
+        new ProvenanceClassifier(),
+      );
+
+      expect(batch.inserted).toBe(1);
+      expect(after.messageCount()).toBe(2);
     } finally {
       await rm(root, { force: true, recursive: true });
     }
