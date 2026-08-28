@@ -1,0 +1,688 @@
+================================================================================
+#119 CHAOS HARNESS FIXES — H1-H4, AND WHAT THE TWO RE-RUNS FOUND
+================================================================================
+
+THE HEADLINE, PLAINLY, BEFORE ANY READING OF IT:
+
+  All four defects #117 filed against its own harness are fixed, and the two
+  scenarios that could not establish anything last time were re-run. Both
+  re-runs produced a REAL result, and one of them is bad news.
+
+  H1 + H2  FIXED AND VALIDATED. `scripts/chaos/analyze117v2.ts`, run against
+           #117's OWN scratch data, scores that identical run
+
+               leaseTakeover  FAIL -> PASS
+               bystander      FAIL -> PASS
+               overall        FAIL -> PASS
+
+           with every other component byte-identical and zero drift across all
+           43 kill verdicts. §2 and §3.
+
+  H3       FIXED, RE-RUN, AND THE ANSWER IS NOT THE COMFORTABLE ONE.
+           `page-garbage` now lands on page 10 of an 18-page checkpointed
+           archive. The control confirms the damage took: `integrity_check`
+           returns "database disk image is malformed" immediately after. Then:
+
+               archiving STOPPED and never resumed — 48 rows before, 48 rows
+               after 90 s, firstRowGrowthAfterMs null. recovered = FALSE.
+
+               health.json stayed GREEN throughout: lastError null, backlog 0,
+               and `lastSuccess` kept ADVANCING — to 19:29:38, the last second
+               of a window in which nothing was archived at all.
+
+               stderr got 90 lines, one per second, of
+               "argus watch archiver: recoverable error: database disk image is
+               malformed". The watcher did not exit.
+
+           So it is loud in ONE of the three pre-registered channels and silent
+           in the two an operator actually queries. #117 wrote that "silence
+           plus a green health file plus a frozen row count is the failure mode
+           this ticket exists to catch". On a corrupted b-tree page that is
+           two-thirds of what Argus does. §4.
+
+  H4       FIXED, RE-RUN TWICE, BOTH HALVES ANSWERED.
+           The argv fix is confirmed against #117's own conditions: live row
+           counts are now numbers, 24 -> 42 -> 60, against the 61 the
+           dispatcher recovered post-hoc. And #117's suspicion that the
+           archiver was never actually denied a write is now MEASURED, not
+           inferred: 700 KiB was still free at "97% full".
+
+           With the ballast tightened to leave 4 KiB, the archiver was denied,
+           and it did not degrade — it DIED, on an uncaught ENOSPC in the
+           health-file writer (src/supervisor/health.ts:84), within 5 s, and
+           did not come back when the space returned. §5.
+
+  Two PRODUCTION findings fall out of the re-runs. Neither is fixed here —
+  #119 is a harness ticket and they are filed for the dispatcher, §6:
+
+    P1  A corrupted archive page freezes archiving while `health.json` reports
+        lastError null, backlog 0, and a `lastSuccess` that keeps advancing.
+    P2  ENOSPC on the health file crashes the watcher outright, and because
+        `#persist` chains onto a stored promise, the failure is permanent even
+        after space returns.
+
+  No sealed file's verdict was altered. `analyze117.ts` and `corrupt117.ts` are
+  untouched; the fixes live in new files beside them. `diskfull117.sh` WAS
+  edited in place, and §5 argues why that one is different.
+
+--------------------------------------------------------------------------------
+1. RUN IDENTITY
+--------------------------------------------------------------------------------
+
+  ticket                #119 — fix #117's harness defects H1-H4
+  worktree              /Users/johansardar/argus-worktrees/chaos-fixes
+  branch                build/chaos-fixes
+  parent commit         deb4551  "merge(#117): workstream E — restarts and
+                                  delivery hold, FAIL traces to instrumentation"
+  prior evidence        docs/acceptance/chaos117.txt  (§6 files H1-H4)
+
+  files added           scripts/chaos/analyze117v2.ts   (H1, H2)
+                        scripts/chaos/corrupt119.ts     (H3)
+  file edited in place  scripts/chaos/diskfull117.sh    (H4)
+  files NOT touched     scripts/chaos/analyze117.ts     — sealed #117 record
+                        scripts/chaos/corrupt117.ts     — sealed #117 record
+
+  H1/H2 input data      /private/tmp/argus-chaos-mxErsY   (#117's own scratch,
+                        read-only, not modified — verified below)
+  H3 scratch            /private/tmp/argus-chaos-corrupt119-27VCbL   (run A)
+                        /private/tmp/argus-chaos-corrupt119b-PQVP3H  (run B)
+  H4 scratch            /private/tmp/argus-chaos-disk-RefVun   (tight, first)
+                        /private/tmp/argus-chaos-disk-4yu7dc   (tightFill=0)
+                        /private/tmp/argus-chaos-disk-zPcikH   (tightFill=1)
+
+  CREDENTIAL CHECKSUMS — checksum only, never read or copied. Identical before
+  this session's work and after the full gate:
+
+    hermes  /Users/johansardar/.hermes/auth.json
+            da742362b9e49833760e31672d012dd9e894389617a965074a3244eb2b349220
+    codex   /Users/johansardar/.codex/auth.json
+            670a91106a15b04c48f5504375c448c3115ed3ade0aa3cef083a4fc603233e3a
+    claude  /Users/johansardar/.claude/.credentials.json
+            fed88619a71d3c8a77a8f9a8047e37b3e0435d350dca1668e02de3f5ab22e7d6
+
+  The hermes path is `~/.hermes/auth.json`, per the note #117 left for exactly
+  this reason: the brief names `~/.hermes/credentials.json`, which does not
+  exist on this machine. Checksumming the briefed path would report a false
+  MISSING.
+
+--------------------------------------------------------------------------------
+2. H1 + H2 — THE FIX, AND WHY IT IS THE SMALLEST ONE THAT WORKS
+--------------------------------------------------------------------------------
+
+  H1. `healthPidSeen` returned a bare `false` when no sample in the window
+  carried the replacement pid, and `leaseTakeover` reads `false` as failure. It
+  had no state for "the sampler never got to look", although the same file nulls
+  `inBudget` and `leaseTakenOver` when `newPid` is null and filters those nulls
+  out of the verdict.
+
+  The fix introduces a second, narrower OBSERVABILITY window: from the restart
+  to the earlier of `restart + LEASE_TAKEOVER_MS` and the moment that
+  replacement pid was ITSELF killed. The two windows are used asymmetrically,
+  and the asymmetry is the whole point:
+
+      seen anywhere in [restart, restart + LEASE_TAKEOVER_MS]       -> true
+      not seen, and >= 1 usable sample in the observability window  -> false
+      not seen, and 0 usable samples in the observability window    -> null
+
+  Why not narrow both. `health.json` is a FILE, not a process. Once a
+  replacement writes its pid there, that pid stays on disk until the next
+  replacement overwrites it, so a sighting proves a write that already happened
+  and is sound wherever in the 120 s bar it lands — including after that pid is
+  dead. This is not hypothetical. The obvious first cut, narrowing both tests
+  symmetrically, was written and run first, and on this data it turned idx 42
+  (pid 69061) from a correct `true` into a `null`:
+
+    $ # symmetric version, since discarded
+    {"idx":42,"eye":"retro","phase":"brake","killedPid":67678,"newPid":69061,
+     "sealed":true,"v2":null,"leaseObservations":0,
+     "windowEnds":"2026-08-28T18:04:04.489Z"}
+
+  That replacement wrote health, was killed, and was then observed from the file
+  it had already written. The symmetric fix would have traded two false
+  negatives for one lost true positive. The asymmetric one loses none, and the
+  final output still shows the trace of it — of the 41 judged kills, 40 were
+  judged on 1 usable in-lifetime sample and one (idx 42) on 0, resolved `true`
+  by a post-death sighting:
+
+    v2 leaseJudged: 41 of 43
+    obs distribution for judged: {"0":1,"1":40}
+
+  H2. `bystander` counted supervisor restart lines across the whole log with no
+  teardown exclusion, while `noMessageLoss` in the same file excludes the last
+  TAIL_GRACE_MS = 120_000 ms by design and says why. The fix applies that same
+  exclusion, reusing that same `graceFrom` boundary. No new threshold.
+
+  Dating a line took one step, because supervisor.log carries NO timestamps:
+
+    $ tail -1 /private/tmp/argus-chaos-mxErsY/supervisor.log
+    argus supervisor: archiver watcher pid 92523 for
+      /private/tmp/argus-chaos-mxErsY/repo-1 exited with code 0; restart 1/5 in 1000ms
+
+  A line names the pid that exited, and that pid cannot have exited BEFORE the
+  last sample that still listed it as a live watcher. That last sighting is a
+  sound LOWER BOUND on the exit, and a lower bound is all this needs: if the
+  bound is already inside the grace window, the exit is too. The comparison can
+  therefore only ever exclude a line when the exclusion is certain. A line whose
+  pid never appeared in any sample cannot be dated and is JUDGED, not excluded,
+  so the fix cannot quietly widen itself into an amnesty.
+
+  On this run:
+
+    graceFrom:    2026-08-28T18:19:40.231Z
+    trafficExit:  2026-08-28T18:21:40.231Z
+    bystander lines seen / judged / excluded:  1 / 0 / 1
+    [
+      {
+        "lastSeenAliveAt": "2026-08-28T18:21:29.066Z",
+        "line": "argus supervisor: archiver watcher pid 92523 for /private/tmp/argus-chaos-mxErsY/repo-1 exited with code 0; restart 1/5 in 1000ms",
+        "pid": 92523
+      }
+    ]
+
+  18:21:29.066 is 108.8 s after graceFrom and 11.2 s BEFORE the traffic
+  generator's own exit, so the exit this line reports is inside the grace window
+  with 11 seconds to spare. pid 92523 is an original repo-1 watcher from the
+  17:11:47 fleet start: never killed, never restarted, alive in 228 of 229
+  samples.
+
+--------------------------------------------------------------------------------
+3. H1 + H2 — RAW BEFORE/AFTER ON #117's OWN DATA
+--------------------------------------------------------------------------------
+
+  Both scripts, same scratch root, same session, back to back.
+
+  $ bun scripts/chaos/analyze117.ts /private/tmp/argus-chaos-mxErsY     # sealed
+  $ bun scripts/chaos/analyze117v2.ts /private/tmp/argus-chaos-mxErsY   # fixed
+
+    === BEFORE (sealed analyze117.ts) ===        === AFTER (analyze117v2.ts) ===
+    {                                            {
+      "components": {                              "components": {
+        "brake": "PASS",                             "brake": "PASS",
+        "bystander": "FAIL",          <----          "bystander": "PASS",
+        "leaseTakeover": "FAIL",      <----          "leaseTakeover": "PASS",
+        "noMessageLoss": "PASS",                     "noMessageLoss": "PASS",
+        "ramGuard": "WITHIN",                        "ramGuard": "WITHIN",
+        "restartBudget": "PASS",                     "restartBudget": "PASS",
+        "restartCompletion": "PASS"                  "restartCompletion": "PASS"
+      },                                           },
+      "overall": "FAIL"                            "overall": "PASS"
+    }                                            }
+
+  THE PRECISION CHECK, which matters more than the flip itself. A fix that turns
+  FAIL into PASS is worth nothing unless it changes exactly what it claims to:
+
+    kills before/after: 43 43
+    sealed: leaseTakenOver true=41 false=2 null=0 judged=43
+    v2    : leaseTakenOver true=41 false=0 null=2 judged=41
+
+    differing rows:
+      {"idx":37,"eye":"retro","phase":"brake","newPid":65148,
+       "sealed":false,"v2":null,"obs":0}
+      {"idx":40,"eye":"retro","phase":"brake","newPid":66591,
+       "sealed":false,"v2":null,"obs":0}
+
+    any other field drift across all 43 verdicts (excluding the 3 new fields):
+      drift count = 0
+
+  The two rows that changed are idx 37 and idx 40 — precisely the two #117 §4
+  identified in advance, by hand, from the sampler timeline, and no others. The
+  41 true positives are all still true. No `false` was converted to `true`
+  anywhere; the two failures became "not measured", which is what they were.
+
+    leaseUnobservable (reported in full, so a null is never a silent null):
+    [
+      { "idx": 37, "eye": "retro", "newPid": 65148, "obs": 0,
+        "windowEnds": "2026-08-28T17:59:04.946Z" },
+      { "idx": 40, "eye": "retro", "newPid": 66591, "obs": 0,
+        "windowEnds": "2026-08-28T18:01:35.237Z" }
+    ]
+
+  idx 37's window ends at its own death, 8.2 s after its birth — #117 measured
+  the bracketing samples at 17:58:55.181 and 17:59:11.143, so the window is
+  empty by construction. idx 40's window ends at restart + 120 s because that
+  pid was never killed again; the sampler was simply not running across it
+  (suspend-gap candidate #5 of the 5 the tool reports).
+
+  Everything else the fixed script reports on this run, unchanged from #117:
+
+    kills 43, samples 229, sampleErrors 0, suspendGapCount 5
+    peak machine bun RSS 1423.5 MiB against a 3072 MiB guard
+    repo 0: judged 3327, lost 0, inFlight 119, landed 119, rows 7465
+    repo 1: judged 3327, lost 0, inFlight 119, landed 119, rows 7464
+    supervisorBrakes [{"givingUpMs":31948,"pid":67678,
+                       "repo":"/private/tmp/argus-chaos-mxErsY/repo-0"}]
+    brakeEye retro, finalPid 69874, aliveAtEnd true
+
+  #117's scratch was NOT modified. Both scripts open every database
+  `{ readonly: true }` and every other read is `readFileSync`.
+
+  WHAT THIS DOES AND DOES NOT LICENSE. It does not retroactively make #117 a
+  PASS. #117's verdict was returned by a sealed pre-registered file and stands
+  as published. What this establishes is narrower and is the thing #119 asked
+  for: the corrected instrument, applied to that same data, scores it the way
+  #117's own §4 and §5 argued by hand that it should be scored — so the
+  correction can be trusted on a FUTURE run, which is the only run it can
+  legitimately judge.
+
+--------------------------------------------------------------------------------
+4. H3 — CORRUPTION, RE-RUN AGAINST A POPULATED CHECKPOINTED ARCHIVE
+--------------------------------------------------------------------------------
+
+  WHY A NEW FILE AND NOT AN IN-PLACE EDIT. #119 allows an in-place fix where it
+  is purely mechanical. This one is not. Deciding HOW to make the damage land on
+  live data — force a checkpoint, or seed until the file is large enough, and
+  how large is large enough — is experimental design, not a typo. And
+  chaos117.txt §6 H3 and §7 quote corrupt117.ts's arithmetic to explain why two
+  of three modes established nothing; editing that file would leave the filed
+  finding unreproducible from the tree. So corrupt117.ts stays as committed in
+  07a392e and scripts/chaos/corrupt119.ts carries the fix.
+
+  WHAT CHANGED. Four things, and OBSERVE_MS, POLL_MS, the LOUD and RECOVERABLE
+  definitions, the single unsupervised watcher and the reporting shape are all
+  unchanged, so the numbers stay comparable with #117's.
+
+    1. A SEED phase replaces the fixed 25 s settle. It appends traffic in
+       batches and runs `PRAGMA wal_checkpoint(TRUNCATE)` each tick until the
+       MAIN file holds at least MIN_DB_PAGES = 16 pages. The checkpoint is what
+       moves rows out of the WAL and into the b-tree pages this scenario is
+       supposed to be damaging. A checkpoint writes no row and biases nothing.
+    2. `corrupt()` now REFUSES page-garbage, recording why, if the computed
+       offset is not a whole page strictly inside the file. The write-past-EOF
+       that voided #117's result can no longer happen while still reporting
+       `applied: true`.
+    3. A CONTROL: immediately after the damage a fresh read-only connection runs
+       `PRAGMA integrity_check` and the answer is recorded. #117 could not tell
+       "Argus did not notice" from "nothing was broken". That distinction is now
+       a recorded fact instead of an inference.
+    4. Modes are selectable on argv, so page-garbage can be re-run alone.
+
+  A FIFTH CHANGE, FOUND BY RUNNING IT. The one-line console summary printed
+  `loud=${firstErrorAfterMs !== null}`, and `firstErrorAfterMs` only ever
+  watches health.json and watcher liveness — it never looks at stderr, which the
+  LOUD definition explicitly counts. Run A therefore printed `loud=false` while
+  its own recorded `loud` object showed 90 stderr lines. The recorded JSON was
+  always right; only the summary contradicted the file's own definition, and a
+  summary is what gets read instead of the JSON. The definition is unchanged;
+  the line now reports all three channels separately, and the run was repeated
+  so the quoted output matches the file at HEAD. Run A and run B agree on every
+  other number.
+
+  $ bun scripts/chaos/corrupt119.ts /private/tmp/argus-chaos-corrupt119b-PQVP3H \
+      /Users/johansardar/argus-worktrees/chaos-fixes/src/cli.ts page-garbage
+
+    page-garbage: applied=true pagesAtCorruption=18 targetPage=10
+      controlIntegrity=integrity_check failed: database disk image is malformed
+      loud=true (health=false exitNonZero=false stderrLines=90)
+      recovered=false rows=48->48
+
+  THE DAMAGE ACTUALLY LANDED THIS TIME — the whole point of H3. Side by side
+  with #117, from each run's own corruption.jsonl:
+
+                          #117 (sealed corrupt117.ts)   #119 (corrupt119.ts)
+    dbBytes at corruption            4,096                    73,728
+    pageCount at corruption              1                        18
+    walBytes at corruption         737,512                         0
+    offset written                   4,096  (== EOF)         36,864
+    target page                        n/a                       10 of 18
+    rows at corruption                  25                        48
+    integrity immediately after    not asked      "database disk image is malformed"
+
+  The seed record, verbatim:
+
+    "seed": {
+      "lastCheckpoint": { "ok": true,
+                          "result": { "busy": 0, "log": 0, "checkpointed": 0 } },
+      "minDbPages": 16,
+      "reachedMinimum": true,
+      "seedMs": 6099,
+      "seedTicks": 6,
+      "stateAtCorruption": { "dbBytes": 73728, "pageCount": 18, "walBytes": 0 }
+    }
+
+  walBytes 0 at corruption time is the checkpoint having done its job: every
+  committed row is in the main file, and no reader can quietly serve an intact
+  copy of page 10 out of the WAL and mask the experiment. The bytes are there:
+
+    $ xxd -s 36864 -l 32 .../page-garbage/repo/.argus/archive.db
+    00009000: ffff ffff ffff ffff ffff ffff ffff ffff  ................
+    00009010: ffff ffff ffff ffff ffff ffff ffff ffff  ................
+
+  THE RESULT, AND IT IS NOT THE COMFORTABLE ONE.
+
+  RECOVERABLE = FALSE. Archiving stopped at the instant of corruption and never
+  restarted. Traffic kept flowing the whole 90 s; the row count did not move
+  once:
+
+    {"atMs":1005,"health":null,"rows":48,"readError":null}
+    {"atMs":2009,"health":null,"rows":48,"readError":null}
+    ... every sample identical ...
+    {"atMs":45194,"health":null,"rows":48,"readError":null}
+    {"atMs":60260,"health":null,"rows":48,"readError":null}
+    {"atMs":75365,"health":null,"rows":48,"readError":null}
+    {"atMs":90410,"health":null,"rows":48,"readError":null}
+
+    rowsBeforeCorruption      48
+    rowsAfterObservation      48
+    firstRowGrowthAfterMs     null
+    recoveredUnattended       false
+    rowsAtEndIntegrity        "integrity_check failed: database disk image is malformed"
+
+  Compare #117, where all three modes went 25 -> 115 with first growth at
+  ~1,003 ms. That +90 was the signature of nothing having been broken.
+
+  LOUD = TRUE, BUT ON ONE CHANNEL OUT OF THREE, AND NOT THE USEFUL ONES.
+
+    stderr — 90 lines over 90 s, one per second, all identical:
+
+      $ sort -u .../page-garbage/watcher.stderr
+      argus watch archiver: recoverable error: database disk image is malformed
+
+    exit — the watcher did NOT exit. watcherAliveAtEnd true, and the exit code 0
+    recorded is the SIGTERM the harness sent at the end, not a self-exit.
+
+    health.json — green, start to finish:
+
+      before {"backlog":0,"eye":"archiver","lastError":null,
+              "lastSuccess":"2026-08-28T19:28:07.716Z","pid":12691,...}
+      after  {"backlog":0,"eye":"archiver","lastError":null,
+              "lastSuccess":"2026-08-28T19:29:38.068Z","pid":12691,...}
+
+  Read that `lastSuccess` carefully. It is the END of the observation window. It
+  ADVANCED, continuously, through 90 seconds in which zero rows were archived
+  and every attempt raised "database disk image is malformed". `lastError` is
+  null and `backlog` is 0 the whole time.
+
+  So the honest answer to the question #117 left open — "does Argus NOTICE a
+  damaged b-tree page?" — is: it notices on stderr, and nowhere an operator
+  looks. `argus status` and health.json both say the archiver is fine. This is
+  filed as P1 in §6.
+
+  NOT CLAIMED HERE. This is one mode, one page, one 90 s window, on an
+  UNSUPERVISED watcher, which is corrupt117.ts's deliberate design (§ "WHY ONE
+  WATCHER AND NOT A FLEET") so that recovery measures the archive rather than
+  the restart policy. Under a supervisor the process would be restarted — but
+  nothing here restarts it, because nothing here CRASHED: a green health file
+  and a live pid are exactly what a supervisor leaves alone. `truncate-half` was
+  not re-run; #119 asked for page-garbage, the mode most clearly a no-op last
+  time, and that is what was run. truncate-half remains untested against live
+  data.
+
+--------------------------------------------------------------------------------
+5. H4 — DISK FULL, RE-RUN TWICE
+--------------------------------------------------------------------------------
+
+  WHY THIS ONE WAS FIXED IN PLACE. #119's own text calls the argv index a
+  one-line mechanical fix with no judgment attached, and it is: under
+  `bun -e '<code>' <arg>` there is no script path in argv, so the argument lands
+  one slot earlier than under `bun <script.ts> <arg>`. Confirmed again this
+  session:
+
+    $ bun -e 'console.log(JSON.stringify(process.argv))' /tmp/somepath.db
+    ["/Users/johansardar/.bun/bin/bun","/tmp/somepath.db"]
+
+  Reading `argv[2]` yielded undefined, `new Database(undefined, {readonly:true})`
+  opened an anonymous database, and that combination throws — which is why every
+  row count in #117's run recorded the string "ERR Cannot open an anonymous
+  database in read-only mode.". No verdict depended on it, chaos117.txt §6 H4
+  records the defect with its own standalone reproduction, and the finding
+  therefore stays reproducible without the broken file. Fixed in place, both
+  call sites: `rows()` and the integrity check.
+
+  THE SECOND CHANGE, the "consider" in #119. #117's reading was that the
+  archiver was probably never actually denied a write, because `dd bs=1m` stops
+  at the first 1 MiB write that fails and can leave most of a megabyte free,
+  which `df -m` rounds to 0. The fill is now graduated — bs=1m, then bs=4096,
+  then bs=512 — and the real free space is recorded at kilobyte resolution
+  instead of megabyte. That change is gated behind
+  ARGUS_CHAOS_DISKFULL_TIGHT (default 1) so the argv fix could be validated
+  against #117's EXACT conditions first. Two variables are never moved in one
+  run. The message cadence is untouched, so row counts stay comparable.
+
+  The blast-radius design is unchanged: one fixed-size 20 MiB image under
+  /private/tmp, attached -nobrowse at a private mountpoint, detached by the
+  captured device node from an EXIT/INT/TERM trap.
+
+  ---- RUN A: ARGUS_CHAOS_DISKFULL_TIGHT=0, i.e. #117's own fill -------------
+
+  $ ARGUS_CHAOS_DISKFULL_TIGHT=0 bash scripts/chaos/diskfull117.sh
+
+    2026-08-28T19:34:21Z scratch=/private/tmp/argus-chaos-disk-4yu7dc size=20MiB observe=90s
+    2026-08-28T19:34:22Z attached /dev/disk8 at /private/tmp/argus-chaos-disk-4yu7dc/mnt
+    2026-08-28T19:34:22Z archiver pid 23012
+    2026-08-28T19:34:47Z settled rows=24
+    2026-08-28T19:34:47Z filling ... to capacity (tightFill=0)
+    /dev/disk8s1        19   19         0    97%      42 ...
+    2026-08-28T19:34:47Z ballast total 18874368B; free after fill 700KiB
+    2026-08-28T19:34:47Z ENOSPC reached; observing 90s
+    2026-08-28T19:36:18Z while full: rows=42 newStderrLines=0 (over 90s)
+    2026-08-28T19:36:18Z space returned; observing recovery 90s
+    2026-08-28T19:37:49Z result written to .../diskfull-result.json
+
+    { "ticket": 117, "rerunFor": 119, "scenario": "disk-full", "volumeMiB": 20,
+      "tightFill": 0, "ballastBytes": 18874368, "freeKiBAtFull": 700,
+      "observeSeconds": 90,
+      "rowsBeforeFill": "24", "rowsWhileFull": "42",
+      "rowsAfterSpaceReturned": "60",
+      "newStderrLinesWhileFull": 0, "integrityAfter": "ok",
+      "watcherExitCode": 0, ... }
+
+  H4 CONFIRMED, BOTH WAYS.
+
+    The counts are numbers. 24, 42, 60 and integrity "ok", where #117 recorded
+    the same four fields as "ERR Cannot open an anonymous database in read-only
+    mode." four times.
+
+    They match the post-hoc recovery. The dispatcher reattached #117's image
+    read-only and measured 61 rows, integrity ok. This run's own LIVE final
+    count is 60, integrity ok. One row apart, and the arithmetic accounts for
+    it exactly: emission is one per second for the 25 s settle, then one per
+    5 s across the 90 s full window and the 90 s recovery window, i.e.
+    settle + 18 + 18. #117 read "about 61 in total" from a settle that emitted
+    25; this run's settle emitted 24 (`settled rows=24`), a one-message
+    boundary difference in a 25 s wall-clock loop, giving 60. The recovered
+    number was right, and the live instrument now reproduces it.
+
+    And #117's suspicion is now measured rather than argued. "97% capacity, 0 MB
+    available" left 700 KiB actually free. The archive is ~90 KB and appends a
+    few hundred bytes a second, so the archiver had room for everything it
+    wanted and was never denied: it archived 18 NEW rows DURING the supposedly
+    full window (24 -> 42) and 18 more during recovery, with 0 stderr lines.
+    #117 wrote "dd hitting ENOSPC proves dd was starved; nothing here proves
+    SQLite was." That is now a number: 700 KiB of proof it was not.
+
+  ---- RUN B: ARGUS_CHAOS_DISKFULL_TIGHT=1, graduated ballast ----------------
+
+  $ bash scripts/chaos/diskfull117.sh
+
+    2026-08-28T19:38:00Z scratch=/private/tmp/argus-chaos-disk-zPcikH size=20MiB observe=90s
+    2026-08-28T19:38:01Z archiver pid 28930
+    2026-08-28T19:38:26Z settled rows=24
+    2026-08-28T19:38:26Z filling ... to capacity (tightFill=1)
+    /dev/disk8s1        19   19         0   100%      43 ...
+    2026-08-28T19:38:26Z ballast total 19591168B; free after fill 4KiB
+    2026-08-28T19:38:26Z ENOSPC reached; observing 90s
+    2026-08-28T19:39:57Z while full: rows=24 newStderrLines=0 (over 90s)
+    2026-08-28T19:39:57Z space returned; observing recovery 90s
+    2026-08-28T19:41:28Z result written to .../diskfull-result.json
+
+    { ... "tightFill": 1, "ballastBytes": 19591168, "freeKiBAtFull": 4,
+      "rowsBeforeFill": "24", "rowsWhileFull": "24",
+      "rowsAfterSpaceReturned": "24",
+      "newStderrLinesWhileFull": 0, "integrityAfter": "ok",
+      "watcherExitCode": 1, ... }
+
+  700 KiB -> 4 KiB, and 97% -> 100%. This time the archiver WAS denied, and the
+  answer to "is a disk-full failure loud?" is yes — because it is fatal.
+
+    $ cat .../watcher.stderr
+    79 |     const snapshot = this.#health;
+    80 |     this.#write = this.#write.then(async () => {
+    81 |       await mkdir(dirname(this.#path), { recursive: true });
+    82 |       const temporary = `${this.#path}.${process.pid}.${randomUUID()}.tmp`;
+    83 |       try {
+    84 |         await Bun.write(temporary, `${JSON.stringify(snapshot, null, 2)}\n`);
+                           ^
+    ENOSPC: no space left on device, open '/private/tmp/argus-chaos-disk-zPcikH/mnt/repo/.argus/eyes/archiver/health.json.28930.9567f477-731d-4f12-bcfa-f2f56d447cd7.tmp'
+        path: ".../health.json.28930.9567f477-....tmp",
+     syscall: "open",
+       errno: -28,
+        code: "ENOSPC"
+
+          at <anonymous> (/Users/johansardar/argus-worktrees/chaos-fixes/src/supervisor/health.ts:84:19)
+
+    Bun v1.3.12 (macOS arm64)
+
+  The first thing to be denied a write was not the archive — it was the HEALTH
+  FILE, whose temp-then-rename needs a fresh temp file every time it is written.
+  The ENOSPC was uncaught and killed the process: `watcherExitCode: 1`, and the
+  timeline shows it gone from the very first tick, 5 s in, `rss=` empty for all
+  18 rows:
+
+    5 rows=24 stderrLines=16 rss=
+    10 rows=24 stderrLines=16 rss=
+    15 rows=24 stderrLines=16 rss=
+    ... unchanged through ...
+    91 rows=24 stderrLines=16 rss=
+
+  AND IT DID NOT COME BACK. Space was returned at 19:39:57 and the archiver had
+  90 further seconds with an 18 MiB-empty volume. Nothing moved:
+
+    5 rows=24
+    10 rows=24
+    15 rows=24
+    ...
+    91 rows=24
+
+  health.json froze at `lastSuccess: 2026-08-28T19:38:25.862Z` — one second
+  BEFORE the fill — and both `healthWhileFull` and `healthAtEnd` report that same
+  stale timestamp, with `lastError: null` and `backlog: 0`. A stale green health
+  file is what a dead archiver leaves behind.
+
+  The same crash reproduced identically on the first tight run
+  (/private/tmp/argus-chaos-disk-RefVun): same stack, same `src/supervisor/
+  health.ts:84`, same exit code 1, rows frozen at 24 across both windows.
+
+  ONE INSTRUMENTATION CAVEAT, REPORTED RATHER THAN QUIETLY FIXED.
+  `newStderrLinesWhileFull` reads 0 in both tight runs, and that is a
+  measurement artifact, not a silence: STDERR_AT_FILL is captured AFTER the dd
+  fill returns, and the crash happens inside that same second, so all 16 lines
+  were already in the baseline. The raw file has them. The `while full: ...
+  newStderrLines=0` line in the log above should be read against
+  `wc -l watcher.stderr` = 16, not instead of it. Left as-is: fixing it means
+  moving the baseline capture to before the fill, which changes what the counter
+  means, and #119 did not ask for it.
+
+  BLAST RADIUS, verified after all three disk runs:
+
+    $ hdiutil info | grep -c argus-chaos-disk    0
+    $ mount | grep -c argus                      0
+
+--------------------------------------------------------------------------------
+6. PRODUCTION FINDINGS — REPORTED, NOT FIXED
+--------------------------------------------------------------------------------
+
+  #119 is a harness ticket. Both of these are in `src/`, both were found by the
+  re-runs, and neither is fixed here. Filed for the dispatcher, in the same
+  discipline #117 used for H1-H4.
+
+  P1  A corrupted archive page stops archiving SILENTLY as far as any operator
+      surface is concerned. §4: 90 seconds, 0 rows archived, every attempt
+      raising "database disk image is malformed" on stderr, while health.json
+      holds `lastError: null`, `backlog: 0`, and a `lastSuccess` that keeps
+      advancing to the current second. The advancing `lastSuccess` is the sharp
+      part: it is not merely failing to report the error, it is actively
+      reporting success. `argus status` cannot distinguish this archiver from a
+      healthy one. This is the same SHAPE as the bug 41cbcf5 fixed under #117
+      ("a resumed watcher archived nothing, silently, forever"), reached by a
+      different route, which suggests the reporting path rather than either
+      call site is the thing worth looking at.
+
+  P2  ENOSPC on the health file crashes the watcher, and the crash is
+      permanent. §5: uncaught at src/supervisor/health.ts:84, exit code 1,
+      within 5 s of the volume filling. Two things make it worse than a crash.
+      First, the file that killed the archiver is the one whose only job is to
+      SAY the archiver is unwell — the reporting channel is the failure. Second,
+      `#persist` does `this.#write = this.#write.then(...)`: once that stored
+      promise rejects, every later write chains onto a rejected promise, so
+      recovery is impossible even after space returns, which is what the flat
+      90 s recovery window shows. Under a supervisor the process would at least
+      be restarted; unsupervised, as here, it stays dead.
+
+  Neither is in #119's scope and neither was touched.
+
+--------------------------------------------------------------------------------
+7. WHAT THIS DID NOT ESTABLISH
+--------------------------------------------------------------------------------
+
+  - #117's verdict is NOT retroactively changed. §3's PASS is what the corrected
+    instrument says about that data; the published FAIL is what the sealed
+    pre-registered instrument said, and that remains the record.
+
+  - analyze117v2.ts has never judged a LIVE run. It has been validated against
+    one historical dataset, which is the strongest thing available without a new
+    70-minute fleet run, and is not the same as having been used in anger.
+
+  - `truncate-half` is still untested against live data. #119 asked for
+    page-garbage and page-garbage is what was re-run. corrupt119.ts's seed phase
+    would fix truncate-half too, but that has not been demonstrated.
+
+  - Corruption was tested on ONE page of ONE 18-page archive in ONE 90 s window,
+    unsupervised. Whether a supervised fleet, a longer window, or a page holding
+    different content behaves differently is not known from this.
+
+  - Disk-full was tested at 4 KiB free. Behaviour in the band between 4 KiB and
+    700 KiB — where the archive can still write but not comfortably — is
+    untested, and P2 means the health file is likely to be the thing that fails
+    first anywhere in that band.
+
+  - Clock skew (item 4 of the original #117 menu) remains explicitly out of
+    scope, as #119 permits. No harness script manipulates a clock and no partial
+    work exists.
+
+  - No new full chaos fleet run was performed. #119 did not require one, and R5's
+    single-fleet rule was respected: `ps -eo args | grep 'cli.ts watch'` was
+    verified empty before each of the four scenario runs, each of which spawns
+    exactly one unsupervised watcher.
+
+--------------------------------------------------------------------------------
+8. GATE
+--------------------------------------------------------------------------------
+
+  $ bun install
+    Checked 5 installs across 6 packages (no changes) [39.00ms]
+
+  $ bun x tsc --noEmit
+    TSC_EXIT=0            (no output, exit 0)
+
+  $ bun test
+    1118 pass
+    21 skip
+    0 fail
+    3911 expect() calls
+    Ran 1139 tests across 146 files. [178.48s]
+
+  The 21 skips are the pre-existing live-integration tests that require
+  ARGUS_LIVE_WATCHER_BRAINS=1 / ARGUS_LIVE_HONCHO=1, unchanged by this work.
+
+  PROCESS AND RESOURCE CLEANLINESS, after all four scenario runs:
+
+    $ ps -eo args | grep 'cli.ts watch' | grep -v grep | wc -l      0
+    $ launchctl list | grep -ci argus                               0
+    $ hdiutil info | grep -c argus-chaos-disk                       0
+    $ mount | grep -c argus                                         0
+
+  CREDENTIAL CHECKSUMS, re-verified after the full gate — checksum only, never
+  read or copied. All three identical to the values recorded in §1 and to
+  #117's:
+
+    $ shasum -a 256 ~/.hermes/auth.json ~/.codex/auth.json \
+        ~/.claude/.credentials.json
+    da742362b9e49833760e31672d012dd9e894389617a965074a3244eb2b349220  .../.hermes/auth.json
+    670a91106a15b04c48f5504375c448c3115ed3ade0aa3cef083a4fc603233e3a  .../.codex/auth.json
+    fed88619a71d3c8a77a8f9a8047e37b3e0435d350dca1668e02de3f5ab22e7d6  .../.claude/.credentials.json
+
+  No write occurred to ~/.hermes, ~/.claude, ~/argus or any real project. Every
+  scenario ran under a scratch HOME beneath /private/tmp. No `claude
+  setup-token`, `/login`, `logout` or `claude auth` was run. ~/.codex/config.toml
+  was not written. No process this session did not spawn was killed. No cmux
+  workspace or surface was created or closed.
