@@ -1,0 +1,848 @@
+================================================================================
+#117 CHAOS — RANDOM SIGKILLS, ARCHIVE CORRUPTION, DISK-FULL, CONCURRENT `argus up`
+================================================================================
+
+THE HEADLINE, PLAINLY, BEFORE ANY READING OF IT:
+
+  The pre-registered overall verdict on the 70-minute kill/restart run is FAIL.
+
+  It fails on two components, and neither is one the ticket said mattered most.
+  Every correctness property #117 item 1 named passed with no tolerance
+  consumed:
+
+    noMessageLoss      PASS      lost = {} on BOTH repos. 3,327 judged
+                                 sentinels per repo, 0 lost; 119 in flight at
+                                 teardown per repo, 119 of 119 landed anyway.
+    restartBudget      PASS      42 of 42 budget-judged restarts inside
+                                 policy + 5,000 ms. Worst margin -4,766 ms,
+                                 i.e. no restart came within 4.7 s of its bar.
+    restartCompletion  PASS      43 of 43 kills ended in a restart or a
+                                 "restart limit reached" line. incompleteKills
+                                 = [], restartTimeouts = [], skippedKills = [],
+                                 unattributedKills = [].
+    brake              PASS      one "restart limit reached" (retro, pid 67678,
+                                 giving up for 31,948 ms) AND that eye holds a
+                                 live pid (69874) in the final sample.
+    ramGuard           WITHIN    peak whole-machine bun RSS 1,423.5 MiB against
+                                 a 3,072 MiB guard.
+
+  The FAIL comes from `leaseTakeover` and `bystander`. §4 and §5 trace both to
+  the measuring instrument rather than to the code under test, and argue it
+  from the data. The verdict is NOT softened: FAIL is what the sealed file
+  returned and FAIL is what stands. `analyze117.ts` was NOT edited.
+
+  Three separate harness defects are filed as findings in §6, in the #116
+  discipline of reporting a sealed script's flaw rather than patching it:
+
+    H1  analyze117.ts `leaseTakeover` has no "no sample existed in the window"
+        path. It scores absence of observation as observed failure. Both of its
+        two failures are pids the sampler never had an opportunity to see.
+    H2  analyze117.ts `bystander` counts supervisor restart lines over the whole
+        log with no teardown exclusion, while `noMessageLoss` in the same file
+        explicitly excludes the last 120 s. Its single failing line was emitted
+        during the supervisor's own shutdown.
+    H3  corrupt117.ts applies its damage 25 s into a WAL-mode archive, when
+        `archive.db` is still a 4,096-byte one-page file. `page-garbage` then
+        writes PAST end-of-file rather than into a b-tree page, and
+        `truncate-half` cuts a file holding no rows. Two of the three
+        corruption modes were no-ops. `loud=false` from this run is therefore
+        NOT evidence that Argus fails to notice corruption.
+    H4  diskfull117.sh reads its sqlite path from `process.argv[2]` inside
+        `bun -e`, where the argument lands at `argv[1]`. Every row count and
+        the integrity check in `diskfull-result.json` is the string
+        "ERR Cannot open an anonymous database in read-only mode."
+
+  The two production fixes on this branch (7651c57, 41cbcf5) are real and are
+  the most valuable output of this ticket. 41cbcf5 in particular — a resumed
+  watcher archiving nothing, silently, forever — was found BY this chaos run
+  and is why `noMessageLoss` above could pass at all.
+
+--------------------------------------------------------------------------------
+1. RUN IDENTITY
+--------------------------------------------------------------------------------
+
+  ticket                #117 — workstream E, chaos
+  driver                scripts/chaos/run117.sh, reparented to ppid 1
+  worktree              /Users/johansardar/argus-worktrees/chaos
+  branch                build/chaos
+  harness commits       5a3c363  "prereg(#117): the chaos harness and its
+                                  verdict, committed before the run"
+                        07a392e  "prereg(#117): corruption and disk-full
+                                  scenarios, committed before they run"
+  production fixes      7651c57  "fix(#117): stop concurrent `argus up` from
+                                  losing enrollments"
+                        41cbcf5  "fix(#117): a resumed watcher archived
+                                  nothing, silently, forever"
+  scratch (read-only)   /private/tmp/argus-chaos-mxErsY
+  topology              one HOME, one supervisor, 2 repos, 5x2 = 10 watchers
+  target repo           repo-0        bystander repo   repo-1
+  phases (minutes)      warmup 0-10, chaos 10-45, brake 45-55, settle 55-70
+  started               2026-08-28T17:11:40Z
+  planned end           2026-08-28T18:21:40Z
+  driver loop finished  2026-08-28T18:21:53Z   (70.2 min elapsed vs 70.0 planned)
+  kills delivered       43 SIGKILL, all to repo-0
+  samples               229, sampleErrors 0
+
+  CREDENTIAL CHECKSUMS — checksum only, never read or copied.
+  Identical before this session's work and after the full gate:
+
+    hermes  /Users/johansardar/.hermes/auth.json
+            da742362b9e49833760e31672d012dd9e894389617a965074a3244eb2b349220
+    codex   /Users/johansardar/.codex/auth.json
+            670a91106a15b04c48f5504375c448c3115ed3ade0aa3cef083a4fc603233e3a
+    claude  /Users/johansardar/.claude/.credentials.json
+            fed88619a71d3c8a77a8f9a8047e37b3e0435d350dca1668e02de3f5ab22e7d6
+
+  Note on the hermes path: the ticket brief named
+  `~/.hermes/credentials.json`, which does not exist on this machine. The file
+  carrying the expected checksum is `~/.hermes/auth.json`. Recorded here so the
+  next ticket checksums the right path rather than reporting a false MISSING.
+
+--------------------------------------------------------------------------------
+2. THE PRE-REGISTERED VERDICT, VERBATIM
+--------------------------------------------------------------------------------
+
+  $ bun scripts/chaos/analyze117.ts /private/tmp/argus-chaos-mxErsY
+
+  Components and thresholds, copied from the tool's own JSON:
+
+    "components": {
+      "brake": "PASS",
+      "bystander": "FAIL",
+      "leaseTakeover": "FAIL",
+      "noMessageLoss": "PASS",
+      "ramGuard": "WITHIN",
+      "restartBudget": "PASS",
+      "restartCompletion": "PASS"
+    },
+    "overall": "FAIL",
+    "thresholds": {
+      "LEASE_TAKEOVER_MS": 120000,
+      "RAM_GUARD_MIB": 3072,
+      "SLACK_MS": 5000,
+      "SUSPEND_GAP_MULTIPLE": 3,
+      "TAIL_GRACE_MS": 120000
+    }
+
+  Message loss, verbatim:
+
+    "losses": [
+      {
+        "archivedSentinelRows": 3446, "archiveError": null, "emitted": 3446,
+        "inFlightAtTeardown": 119, "inFlightThatLanded": 119, "judged": 3327,
+        "lost": [], "lostCount": 0, "repo": 0, "rows": 7465,
+        "tornLedgerLines": 0
+      },
+      {
+        "archivedSentinelRows": 3446, "archiveError": null, "emitted": 3446,
+        "inFlightAtTeardown": 119, "inFlightThatLanded": 119, "judged": 3327,
+        "lost": [], "lostCount": 0, "repo": 1, "rows": 7464,
+        "tornLedgerLines": 0
+      }
+    ],
+
+  Supporting counters, verbatim:
+
+    "kills": 43,
+    "samples": 229,
+    "sampleErrors": 0,
+    "incompleteKills": [],
+    "restartTimeouts": [],
+    "skippedKills": [],
+    "unattributedKills": [],
+    "supervisorRestartLines": 44,
+    "bystanderRestartLines": 1,
+    "peakMachineBunRssMiB": 1423.5,
+    "brakeEye": "retro",
+    "brakeEyeAliveAtEnd": true,
+    "brakeEyeFinalPid": 69874,
+    "brakeKills": 7,
+    "supervisorBrakes": [
+      { "givingUpMs": 31948, "pid": 67678,
+        "repo": "/private/tmp/argus-chaos-mxErsY/repo-0" }
+    ],
+    "trafficExitAt": "2026-08-28T18:21:40.231Z",
+    "graceFromEpochMs": 1787941180231
+
+  REPORTED, NOT JUDGED — suspendGaps (ticket item 3), verbatim:
+
+    "note": "suspendGaps is instrumentation for ticket item 3 and is excluded
+             from the overall verdict by construction; a run in which the
+             machine never slept has not tested sleep/wake and must not be
+             scored as if it had.",
+    "suspendGapCount": 5,
+    "suspendGaps": [
+      { "at": "2026-08-28T17:48:27.060Z", "gapMs":  60406, "watcherCount": 10 },
+      { "at": "2026-08-28T17:49:58.947Z", "gapMs":  45460, "watcherCount": 10 },
+      { "at": "2026-08-28T17:53:03.344Z", "gapMs": 137900, "watcherCount": 10 },
+      { "at": "2026-08-28T17:58:55.181Z", "gapMs": 305323, "watcherCount": 10 },
+      { "at": "2026-08-28T18:02:56.946Z", "gapMs": 210193, "watcherCount": 10 }
+    ]
+    (nominalIntervalMs = 15000 on every one of the five)
+
+--------------------------------------------------------------------------------
+3. THE 43 KILLS, IN FULL
+--------------------------------------------------------------------------------
+
+  Derived from the tool's own `killVerdicts` array; nothing recomputed.
+  policyMs is the supervisor's OWN stated delay, read from its stderr.
+
+  idx eye       phase  att policyMs restartMs inBudget lease
+    1 reviewer  chaos    1     1000      1013     True True
+    2 reviewer  chaos    2     2000      2029     True True
+    3 honcho    chaos    1     1000      1013     True True
+    4 archiver  chaos    1     1000      1013     True True
+    5 reviewer  chaos    3     4000      4060     True True
+    6 honcho    chaos    2     2000      2026     True True
+    7 digest    chaos    1     1000      1013     True True
+    8 archiver  chaos    2     2000      2024     True True
+    9 archiver  chaos    3     4000      4057     True True
+   10 archiver  chaos    4     8000      8103     True True
+   11 archiver  chaos    4     8000      8095     True True
+   12 archiver  chaos    5    16000     16028     True True
+   13 digest    chaos    1     1000      1012     True True
+   14 reviewer  chaos    1     1000      1013     True True
+   15 digest    chaos    2     2000      2025     True True
+   16 reviewer  chaos    2     2000      2033     True True
+   17 digest    chaos    3     4000      4062     True True
+   18 retro     chaos    1     1000      1012     True True
+   19 reviewer  chaos    3     4000      4052     True True
+   20 honcho    chaos    1     1000      1012     True True
+   21 digest    chaos    3     4000      4050     True True
+   22 reviewer  chaos    3     4000      4052     True True
+   23 digest    chaos    3     4000      4045     True True
+   24 retro     chaos    2     2000      2033     True True
+   25 honcho    chaos    2     2000      2024     True True
+   26 archiver  chaos    1     1000      1015     True True
+   27 reviewer  chaos    2     2000      2037     True True
+   28 digest    chaos    2     2000      2031     True True
+   29 digest    chaos    3     4000      4064     True True
+   30 digest    chaos    3     4000      4051     True True
+   31 honcho    chaos    2     2000      2027     True True
+   32 retro     chaos    1     1000      1017     True True
+   33 archiver  chaos    1     1000      1020     True True
+   34 digest    chaos    3     4000      4089     True True
+   35 archiver  chaos    2     2000      2056     True True
+   36 archiver  chaos    2     2000      2043     True True
+   37 retro     brake    1     1000      1042     True False   <-- §4
+   38 retro     brake    2     2000      2090     True True
+   39 retro     brake    3     4000      4060     True True
+   40 retro     brake    4     8000      8072     True False   <-- §4
+   41 retro     brake    5    16000     16234     True True
+   42 retro     brake  None     None     32733     None True   (braked; excluded)
+   43 retro     brake    5    16000     16024     True True
+
+  Reading: restart latency tracks the supervisor's declared exponential policy
+  to within 12-234 ms across all 42 judged restarts. The measured overshoot
+  never exceeds 234 ms against a 5,000 ms allowance, and that overshoot already
+  contains exit detection, the reconcile poll, a registry read, a
+  temp-then-rename status write and the killer's 100 ms observation
+  granularity. Restart timing under real SIGKILL is not close to its bar.
+
+--------------------------------------------------------------------------------
+4. WHY `leaseTakeover` FAILED, AND WHAT IT ACTUALLY MEASURED
+--------------------------------------------------------------------------------
+
+  The check (analyze117.ts:348-356) asks whether the replacement pid appears as
+  `health.json`'s `pid` in some SAMPLE within LEASE_TAKEOVER_MS = 120,000 ms of
+  the restart. It reads `sample.repos[i].health[eye].pid` — the watcher's own
+  written health file, not the supervisor's status claim. That is the right
+  field to ask about, and the check is well motivated: the docblock explains
+  that a replacement which cannot take the `watch.lock` returns 0 from
+  `runLoop` before writing any health while status still lists it as running.
+
+  41 of the 43 restarts took the lease over. Measured delta from the
+  `restarted` event to the first sample carrying that pid in health:
+
+    minimum   0.1 s   (idx 17, digest)
+    maximum  15.2 s   (idx  4, archiver)
+    median    ~6 s
+
+  Note the shape of that distribution: the maximum, 15.2 s, is one sampler
+  interval. Takeover latency is bounded ABOVE by the observation cadence, which
+  is what "too fast to measure with this instrument" looks like.
+
+  The two failures are the two pids the sampler never had an opportunity to
+  see. Both are in the brake phase, on `retro`, and both are explained without
+  reference to any lease behaviour at all:
+
+  idx 37 — pid 65148. Restarted 17:58:56.711, killed again 17:59:04.946.
+           Total lifetime 8.2 seconds.
+           Bracketing samples: 17:58:55.181 and 17:59:11.143.
+           The pid was born 1.5 s AFTER one sample and killed 6.2 s BEFORE the
+           next. Its entire life fell strictly between two consecutive samples.
+           There was no sample in which it COULD have been observed.
+
+           This is structural, not bad luck: the brake phase kills the same eye
+           roughly every 8-10 s in order to force five restarts inside a
+           five-minute window, while the sampler runs at 15 s. The scenario is
+           designed to produce replacements shorter-lived than the instrument's
+           resolution.
+
+  idx 40 — pid 66591. Restarted 17:59:35.237, first seen in health at
+           18:02:56.946 — a delta of 201.7 s, over the 120 s bar.
+           The sample that finally saw it reports intervalMs = 210,193: it is
+           suspend-gap candidate #5 in the tool's OWN reportedNotJudged list.
+           The sampler was not running between 17:59:26.753 and 18:02:56.946.
+           The pid was observed at the FIRST opportunity the sampler had.
+
+  So neither failure is a watcher that failed to take a lease. One is a pid
+  that lived entirely between two samples; the other is a pid first observable
+  only after a 3.5-minute sampler blackout. In both cases the harness saw
+  nothing and scored "nothing" as "failure".
+
+  There is a sharper way to put the second one. analyze117.ts's docblock states
+  that the suspendGaps section "is excluded from the overall verdict by
+  construction" because a run in which the machine never slept must not be
+  scored for a property it never tested. But the very gaps it detects as
+  suspend candidates are what pushed idx 40 past its 120 s bar and turned the
+  overall verdict to FAIL. Sleep/wake is therefore scored into the verdict
+  after all, through the back door, in the FAIL direction — the exact thing the
+  docblock says it refuses to do. That is filed as H1 in §6.
+
+--------------------------------------------------------------------------------
+5. WHY `bystander` FAILED
+--------------------------------------------------------------------------------
+
+  The component requires repo-1 to have lost zero sentinels AND to have zero
+  supervisor restart lines naming it. It lost zero sentinels (§2, lostCount 0).
+  It has exactly one restart line, and here it is, with its neighbours:
+
+    $ tail -4 /private/tmp/argus-chaos-mxErsY/supervisor.log
+    argus watch retro: recoverable error: eye retry stopped by daemon shutdown
+    argus watch reviewer: recoverable error: eye retry stopped by daemon shutdown
+    argus supervisor: archiver watcher pid 63777 for /private/.../repo-0 exited
+      with code 0; restart 1/5 in 1000ms
+    argus supervisor: archiver watcher pid 92523 for /private/.../repo-1 exited
+      with code 0; restart 1/5 in 1000ms
+
+  Those are lines 5,930 and 5,931 of a 5,931-line file — the last two lines the
+  supervisor ever wrote. They are the ONLY two "exited with code 0" lines in
+  the entire run:
+
+    $ grep -n 'exited with code 0' supervisor.log
+    5930:... pid 63777 for .../repo-0 exited with code 0; restart 1/5 in 1000ms
+    5931:... pid 92523 for .../repo-1 exited with code 0; restart 1/5 in 1000ms
+
+  Both pids appear in teardown.log as processes the driver TERMed:
+
+    2026-08-28T18:21:54Z TERM watcher pid 63777
+    2026-08-28T18:21:54Z TERM watcher pid 92523
+
+  and the preceding log lines are the daemon's own shutdown chatter ("eye retry
+  stopped by daemon shutdown"). pid 92523 is an ORIGINAL watcher from the
+  17:11:47 fleet start — it was never killed, never restarted, and ran the full
+  70 minutes. The line exists because the supervisor noticed its child exit
+  during its own shutdown and logged one intended restart before finishing
+  tearing down.
+
+  Repo-1 was not disturbed by chaos. It was disturbed by the run ending.
+
+  The inconsistency is internal to the sealed file: `noMessageLoss` in the same
+  script carefully excludes sentinels emitted within TAIL_GRACE_MS = 120 s of
+  the traffic generator's exit, on the explicit reasoning that the tail of a
+  run is not a fair place to judge from. `bystander` applies no such exclusion
+  to the supervisor log and so judges a line written 13 seconds after the
+  planned end. Filed as H2 in §6.
+
+--------------------------------------------------------------------------------
+6. HARNESS DEFECTS — REPORTED, NOT PATCHED
+--------------------------------------------------------------------------------
+
+  Same discipline as #116 §5b. No sealed script was edited. `git status` at
+  commit time shows only this evidence file staged.
+
+  H1  analyze117.ts:348-356, `healthPidSeen` / `leaseTakeover`.
+      The function returns a bare `false` when no sample in the window carries
+      the pid, and `leaseTakeover` treats `false` as a failure. There is no
+      third state for "the window contained no usable observation". The file is
+      otherwise careful about exactly this: `inBudget` and `leaseTakenOver` are
+      set to `null` when `newPid` is null, and `leaseJudged` filters nulls out.
+      The same nulling is needed when the sampler produced no sample covering
+      the replacement's lifetime.
+      Impact on THIS run: 2 of 43 restarts, both false negatives, and they are
+      the sole cause of one of the two failing components.
+      Narrower consequence: because the brake phase kills faster than the
+      sampler samples, this check can never be reliable in the brake phase as
+      currently parameterised, whatever the code under test does.
+
+  H2  analyze117.ts, `bystander`.
+      Counts supervisor restart lines across the whole log with no teardown
+      window excluded, while `noMessageLoss` in the same file excludes the last
+      120 s by design and says why. Impact on this run: 1 line, and it is the
+      sole cause of the second failing component.
+
+  H3  corrupt117.ts:121-151, `corrupt()`.
+      The docblock describes `page-garbage` as overwriting "4 KiB in the MIDDLE
+      of the main database file" and `truncate-half` as cutting "the main
+      database file to half its length". The archiver runs `PRAGMA
+      journal_mode = WAL` (src/eyes/archiver/archiver.ts:62), and the scenario
+      corrupts after only SETTLE_MS = 25 s, at which point nothing has been
+      checkpointed: `archive.db` is a 4,096-byte one-page file and all 25 rows
+      live in a 737,512-byte WAL. The run recorded this itself:
+
+        page-garbage : {"applied":true,"bytes":4096,"dbBytesBefore":4096,
+                        "offset":4096,"target":"main-db"}
+        truncate-half: {"applied":true,"dbBytesBefore":4096,"dbBytesAfter":2048,
+                        "target":"main-db"}
+
+      For page-garbage the offset is computed as
+        Math.max(4096, Math.floor(size / 2 / 4096) * 4096)
+      With size = 4096 this is Math.max(4096, 0) = 4096 — exactly EOF. The
+      guard that exists to avoid clobbering page 1 silently converts "middle of
+      the file" into "append a new page past the end" for any database of two
+      pages or fewer, and SQLite takes its page count from the header, so a
+      trailing page is ignored entirely. Nothing in the live database was
+      touched.
+      For truncate-half, a 4,096 -> 2,048 byte cut destroys the header of a
+      file that contained no rows, while every row was in the WAL and the live
+      archiver held the database open.
+      Consequence: two of the three corruption modes were no-ops. See §7.
+
+  H4  diskfull117.sh, the `rows()` helper and the integrity-check invocation.
+      Both call `bun -e '<code>' "<path>"` and read `process.argv[2]`. Under
+      `bun -e` the argument lands at `argv[1]`:
+
+        $ bun -e 'console.log(JSON.stringify(process.argv))' /tmp/somepath.db
+        ["/Users/johansardar/.bun/bin/bun","/tmp/somepath.db"]
+
+      `argv[2]` is undefined, `new Database(undefined, {readonly:true})` opens
+      an anonymous database, and that combination throws. Every row count in
+      `diskfull-result.json`, every line of `full-timeline.txt` and
+      `recovery-timeline.txt`, and `integrityAfter`, are all the same string:
+      "ERR Cannot open an anonymous database in read-only mode." See §8 for
+      what was recovered instead.
+
+  None of H1-H4 were fixed here. H1 and H2 change a PASS/FAIL verdict and
+  should be decided by the dispatcher, not by the worker whose run they judge.
+  H3 and H4 are in scripts committed pre-registered in 07a392e and are reported
+  under the same rule.
+
+--------------------------------------------------------------------------------
+7. CORRUPTION SCENARIO — RAN THIS SESSION, RAW
+--------------------------------------------------------------------------------
+
+  $ bun scripts/chaos/corrupt117.ts /private/tmp/argus-chaos-corrupt-6YU3Fh \
+      /Users/johansardar/argus-worktrees/chaos/src/cli.ts
+
+  Console output, verbatim, all three modes in one invocation:
+
+    wal-tail-garbage: loud=false recovered=true
+    page-garbage: loud=false recovered=true
+    truncate-half: loud=false recovered=true
+
+  Per-mode record from corruption.jsonl:
+
+    MODE: wal-tail-garbage
+     corruption           {"applied":true,"bytes":512,"target":"wal",
+                           "walBytesBefore":737512}
+     rowsBeforeCorruption 25
+     rowsAfterObservation 115
+     rowsAtEndIntegrity   ok
+     recoveredUnattended  true      firstRowGrowthAfterMs 1003
+     watcherAliveAtEnd    true      watcherExitCode 0
+     loud                 {"exitedNonZero":false,"healthLastErrorAfter":false,
+                           "firstErrorAfterMs":null,"stderrLines":0,
+                           "stderrSample":[]}
+
+    MODE: page-garbage
+     corruption           {"applied":true,"bytes":4096,"dbBytesBefore":4096,
+                           "offset":4096,"target":"main-db"}
+     rowsBeforeCorruption 25
+     rowsAfterObservation 115
+     rowsAtEndIntegrity   ok
+     recoveredUnattended  true      firstRowGrowthAfterMs 1003
+     watcherAliveAtEnd    true      watcherExitCode 0
+     loud                 {"exitedNonZero":false,"healthLastErrorAfter":false,
+                           "firstErrorAfterMs":null,"stderrLines":0,
+                           "stderrSample":[]}
+
+    MODE: truncate-half
+     corruption           {"applied":true,"dbBytesBefore":4096,
+                           "dbBytesAfter":2048,"target":"main-db"}
+     rowsBeforeCorruption 25
+     rowsAfterObservation 115
+     rowsAtEndIntegrity   ok
+     recoveredUnattended  true      firstRowGrowthAfterMs 1005
+     watcherAliveAtEnd    true      watcherExitCode 0
+     loud                 {"exitedNonZero":false,"healthLastErrorAfter":false,
+                           "firstErrorAfterMs":null,"stderrLines":0,
+                           "stderrSample":[]}
+
+  health.json before and after, wal-tail-garbage (the other two are identical
+  in shape):
+
+    before {"backlog":0,"eye":"archiver","lastError":null,
+            "lastSuccess":"2026-08-28T18:35:28.650Z","pid":22169,...}
+    after  {"backlog":0,"eye":"archiver","lastError":null,
+            "lastSuccess":"2026-08-28T18:36:59.193Z","pid":22169,...}
+
+  Row timeline after corruption, wal-tail-garbage (first 8 samples, then tail):
+
+    {"atMs":1003,"health":null,"rows":26,"readError":null}
+    {"atMs":2007,"health":null,"rows":27,"readError":null}
+    {"atMs":3011,"health":null,"rows":28,"readError":null}
+    {"atMs":4014,"health":null,"rows":29,"readError":null}
+    {"atMs":5017,"health":null,"rows":30,"readError":null}
+    {"atMs":6022,"health":null,"rows":31,"readError":null}
+    {"atMs":7027,"health":null,"rows":32,"readError":null}
+    {"atMs":8036,"health":null,"rows":33,"readError":null}
+    ...
+    {"atMs":60344,"health":null,"rows":85,"readError":null}
+    {"atMs":75474,"health":null,"rows":100,"readError":null}
+    {"atMs":90618,"health":null,"rows":115,"readError":null}
+
+  READING — and this is where the result has to be stated carefully.
+
+  All three modes produced identical numbers: 25 rows before, 115 after, first
+  growth at ~1,003 ms, integrity ok, zero stderr, exit 0, health green
+  throughout. Three different corruptions producing byte-identical outcomes is
+  the signature of the corruption having had no effect, not of three different
+  recoveries converging.
+
+  Per H3, that is what happened for two of them. So:
+
+    wal-tail-garbage   A REAL, IF MILD, RESULT. 512 bytes of 0xFF were written
+                       over the tail of a live 737 KB WAL. Archiving did not
+                       stop (growth resumed within 1,003 ms, +90 rows over the
+                       90 s window, one per second, no dip), no committed row
+                       was lost, and PRAGMA integrity_check returned `ok` at
+                       the end. SQLite's defined behaviour here is to stop
+                       replay at the first bad frame, and Argus lost nothing
+                       beyond what was never committed. This does establish
+                       that WAL-tail garbage under a live archiver is survived
+                       unattended.
+
+    page-garbage       ESTABLISHES NOTHING. Wrote past EOF of a one-page file.
+    truncate-half      ESTABLISHES NOTHING. Cut a file holding no rows.
+
+  Therefore `loud=false` from this scenario must NOT be read as "Argus fails to
+  notice archive corruption". The correct reading is that this run did not
+  corrupt a populated archive, so the loudness question for a damaged b-tree
+  page remains OPEN. It is listed in §10.
+
+  Final on-disk state of all three scratch archives after the run: archive.db
+  114,688 bytes, archive.db-wal 0 bytes — i.e. a checkpoint occurred during
+  each observation window and rewrote the main file.
+
+--------------------------------------------------------------------------------
+8. DISK-FULL SCENARIO — RAN THIS SESSION, RAW
+--------------------------------------------------------------------------------
+
+  $ bash scripts/chaos/diskfull117.sh
+  (defaults: ARGUS_CHAOS_VOLUME_MB=20, ARGUS_CHAOS_DISKFULL_OBSERVE_S=90)
+
+  diskfull.log, verbatim and complete:
+
+    2026-08-28T18:42:23Z scratch=/private/tmp/argus-chaos-disk-NOkMCg size=20MiB observe=90s
+    2026-08-28T18:42:25Z attached /dev/disk8 at /private/tmp/argus-chaos-disk-NOkMCg/mnt
+    Filesystem   1M-blocks Used Available Capacity iused      ifree %iused  Mounted on
+    /dev/disk8s1        19    0        19     3%       2 4294967277    0%   .../mnt
+    2026-08-28T18:42:25Z archiver pid 33835
+    2026-08-28T18:42:50Z settled rows=ERR Cannot open an anonymous database in read-only mode.
+    /dev/disk8s1        19    1        18     7%      41 4294967238    0%   .../mnt
+    2026-08-28T18:42:50Z filling /private/tmp/argus-chaos-disk-NOkMCg/mnt to capacity
+    dd: /private/tmp/argus-chaos-disk-NOkMCg/mnt/ballast: No space left on device
+    19+0 records in
+    18+0 records out
+    18874368 bytes transferred in 0.004360 secs (4328983486 bytes/sec)
+    /dev/disk8s1        19   19         0    97%      42 4294967237    0%   .../mnt
+    2026-08-28T18:42:50Z ENOSPC reached; observing 90s
+    2026-08-28T18:44:22Z while full: rows=ERR ... newStderrLines=0 (over 90s)
+    /dev/disk8s1        19    1        18     9%      41 4294967238    0%   .../mnt
+    2026-08-28T18:44:22Z space returned; observing recovery 90s
+    2026-08-28T18:45:53Z result written to .../diskfull-result.json
+    "disk8" ejected.
+
+  diskfull-result.json, verbatim:
+
+    { "ticket": 117, "scenario": "disk-full", "volumeMiB": 20,
+      "device": "/dev/disk8", "observeSeconds": 90,
+      "rowsBeforeFill": "ERR Cannot open an anonymous database in read-only mode.",
+      "rowsWhileFull": "ERR Cannot open an anonymous database in read-only mode.",
+      "rowsAfterSpaceReturned": "ERR Cannot open an anonymous database in read-only mode.",
+      "newStderrLinesWhileFull": 0,
+      "integrityAfter": "ERR Cannot open an anonymous database in read-only mode.",
+      "watcherExitCode": 0,
+      "healthWhileFull": {"backlog":0,"eye":"archiver","lastError":null,
+        "lastSuccess":"2026-08-28T18:44:22.114Z","pid":33835,...},
+      "healthAtEnd": {"backlog":0,"eye":"archiver","lastError":null,
+        "lastSuccess":"2026-08-28T18:45:53.136Z","pid":33835,...} }
+
+  full-timeline.txt while the volume was at 0 MB available (all 18 lines have
+  the same dead row reading; RSS is the usable column):
+
+    5  ... stderrLines=0 rss=39344      51 ... stderrLines=0 rss=35776
+    10 ... stderrLines=0 rss=39440      56 ... stderrLines=0 rss=27232
+    15 ... stderrLines=0 rss=37392      61 ... stderrLines=0 rss=28336
+    21 ... stderrLines=0 rss=36864      66 ... stderrLines=0 rss=26416
+    26 ... stderrLines=0 rss=36576      71 ... stderrLines=0 rss=27504
+    31 ... stderrLines=0 rss=37936      77 ... stderrLines=0 rss=26352
+    36 ... stderrLines=0 rss=37712      82 ... stderrLines=0 rss=27504
+    41 ... stderrLines=0 rss=36624      87 ... stderrLines=0 rss=27728
+    46 ... stderrLines=0 rss=38016      92 ... stderrLines=0 rss=27744
+
+  watcher.stderr: 0 bytes, 0 lines.  watcher.stdout: 0 bytes, 0 lines.
+
+  ROW COUNTS RECOVERED POST-HOC, because H4 destroyed the live ones.
+  The script's trap detached the image but left volume.dmg in place, so it was
+  re-attached READ-ONLY at a private mountpoint and detached again:
+
+    $ hdiutil attach volume.dmg -mountpoint <scratch>/mnt-ro -readonly -nobrowse
+    attached readonly: /dev/disk8
+    -rw-r--r--  archive.db      90112
+    -rw-r--r--  archive.db-shm  32768
+    -rw-r--r--  archive.db-wal      0
+    $ bun -e '<same query, argv[1]>' <db>
+    rows = 61
+    integrity = ok
+
+  READING.
+
+  The volume genuinely filled: dd terminated on "No space left on device"
+  after writing 18,874,368 bytes, and df reported 0 MB available at 97%
+  capacity for the whole 90-second observation window.
+
+  Against that, the archiver:
+    - did not exit (watcherExitCode 0, and that 0 is the TERM the script sent
+      at the end, not a self-exit)
+    - wrote nothing to stderr — 0 lines over the full 90 s
+    - kept health.json green: lastError null, and lastSuccess advanced to
+      18:44:22.114Z, i.e. the last second of the full window
+    - did not grow: RSS FELL from 39,344 KiB to 27,744 KiB across the window.
+      There is no retry storm and no unbounded buffering.
+    - lost nothing: the script emits ~25 messages during the 25 s settle, then
+      one per 5 s for 90 s full and 90 s recovery — about 61 in total. The
+      recovered archive holds exactly 61 rows, with integrity ok.
+
+  So the failure was BOUNDED, and delivery was preserved. It was NOT loud —
+  but the honest conclusion is that it had no reason to be, because the
+  archiver was probably never denied a write. A 20 MiB volume minus 18 MiB of
+  ballast leaves sub-megabyte slack that `df -m` rounds to 0, and 90 seconds of
+  one-message-per-5-seconds appends into a 90 KB database needs far less than
+  that. dd hitting ENOSPC proves dd was starved; nothing here proves SQLite
+  was.
+
+  "Is a disk-full failure loud?" is therefore still OPEN, listed in §10. What
+  this run does establish is the bounded half: a full filesystem under a live
+  archiver produced no crash, no stderr flood, no memory growth and no lost
+  messages.
+
+  BLAST RADIUS. Bounded exactly as the script's docblock promised. One 20 MiB
+  fixed-size image under /private/tmp, attached -nobrowse at a private
+  mountpoint, detached by the captured device node from an EXIT/INT/TERM trap.
+  Johan's real filesystem free space was never a variable. Post-run:
+  `hdiutil info | grep -c argus-chaos-disk` = 0, `mount | grep -c argus` = 0.
+
+--------------------------------------------------------------------------------
+9. THINGS CHECKED BECAUSE THEY LOOKED ALARMING, AND WERE NOT
+--------------------------------------------------------------------------------
+
+9a. "WARNING: killer process is gone" — VERIFIED BENIGN.
+
+  driver.log:
+    2026-08-28T18:21:43Z WARNING: killer process is gone
+    2026-08-28T18:21:53Z chaos run loop finished
+
+  kills.jsonl, last line:
+    {"at":1787941300917,"event":"killer-stop","kills":43}
+
+  1787941300917 ms = 2026-08-28T18:21:40.917Z. run.json's softDeadlineEpoch is
+  1787941300, i.e. 18:21:40Z. killer117.ts:319 is
+    while (Date.now() < deadline && ownerAlive()) { ... }
+  followed at line 334 by the unconditional
+    record({ at: Date.now(), event: "killer-stop", kills: killIndex });
+  so the killer left its loop because the deadline passed, not because it died,
+  and it recorded that fact 917 ms after the planned end. Its final count, 43,
+  matches the last kill index in the file (43) and the analyzer's kills total
+  (43). Event tally over the whole file: 1 killer-start, 43 killed,
+  43 restarted, 1 killer-stop — no gaps.
+
+  The driver's check (run117.sh:180) is a bare `kill -0` poll, and the comment
+  at lines 177-179 states plainly that a dead killer means a run with no chaos
+  in it and must be visible in the driver log at the time. The warning fired
+  2.1 s after the killer's own clean exit, which is one 15-second supervise
+  loop iteration later. The dispatcher's reading is correct and is confirmed
+  here from the data rather than accepted: this is a blanket liveness signal
+  doing exactly what its comment says, including on a clean end-of-schedule
+  stop. It is not evidence of a killer crash.
+
+9b. Brain failures on repo-0 — ENVIRONMENTAL, and the bystander proves it.
+
+  These do not appear in supervisor.log at all (`grep -c` returns 0 for both
+  strings there); they are in the sampled health files in series.jsonl:
+    "Input exceeds the maximum length of 1048576 characters. (code -32602)"
+      — 221 occurrences
+    "401 Unauthorized, url: wss://api.openai.com/v1/responses"
+      — 182 occurrences
+
+  Samples with a non-null health.lastSuccess, per eye, out of 229:
+
+              repo-0 (killed 43x)   repo-1 (never killed)
+    archiver      228                    228
+    reviewer       38                    228
+    digest         57                    228
+    honcho        228                    228
+    retro          93                    228
+
+  Top error on reviewer/digest is the same string on BOTH repos
+  ("brain nonzero-exit: exit 1: Error: turn/start: ...", 181/193 on repo-0 and
+  183/204 on repo-1). The bystander repo, which was never killed once, carries
+  the same brain-failure signature at the same rate. That is decisive: these
+  failures are environmental, not chaos-induced.
+
+  The repo-0/repo-1 difference in lastSuccess COUNT is separately explained:
+  health.json is rewritten by each new process, so an eye killed 43 times and
+  whose brain calls fail in this environment rarely gets to record a success
+  before being killed again. Consistent with chaos, not a defect.
+
+  Crucially, the archiver — the one eye noMessageLoss depends on — reports
+  lastSuccess in 228 of 229 samples on BOTH repos with ZERO errors. The
+  archiving path was healthy throughout.
+
+9c. The 401s, and whether the scratch was deliberately credential-degraded.
+
+  DELIBERATE, and it matches #109's honcho pattern. run117.sh builds a scratch
+  HOME and points every credential root at it:
+    export HOME="$HOME_DIR"
+    export CODEX_HOME="$HOME_DIR/.codex"
+    export HERMES_HOME="$HOME_DIR/.hermes"
+  and copies no credentials into any of them. Verified: `find <scratch>/home
+  -name auth.json` returns nothing, and <scratch>/home/.codex contains no
+  auth.json. Real credential checksums were unchanged throughout (§1). This is
+  a scratch running fully credential-degraded — not an architecture violation
+  and not a leak.
+
+  WHAT IT LIMITS. It means #117 cannot claim "retro recovers its BRAIN function
+  after a kill", because retro's brain could not succeed in this environment
+  whether or not it was killed. It does NOT limit the restart claims:
+  restartBudget, restartCompletion, brake and leaseTakeover all read process
+  liveness, supervisor stderr and health.json's `pid` field, none of which
+  depend on a brain call succeeding. "Does the process come back, take its
+  lease, and stay alive" is answered; "does the eye resume doing useful
+  cognitive work" is not, for the four brain-backed eyes.
+
+9d. Does analyze117.ts conflate these with chaos failures? NO.
+
+  Checked deliberately, because conflation would make the verdict meaningless.
+  None of components 1-7 read health.lastError or health.lastSuccess;
+  leaseTakeover reads only health[eye].pid. The oversized-input and 401
+  failures therefore did not contribute to the FAIL. That is a point in the
+  sealed script's favour and is recorded as such.
+  The corresponding limitation: the script consequently CANNOT detect a
+  watcher that returns, takes its lease, and then does no useful work. That
+  precise failure — a resumed watcher archiving nothing while reporting
+  backlog 0 and no error — is the bug 41cbcf5 fixed, and it was caught by the
+  sentinel set-subtraction in noMessageLoss, not by any health check.
+
+--------------------------------------------------------------------------------
+10. WHAT THIS DID NOT ESTABLISH
+--------------------------------------------------------------------------------
+
+  ITEM 6, concurrent `argus up` — COVERED BY A TEST. Item closed.
+  7651c57 found the real defect (the registry did a read-modify-write with a
+  per-pid temp name, so every racing writer's rename succeeded and the last one
+  won; measured RED at 8 concurrent cross-process enableRepo calls, 7
+  enrollments lost) and shipped `withRegistryLock`. It is covered by two tests
+  in src/supervisor/registry.test.ts, both cross-PROCESS rather than two awaits
+  in one process:
+    "concurrent cross-process enableRepo keeps every enrolled repo"
+    "a lock left by a dead holder is taken over, not waited out"
+  The ticket's own phrasing — "verify it also covers this case, or file a
+  narrower follow-up if it doesn't" — is satisfied by the fix plus these tests.
+  #111's `.argus.lock` did NOT cover it; it guards `.claude.json` for
+  trustDirectory and nothing in `argus up`'s enrollment path goes through it.
+  No follow-up needed.
+
+  RESTART BUDGET EXHAUSTION — ONLY PARTIALLY EXERCISED, AND ONLY BY FORCE.
+  Exactly one "restart limit reached" line exists in the whole 70-minute run:
+    argus supervisor: retro watcher pid 67678 for .../repo-0 exited with code
+    137; restart limit reached; giving up for 31948ms
+  and it is in the BRAKE phase, which exists precisely to force it (7 rapid
+  kills of one named eye). Peak attempt reached per eye:
+    archiver 5/5 (chaos)   retro 5/5 (chaos+brake)   digest 3/5   reviewer 3/5
+    honcho 2/5
+  So during the 45-minute RANDOM chaos phase, at a 45 s kill interval, no eye
+  ever hit the 5-restart ceiling — the archiver reached attempt 5 but the
+  five-minute window always expired first. Budget exhaustion under random
+  chaos was not observed; only the deliberately-forced case was. The unit-level
+  property is separately covered by
+  src/supervisor/runtime.test.ts "backs off exponentially and gives up after
+  the restart-window limit".
+
+  CLOCK SKEW (item 4) — CONFIRMED OUT OF SCOPE, as the ticket allows.
+  The ticket says "lower priority, only attempt if the above land cleanly —
+  name explicitly if deferred". It is deferred, and named here. Nothing in
+  run117.sh, killer117.ts, corrupt117.ts or diskfull117.sh manipulates any
+  clock, and no scenario was added for it in this session. It stays open.
+
+  SLEEP/WAKE (item 3) — INSTRUMENTED, NOT SCORED, AS DESIGNED — but see §4.
+  Five suspend candidates were detected (60 s to 305 s gaps against a 15 s
+  nominal). The fleet held 10 watchers across every one of them and no message
+  was lost. The tool declines to threshold this and so does this file. The
+  caveat from §4 stands: the gaps did leak into the verdict via leaseTakeover.
+
+  ARCHIVE CORRUPTION LOUDNESS — OPEN. Per H3, the only mode that damaged real
+  data was wal-tail-garbage. Whether Argus notices a corrupted b-tree page in a
+  populated, checkpointed archive is untested. A re-run would need the
+  corruption applied after a checkpoint (or after enough traffic that
+  archive.db is many pages), which is a change to a sealed script and so a
+  dispatcher decision.
+
+  DISK-FULL LOUDNESS — OPEN. Per §8, the volume filled but the archiver was
+  probably never denied a write. The bounded half is established; the loud half
+  is not.
+
+  MULTI-REPO CHAOS AT N>2 — out of scope here. This run was N=2 by design
+  (one target, one bystander). #116 covers N=3 without kills.
+
+--------------------------------------------------------------------------------
+11. GATE
+--------------------------------------------------------------------------------
+
+  Run in /Users/johansardar/argus-worktrees/chaos on build/chaos, after both
+  Part 2 scenarios had completed and the fleet was confirmed clear.
+
+    $ bun install
+    bun install v1.3.12 (700fc117)
+    Checked 5 installs across 6 packages (no changes) [23.00ms]
+    exit 0
+
+    $ bun x tsc --noEmit
+    (no output)
+    TSC_EXIT=0
+
+    $ bun test
+     1118 pass
+     21 skip
+     0 fail
+     3911 expect() calls
+    Ran 1139 tests across 146 files. [207.17s]
+
+  (A "restart limit reached" line appears in bun test output from
+  src/supervisor/runtime.test.ts's own fixture supervisor. It is expected test
+  output, not a failure.)
+
+  FLEET AND ARTEFACT STATE, after everything:
+
+    $ ps -eo args | grep 'cli.ts watch' | grep -v grep | wc -l      0
+    $ launchctl list | grep -ci argus                               0
+    $ mount | grep -ci argus                                        0
+    $ hdiutil info | grep -ci argus-chaos-disk                      0
+
+  The main run's own teardown had already converged (teardown.log:
+  "teardown done; survivors=0"); this confirms it is still true after this
+  session spawned and reaped a further four unsupervised archivers (three for
+  corrupt117.ts, one for diskfull117.sh).
+
+  CREDENTIALS, re-checksummed after the gate — all three unchanged from §1.
+  Never read, never copied.
+
+  SECURITY POSTURE. No writes to real ~/.hermes, ~/.claude, ~/argus or any real
+  project. No `claude setup-token`, `/login`, `logout` or `claude auth`. No
+  write to the real ~/.codex/config.toml. No process killed that this session
+  did not spawn. No cmux workspace or surface created or closed. The
+  disk-full scenario stayed inside its own 20 MiB image and its safety checks
+  never refused. /private/tmp/argus-chaos-mxErsY was treated as read-only
+  throughout; analyze117.ts opens its archives with {readonly: true}
+  (analyze117.ts:272-273).
