@@ -266,4 +266,108 @@ describe("watcher supervisor", () => {
       await second.stop();
     }
   });
+  /**
+   * #116's topology: one supervisor, N repos, 5xN watchers. The two properties
+   * below are what "the supervisor correctly attributes each of the 5xN
+   * watchers to its own repo" means when read off the status file, which is the
+   * only surface the soak sampler and `argus status` actually have.
+   */
+  test("attributes all 5xN watchers to their own repo in the status file", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-supervisor-"));
+    roots.push(root);
+    const registryPath = join(root, "repos");
+    const statusPath = join(root, "status.json");
+    const repos = [0, 1, 2].map((index) => join(root, `repo-${index}`));
+    await Bun.write(registryPath, `${repos.join("\n")}\n`);
+    let nextPid = 100;
+    const spawn: SpawnWatcher = () => new FakeProcess(nextPid++);
+    const supervisor = new WatcherSupervisor({ registryPath, spawn, statusPath });
+
+    await supervisor.reconcile();
+
+    const watchers = (await Bun.file(statusPath).json()).watchers as Array<{
+      eye: string;
+      pid: number;
+      repo: string;
+    }>;
+    expect(watchers).toHaveLength(repos.length * EYE_NAMES.length);
+    // Every (repo, eye) pair present exactly once...
+    expect(watchers.map(({ eye, repo }) => `${repo}:${eye}`).sort()).toEqual(
+      repos.flatMap((repo) => EYE_NAMES.map((eye) => `${repo}:${eye}`)).sort(),
+    );
+    // ...every repo carrying exactly its own five eyes...
+    for (const repo of repos) {
+      expect(
+        watchers.filter((watcher) => watcher.repo === repo).map(({ eye }) => eye).sort(),
+      ).toEqual([...EYE_NAMES].sort());
+    }
+    // ...and no pid claimed by two repos, which is what would make a sampler
+    // attribute one repo's RSS to another.
+    expect(new Set(watchers.map(({ pid }) => pid)).size).toBe(watchers.length);
+
+    await supervisor.stop();
+  });
+
+  test("a crash storm in one repo does not brake another repo's watchers", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-supervisor-"));
+    roots.push(root);
+    const registryPath = join(root, "repos");
+    const statusPath = join(root, "status.json");
+    const noisy = join(root, "repo-noisy");
+    const quiet = join(root, "repo-quiet");
+    await Bun.write(registryPath, `${noisy}\n${quiet}\n`);
+    let nextPid = 100;
+    const spawned: Array<{ eye: string; process: FakeProcess; repo: string }> = [];
+    const spawn: SpawnWatcher = ({ eye, repo }) => {
+      const process = new FakeProcess(nextPid++);
+      spawned.push({ eye, process, repo });
+      return process;
+    };
+    const supervisor = new WatcherSupervisor({
+      registryPath,
+      restartDelayMilliseconds: 1,
+      restartLimit: 2,
+      sleep: () => Promise.resolve(),
+      spawn,
+      statusPath,
+    });
+
+    await supervisor.reconcile();
+    const spawnedFor = (repo: string): number =>
+      spawned.filter((entry) => entry.repo === repo).length;
+    expect(spawnedFor(noisy)).toBe(EYE_NAMES.length);
+
+    // Crash the noisy repo's reviewer past its restart limit. The restart state
+    // is keyed by (repo, eye), so the brake must land on that one watcher only.
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const live = spawned
+        .filter((entry) => entry.repo === noisy && entry.eye === "reviewer")
+        .at(-1);
+      if (live === undefined) break;
+      live.process.crash();
+      // `#restartAfterExit` runs off `process.exited`, so let its microtasks
+      // drain before asking the supervisor what it now believes.
+      await Bun.sleep(5);
+      await supervisor.reconcile();
+    }
+
+    const watchers = (await Bun.file(statusPath).json()).watchers as Array<{
+      eye: string;
+      repo: string;
+    }>;
+    // The quiet repo still has all five eyes, never restarted once.
+    expect(
+      watchers.filter((watcher) => watcher.repo === quiet).map(({ eye }) => eye).sort(),
+    ).toEqual([...EYE_NAMES].sort());
+    expect(spawnedFor(quiet)).toBe(EYE_NAMES.length);
+    // And the noisy repo's OTHER four eyes are untouched by their neighbour's brake.
+    expect(
+      watchers
+        .filter((watcher) => watcher.repo === noisy && watcher.eye !== "reviewer")
+        .map(({ eye }) => eye)
+        .sort(),
+    ).toEqual(EYE_NAMES.filter((eye) => eye !== "reviewer").sort());
+
+    await supervisor.stop();
+  });
 });
