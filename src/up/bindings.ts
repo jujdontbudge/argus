@@ -666,7 +666,8 @@ function convergeYamlStringList(
       continue;
     }
     const indent = line.match(/^\s*/)?.[0].length ?? 0;
-    if (indent <= keyIndent) break;
+    if (indent < keyIndent) break;
+    if (indent === keyIndent && !line.trimStart().startsWith("-")) break;
     keyEnd += 1;
   }
   lines.splice(keyIndex, keyEnd - keyIndex, `  ${key}:`, ...replacement);
