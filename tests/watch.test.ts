@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { chmod, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { closeSync, openSync, statSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1010,6 +1011,94 @@ process.exit(42);
       }
       expect(pending).toBe(1);
       expect(await Bun.file(sentinel).text()).toBe("peer-state\n");
+    } finally {
+      child.kill("SIGTERM");
+      await child.exited;
+      await rm(world.root, { force: true, recursive: true });
+    }
+  }, 30_000);
+
+  test("archive corruption remains visible across successful idle polls", async () => {
+    const world = await watchWorld();
+    const sessions = join(world.env.CODEX_HOME, "sessions", "2026", "08", "29");
+    await mkdir(sessions, { recursive: true });
+    const sessionId = "archive-corruption-health";
+    const rollout = join(sessions, `rollout-${sessionId}.jsonl`);
+    const records: unknown[] = [
+      {
+        timestamp: "2026-08-29T00:00:00.000Z",
+        type: "session_meta",
+        payload: { id: sessionId, session_id: sessionId, cwd: world.repo },
+      },
+    ];
+    for (let ordinal = 1; ordinal <= 60; ordinal += 1) {
+      records.push({
+        timestamp: `2026-08-29T00:00:${String(ordinal % 60).padStart(2, "0")}.000Z`,
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: ordinal % 2 === 0 ? "assistant" : "user",
+          content: [{
+            type: ordinal % 2 === 0 ? "output_text" : "input_text",
+            text: `archive corruption health probe ${ordinal} ${"x".repeat(200)}`,
+          }],
+        },
+      });
+    }
+    await Bun.write(rollout, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
+
+    const env = { ...world.env, ARGUS_WATCH_POLL_MS: "20" };
+    const child = Bun.spawn(
+      [process.execPath, cli, "watch", "archiver", "--repo", world.repo],
+      { env, stderr: "pipe", stdout: "pipe" },
+    );
+    try {
+      const archive = join(world.repo, ".argus", "archive.db");
+      let count = 0;
+      for (let attempt = 0; count < 60 && attempt < 200; attempt += 1) {
+        await Bun.sleep(20);
+        try {
+          const database = new Database(archive);
+          count = database
+            .query<{ count: number }, []>("SELECT count(*) AS count FROM archive_messages")
+            .get()!.count;
+          if (count >= 60) database.run("PRAGMA wal_checkpoint(TRUNCATE)");
+          database.close(false);
+        } catch {
+          // The watcher may still be creating or populating the archive.
+        }
+      }
+      expect(count).toBe(60);
+      expect(statSync(archive).size).toBeGreaterThan(10 * 4096);
+
+      const healthPath = join(world.repo, ".argus", "eyes", "archiver", "health.json");
+      const before = (await Bun.file(healthPath).json()) as { lastSuccess: string | null };
+      const handle = openSync(archive, "r+");
+      try {
+        writeSync(handle, Buffer.alloc(4096, 0xff), 0, 4096, 9 * 4096);
+      } finally {
+        closeSync(handle);
+      }
+      await Bun.write(
+        rollout,
+        `${await Bun.file(rollout).text()}${JSON.stringify({
+          timestamp: "2026-08-29T00:01:01.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "this message must hit the damaged archive" }],
+          },
+        })}\n`,
+      );
+
+      await Bun.sleep(500);
+      const after = (await Bun.file(healthPath).json()) as {
+        lastError: { message: string } | null;
+        lastSuccess: string | null;
+      };
+      expect(after.lastError?.message ?? "").toContain("database disk image is malformed");
+      expect(after.lastSuccess).toBe(before.lastSuccess);
     } finally {
       child.kill("SIGTERM");
       await child.exited;

@@ -16,7 +16,8 @@ interface OpenWatcher {
   readonly resource: unknown;
   backlog(): number | Promise<number>;
   close?(): void;
-  tick?(): Promise<unknown>;
+  /** `false` is a successful idle poll, which must not clear an earlier error. */
+  tick?(): Promise<boolean | void>;
 }
 
 export const DEFAULT_WATCH_MAX_RSS_MIB = 512;
@@ -203,7 +204,11 @@ async function openEye(
             await loadRegistry(registryPaths(repo)),
           );
           await reportAudits("archiver", repo, audits);
-          await resource.catchUp(tailer, classifier);
+          const result = await resource.catchUp(tailer, classifier);
+          // A damaged database can fail only when new traffic reaches it. The
+          // successful idle polls between arrivals are heartbeats, not proof
+          // that archiving recovered (#120).
+          return result.received > 0;
         },
       };
     }
@@ -329,8 +334,10 @@ async function runLoop(
           registryPath,
           health,
         );
-        await watcher.tick?.();
-        await health.success(await watcher.backlog());
+        const didWork = await watcher.tick?.();
+        const backlog = await watcher.backlog();
+        if (didWork === false) await health.heartbeat(backlog);
+        else await health.success(backlog);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         await health.failure(message, watcher === undefined ? 0 : await watcher.backlog());
