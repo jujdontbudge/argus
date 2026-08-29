@@ -155,6 +155,7 @@ export interface AgentBindingOptions {
   honcho: HonchoClient;
   honchoUrl: string;
   repo: string;
+  skillDirectories?: readonly string[];
 }
 
 export interface AgentBindingReport {
@@ -728,7 +729,7 @@ async function ensureHermesProfile(
   hermesRoot: string,
   profileName: string,
   memoryDirectory: string,
-  skillsDirectory: string,
+  skillDirectories: readonly string[],
 ): Promise<void> {
   const profile = join(hermesRoot, "profiles", profileName);
   await Promise.all([
@@ -767,11 +768,10 @@ async function ensureHermesProfile(
     { enabled: "false" },
     (_key, currentValue) => currentValue !== "false",
   );
-  const withSkills = convergeYamlStringList(
+  const withSkills = skillDirectories.reduce(
+    (source, directory) =>
+      convergeYamlStringList(source, "skills", "external_dirs", directory),
     withCuratorDisabled,
-    "skills",
-    "external_dirs",
-    skillsDirectory,
   );
   if (withSkills !== config) {
     await Bun.write(configPath, withSkills);
@@ -981,7 +981,7 @@ export async function convergeAgentBindings(
     options.hermesRoot,
     profile,
     join(argusDirectory, "memory"),
-    join(argusDirectory, "skills"),
+    options.skillDirectories ?? [join(argusDirectory, "skills")],
   );
   await Bun.write(
     join(argusDirectory, "honcho.yaml"),

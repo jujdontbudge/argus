@@ -131,15 +131,53 @@ describe("codex config managed-block boundary (#103)", () => {
     expect(second.match(/^notify = /gm)).toHaveLength(1);
   });
 
-  test("still replaces its own notify rather than accumulating copies", async () => {
+  test("wraps a foreign root notify once and preserves it as the delegate", async () => {
     const place = await scratch();
     await seed(place, 'notify = ["/bin/echo", "stale"]\nmodel = "gpt-5.6-sol"\n');
 
-    const config = await converge(place);
+    const first = await converge(place);
+    const second = await converge(place);
+    const notify = (Bun.TOML.parse(second) as { notify: string[] }).notify;
+    const flag = notify.indexOf("--delegate");
+    const delegate = JSON.parse(
+      Buffer.from(notify[flag + 1]!, "base64url").toString("utf8"),
+    );
 
-    expect(config.match(/^notify = /gm)).toHaveLength(1);
-    expect(config).not.toContain("stale");
-    expect(config).toContain("scripts/codex-notify.ts");
+    expect(second).toBe(first);
+    expect(second.match(/^notify = /gm)).toHaveLength(1);
+    expect(second).toContain("scripts/codex-notify.ts");
+    expect(delegate).toEqual(["/bin/echo", "stale"]);
+  });
+
+  test("forwards the exact payload to the previous notifier", async () => {
+    const place = await scratch();
+    const delegate = join(place.root, "delegate.ts");
+    const received = join(place.root, "received.json");
+    await Bun.write(
+      delegate,
+      'await Bun.write(process.argv[2]!, process.argv[3] ?? "");\n',
+    );
+    await seed(
+      place,
+      `notify = ${JSON.stringify([process.execPath, delegate, received])}\n`,
+    );
+    const config = await converge(place);
+    const notify = (Bun.TOML.parse(config) as { notify: string[] }).notify;
+    const payload = JSON.stringify({
+      type: "agent-turn-complete",
+      "thread-id": "notify-preservation",
+      cwd: place.repo,
+      "last-assistant-message": "done",
+    });
+
+    const child = Bun.spawn([...notify, payload], {
+      cwd: place.repo,
+      env: Bun.env,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    expect(await child.exited).toBe(0);
+    expect(await Bun.file(received).text()).toBe(payload);
   });
 
   test("leaves a notify key that belongs to a profile table alone", async () => {
