@@ -643,6 +643,43 @@ custom_setting: keep-me
     );
   });
 
+  test("accepts Hermes lists whose sequence uses the key indentation", async () => {
+    const { repo, root } = await scratchRepo("Hermes List Indentation");
+    const hermesRoot = join(root, "hermes");
+    await mkdir(hermesRoot, { recursive: true });
+    await Bun.write(
+      join(hermesRoot, "config.yaml"),
+      `skills:
+  external_dirs:
+  - /existing/one
+  - /existing/two
+  template_vars: true
+`,
+    );
+
+    const report = await convergeAgentBindings({
+      hermesRoot,
+      honcho: new FakeHoncho(),
+      honchoUrl: "http://honcho.test:8000",
+      repo,
+      skillDirectories: [join(repo, ".claude", "skills"), join(repo, ".argus", "skills")],
+    });
+    const config = await Bun.file(
+      join(hermesRoot, "profiles", report.profile, "config.yaml"),
+    ).text();
+    const directories = (Bun.YAML.parse(config) as {
+      skills: { external_dirs: string[] };
+    }).skills.external_dirs;
+
+    expect(directories).toEqual([
+      "/existing/one",
+      "/existing/two",
+      join(repo, ".claude", "skills"),
+      join(repo, ".argus", "skills"),
+    ]);
+    expect(config).toContain("template_vars: true");
+  });
+
   test("raises cloned default limits and disables an enabled native curator", async () => {
     const { repo, root } = await scratchRepo("Managed Safety");
     const hermesRoot = join(root, "hermes");
