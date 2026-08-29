@@ -59,14 +59,22 @@ export const DEFAULT_CONFIG = `# Argus per-repo overrides. Uncomment only values
 #   max_concurrency: 3
 `;
 
-const AGENTS_POINTER_BLOCK = `<!-- argus:begin -->
+export type SkillsLayout = "adapter" | "preserved";
+
+function agentsPointerBlock(layout: SkillsLayout): string {
+  const skills =
+    layout === "preserved"
+      ? "- Use existing project skills from `.claude/skills/` and Argus-owned skills from `.argus/skills/`."
+      : "- Use canonical per-repo skills from `.argus/skills/`.";
+  return `<!-- argus:begin -->
 ## Argus project memory and skills
 
 - Read project-specific user context from \`.argus/memory/USER.md\`.
 - Read durable project facts from \`.argus/memory/MEMORY.md\` and neighboring fact files.
-- Use canonical per-repo skills from \`.argus/skills/\`.
+${skills}
 - Search archived transcripts with \`argus search "<query>"\`.
 <!-- argus:end -->`;
+}
 
 const MATT_POINTER_BLOCK = `<!-- matt-pocock:begin -->
 ## Agent skills
@@ -253,7 +261,7 @@ async function migrateClaudeMemory(
   await symlink(destination, source);
 }
 
-async function ensureClaudeSkillsAdapter(repo: string): Promise<void> {
+async function ensureClaudeSkillsAdapter(repo: string): Promise<SkillsLayout> {
   const claudeDirectory = join(repo, ".claude");
   const adapter = join(claudeDirectory, "skills");
   await mkdir(claudeDirectory, { recursive: true });
@@ -261,9 +269,9 @@ async function ensureClaudeSkillsAdapter(repo: string): Promise<void> {
     const metadata = await lstat(adapter);
     if (metadata.isSymbolicLink()) {
       const target = await readlink(adapter);
-      if (target === "../.argus/skills") return;
-      // Someone else owns this link. Refusing loudly beats silently
-      // redirecting a reader away from a store they chose.
+      if (resolve(dirname(adapter), target) === join(repo, ".argus", "skills")) {
+        return "adapter";
+      }
       throw new Error(
         `argus init: .claude/skills already points at ${target}; refusing to replace it`,
       );
@@ -271,20 +279,20 @@ async function ensureClaudeSkillsAdapter(repo: string): Promise<void> {
     if (!metadata.isDirectory()) {
       throw new Error(`argus init: ${adapter} exists and is not a directory`);
     }
-    const canonicalSkills = join(repo, ".argus", "skills");
-    const importDirectory = await availableImportDirectory(
-      adapter,
-      canonicalSkills,
-    );
-    await mergeDirectory(adapter, canonicalSkills, importDirectory);
-    await rm(adapter, { recursive: true });
+    // A physical store may be version-controlled and dirty. Moving it into the
+    // ignored Argus store would turn every tracked descendant into a deletion.
+    return "preserved";
   } catch (error) {
     if (!isMissing(error)) throw error;
   }
   await symlink("../.argus/skills", adapter);
+  return "adapter";
 }
 
-async function ensureAgentsPointer(repo: string): Promise<void> {
+async function ensureAgentsPointer(
+  repo: string,
+  skillsLayout: SkillsLayout,
+): Promise<void> {
   const agentsPath = join(repo, "AGENTS.md");
   const file = Bun.file(agentsPath);
   const existing = (await file.exists()) ? await file.text() : "";
@@ -293,11 +301,11 @@ async function ensureAgentsPointer(repo: string): Promise<void> {
   const refreshed = existing.replace(managedBlock, () => {
     if (inserted) return "";
     inserted = true;
-    return AGENTS_POINTER_BLOCK;
+    return agentsPointerBlock(skillsLayout);
   });
   const next = inserted
     ? refreshed
-    : `${existing.trimEnd()}${existing.trim().length > 0 ? "\n\n" : ""}${AGENTS_POINTER_BLOCK}\n`;
+    : `${existing.trimEnd()}${existing.trim().length > 0 ? "\n\n" : ""}${agentsPointerBlock(skillsLayout)}\n`;
   if (next !== existing) await Bun.write(agentsPath, next);
 }
 
@@ -347,20 +355,29 @@ async function seedOrchestratorSkill(skillsDirectory: string): Promise<void> {
 /**
  * Everything Argus generates that must NOT be committed.
  *
- * `.claude/skills` is a symlink into the ignored canonical store and `init`
- * recreates it; `.claude/settings.local.json` holds this machine's absolute
+ * `.claude/skills` is ignored only when Argus created its adapter symlink; an
+ * existing physical, version-controlled skills directory is preserved in place.
+ * `.claude/settings.local.json` holds this machine's absolute
  * bun and script paths, so committing it would hand another machine hooks
  * that cannot run. Ignoring them is what leaves the audit's "`.claude/`
  * untracked and unexplained" with nothing left to explain.
  */
-const IGNORED = [".argus/", ".claude/skills", ".claude/settings.local.json"] as const;
+const IGNORED = [".argus/", ".claude/settings.local.json"] as const;
 
-async function ensureIgnoreEntry(repo: string): Promise<void> {
+async function ensureIgnoreEntry(
+  repo: string,
+  skillsLayout: SkillsLayout,
+): Promise<void> {
   const ignorePath = join(repo, ".gitignore");
   const file = Bun.file(ignorePath);
   const existing = (await file.exists()) ? await file.text() : "";
   const lines = existing.split(/\r?\n/);
-  const missing = IGNORED.filter((entry) => !lines.includes(entry));
+  const required = [
+    IGNORED[0],
+    ...(skillsLayout === "adapter" ? [".claude/skills"] : []),
+    IGNORED[1],
+  ];
+  const missing = required.filter((entry) => !lines.includes(entry));
   if (missing.length === 0) return;
   const separator = existing.length === 0 || existing.endsWith("\n") ? "" : "\n";
   await Bun.write(
@@ -406,6 +423,7 @@ async function ensureMattWiring(
 export interface ScaffoldReport {
   /** Memory files this run created, so the CLI can say so once and only once. */
   seededMemory: string[];
+  skillsLayout: SkillsLayout;
 }
 
 /**
@@ -429,11 +447,11 @@ export async function scaffoldRepo(repo: string): Promise<ScaffoldReport> {
   const seededMemory = await seedMemoryFiles(memoryDirectory);
 
   await seedOrchestratorSkill(join(argusDirectory, "skills"));
-  await ensureClaudeSkillsAdapter(repo);
-  await ensureAgentsPointer(repo);
+  const skillsLayout = await ensureClaudeSkillsAdapter(repo);
+  await ensureAgentsPointer(repo, skillsLayout);
   await ensureMattWiring(repo, await githubRepo(repo));
-  await ensureIgnoreEntry(repo);
-  return { seededMemory };
+  await ensureIgnoreEntry(repo, skillsLayout);
+  return { seededMemory, skillsLayout };
 }
 
 /** Integration paths that differ from HEAD, repo-relative and sorted. */

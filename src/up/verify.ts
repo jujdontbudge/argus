@@ -8,7 +8,7 @@
  * agent would actually use — and every one of them can fail.
  */
 
-import { lstat, readdir, readlink, realpath } from "node:fs/promises";
+import { lstat, readdir, readlink, realpath, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 export interface WiringCheck {
@@ -42,10 +42,14 @@ async function canonicalSkills(skillsDirectory: string): Promise<string[]> {
     throw error;
   }
   for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    if (await exists(join(skillsDirectory, entry.name, "SKILL.md"))) {
-      found.push(entry.name);
+    const path = join(skillsDirectory, entry.name);
+    try {
+      if (!(await stat(path)).isDirectory()) continue;
+    } catch (error) {
+      if (missing(error)) continue;
+      throw error;
     }
+    if (await exists(join(path, "SKILL.md"))) found.push(entry.name);
   }
   return found.sort();
 }
@@ -64,8 +68,20 @@ async function checkClaudeSkillsAdapter(repo: string): Promise<WiringCheck> {
     return { detail: `${adapter} is missing`, name, ok: false };
   }
   const metadata = await lstat(adapter);
+  if (metadata.isDirectory()) {
+    const existing = await canonicalSkills(adapter);
+    const orchestrator = join(canonical, "argus-orchestrator", "SKILL.md");
+    if (!(await exists(orchestrator))) {
+      return { detail: `${orchestrator} is missing`, name, ok: false };
+    }
+    return {
+      detail: `${existing.length} existing Claude skill${existing.length === 1 ? "" : "s"} preserved; Argus orchestrator readable`,
+      name,
+      ok: true,
+    };
+  }
   if (!metadata.isSymbolicLink()) {
-    return { detail: `${adapter} is not a symlink to .argus/skills`, name, ok: false };
+    return { detail: `${adapter} is neither a directory nor an Argus adapter`, name, ok: false };
   }
   const target = resolve(repo, ".claude", await readlink(adapter));
   if (!(await exists(target)) || (await realpath(target)) !== (await realpath(canonical))) {
@@ -90,6 +106,14 @@ async function checkClaudeSkillsAdapter(repo: string): Promise<WiringCheck> {
     name,
     ok: true,
   };
+}
+
+async function expectedSkillDirectories(repo: string): Promise<string[]> {
+  const adapter = join(repo, ".claude", "skills");
+  const metadata = await lstat(adapter);
+  return metadata.isDirectory()
+    ? [adapter, join(repo, ".argus", "skills")]
+    : [join(repo, ".argus", "skills")];
 }
 
 const POINTER = /`([^`\s]+\/|[^`\s]+\.md)`/g;
@@ -191,16 +215,20 @@ async function checkHermesSkillsBinding(
       : Array.isArray(configured)
         ? configured.filter((value): value is string => typeof value === "string")
         : [];
-  const canonical = join(repo, ".argus", "skills");
-  if (!directories.includes(canonical)) {
+  const expected = await expectedSkillDirectories(repo);
+  const omitted = expected.filter((directory) => !directories.includes(directory));
+  if (omitted.length > 0) {
     return {
-      detail: `profile skills.external_dirs omits ${canonical}`,
+      detail: `profile skills.external_dirs omits ${omitted.join(", ")}`,
       name,
       ok: false,
     };
   }
   return {
-    detail: "profile skills.external_dirs includes .argus/skills",
+    detail:
+      expected.length === 1
+        ? "profile skills.external_dirs includes .argus/skills"
+        : "profile skills.external_dirs includes .claude/skills and .argus/skills",
     name,
     ok: true,
   };

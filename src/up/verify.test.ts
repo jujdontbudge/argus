@@ -95,6 +95,26 @@ describe("wiring verification", () => {
     });
   });
 
+  test("preserves and verifies a physical Claude skills directory", async () => {
+    const repo = await scratchRepo();
+    await rm(join(repo, ".claude", "skills"));
+    await mkdir(join(repo, ".claude", "skills", "local"), { recursive: true });
+    await Bun.write(join(repo, ".claude", "skills", "local", "SKILL.md"), "# Local\n");
+    await mkdir(join(repo, ".argus", "skills", "argus-orchestrator"), { recursive: true });
+    await Bun.write(
+      join(repo, ".argus", "skills", "argus-orchestrator", "SKILL.md"),
+      "# Argus\n",
+    );
+
+    const [adapter] = await verifyWiring(repo);
+
+    expect(adapter).toEqual({
+      detail: "1 existing Claude skill preserved; Argus orchestrator readable",
+      name: "claude skills adapter",
+      ok: true,
+    });
+  });
+
   test("fails when the adapter resolves somewhere other than the canonical store", async () => {
     const repo = await scratchRepo();
     await rm(join(repo, ".claude", "skills"));

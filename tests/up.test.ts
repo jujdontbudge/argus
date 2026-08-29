@@ -443,14 +443,27 @@ description: proves Hermes reads the Argus canonical skills store
 
     expect((await runUp(repo, env)).exitCode).toBe(0);
 
-    expect((await lstat(join(repo, ".claude/skills"))).isSymbolicLink()).toBe(
-      true,
-    );
+    expect((await lstat(join(repo, ".claude/skills"))).isDirectory()).toBe(true);
     expect(
-      await Bun.file(join(repo, ".argus/skills/local/SKILL.md")).text(),
+      await Bun.file(join(repo, ".claude/skills/local/SKILL.md")).text(),
     ).toBe("# Local\n");
+    expect(
+      await Bun.file(join(repo, ".argus/skills/argus-orchestrator/SKILL.md")).exists(),
+    ).toBe(true);
+    expect(await Bun.file(join(repo, ".gitignore")).text()).not.toContain(
+      ".claude/skills\n",
+    );
+    const profile = (await runUp(repo, env)).stdout.match(/^Hermes profile: (\S+)$/m)?.[1];
+    expect(profile).toBeDefined();
+    const profileConfig = await Bun.file(
+      join(env.HERMES_HOME!, "profiles", profile!, "config.yaml"),
+    ).text();
+    expect(profileConfig).toContain(JSON.stringify(join(repo, ".claude", "skills")));
+    expect(profileConfig).toContain(JSON.stringify(join(repo, ".argus", "skills")));
+
     const agents = await Bun.file(join(repo, "AGENTS.md")).text();
     expect(agents).toContain("Before");
+    expect(agents).toContain("existing project skills from `.claude/skills/`");
     expect(agents).toContain("Middle");
     expect(agents).not.toContain("stale one");
     expect(agents).not.toContain("stale two");

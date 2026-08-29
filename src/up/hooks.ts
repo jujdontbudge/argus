@@ -84,6 +84,38 @@ function removeManagedNotify(config: string): string {
     .join("\n");
 }
 
+function notifyCommand(config: string): string[] | null {
+  if (config.trim() === "") return null;
+  const parsed = object(Bun.TOML.parse(config));
+  const notify = parsed.notify;
+  if (notify === undefined) return null;
+  if (!Array.isArray(notify) || !notify.every((part) => typeof part === "string")) {
+    throw new Error("argus up: Codex root notify must be an array of strings");
+  }
+  return notify;
+}
+
+function decodeDelegate(command: readonly string[], script: string): string[] | null {
+  if (command[1] !== script) return [...command];
+  const flag = command.indexOf("--delegate");
+  if (flag === -1) return null;
+  const encoded = command[flag + 1];
+  if (!encoded) throw new Error("argus up: managed Codex notify delegate is missing");
+  try {
+    const parsed = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+    if (!Array.isArray(parsed) || !parsed.every((part) => typeof part === "string")) {
+      throw new Error("not a string array");
+    }
+    return parsed;
+  } catch (error) {
+    throw new Error(
+      `argus up: managed Codex notify delegate is invalid: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
 /** Remove only a root-level notify assignment; keys inside [profiles] stay put. */
 function removeRootNotify(config: string): string {
   const lines = config.split(/\r?\n/);
@@ -113,6 +145,7 @@ function withCodexNotify(
   bunExecutable: string,
   script: string,
 ): string {
+  const delegate = decodeDelegate(notifyCommand(existing) ?? [], script);
   const cleaned = removeRootNotify(removeManagedNotify(existing));
   const lines = cleaned.split(/\r?\n/);
   const firstTable = lines.findIndex((line) => /^\s*\[/.test(line));
@@ -122,10 +155,14 @@ function withCodexNotify(
   const tables = (firstTable === -1 ? [] : lines.slice(firstTable))
     .join("\n")
     .trim();
-  const block = `${ARGUS_CODEX_BEGIN}\nnotify = ${JSON.stringify([
+  const command = [
     bunExecutable,
     script,
-  ])}\n${ARGUS_CODEX_END}`;
+    ...(delegate && delegate.length > 0
+      ? ["--delegate", Buffer.from(JSON.stringify(delegate)).toString("base64url")]
+      : []),
+  ];
+  const block = `${ARGUS_CODEX_BEGIN}\nnotify = ${JSON.stringify(command)}\n${ARGUS_CODEX_END}`;
   return `${root}${root ? "\n\n" : ""}${block}${tables ? `\n\n${tables}` : ""}\n`;
 }
 

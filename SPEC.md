@@ -202,9 +202,15 @@ Adapters installed by `argus up` (§10):
   into `.argus/memory/` and replaced by a symlink pointing there. Its `MEMORY.md`
   index IS the canonical `MEMORY.md`; per-fact files live beside it; the Reviewer
   writes in that same index + per-fact-file format.
-- `.claude/skills/` entries symlinked from `.argus/skills/` for Claude Code.
-- Hermes `skills.external_dirs` gains the repo's `.argus/skills` path.
-- `AGENTS.md` gains a pointer block: memory files, skills dir, `argus search` usage.
+- On a fresh repo, `.claude/skills/` is an adapter to `.argus/skills/`. If the repo
+  already has a physical `.claude/skills/` directory, Argus preserves it byte-for-byte
+  and keeps Argus-owned skills separately under `.argus/skills/`; it never implicitly
+  migrates or untracks an existing skill library.
+- Hermes `skills.external_dirs` gains every active repo skill store. The same existing
+  Hermes remains the leader; Argus adds a repo profile and does not switch the global
+  active profile.
+- `AGENTS.md` gains a pointer block: memory files, both skill stores when present, and
+  `argus search` usage.
 
 The `.argus/` entry is a committed line in the target repo's `.gitignore`, so every
 clone ignores it.

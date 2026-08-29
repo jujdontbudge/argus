@@ -248,7 +248,11 @@ export async function initRepo(
   if (scaffold.seededMemory.length > 0) {
     console.log(`  .argus/memory/     seeded ${scaffold.seededMemory.join(", ")}`);
   }
-  console.log("  .claude/skills     -> ../.argus/skills");
+  console.log(
+    scaffold.skillsLayout === "preserved"
+      ? "  .claude/skills     preserved in place; Argus skills stay under .argus/skills"
+      : "  .claude/skills     -> ../.argus/skills",
+  );
   console.log("  AGENTS.md          argus + matt-pocock pointer blocks");
   console.log("  docs/agents/       issue-tracker.md, triage-labels.md, domain.md");
 
@@ -305,6 +309,10 @@ export async function convergeUp(
         ),
     honchoUrl: url,
     repo,
+    skillDirectories:
+      scaffold.skillsLayout === "preserved"
+        ? [join(repo, ".claude", "skills"), join(repo, ".argus", "skills")]
+        : [join(repo, ".argus", "skills")],
   });
   if (bindings.honcho === "unavailable") {
     console.error(

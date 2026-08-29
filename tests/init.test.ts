@@ -226,6 +226,33 @@ describe("argus init", () => {
     expect(result.stdout).toContain("wiring: AGENTS.md pointers OK (6/6 resolve)");
   });
 
+  test("preserves a tracked dirty Claude skills directory byte-for-byte", async () => {
+    const { env, repo } = await createScratchRepo();
+    const skills = join(repo, ".claude", "skills");
+    await mkdir(join(skills, "local"), { recursive: true });
+    await Bun.write(join(skills, "local", "SKILL.md"), "# Committed\n");
+    await Bun.write(join(skills, "delete-me.md"), "tracked\n");
+    expect((await run(["git", "add", ".claude/skills"], repo, env)).exitCode).toBe(0);
+    expect((await run(["git", "commit", "--quiet", "-m", "skills"], repo, env)).exitCode).toBe(0);
+    await Bun.write(join(skills, "local", "SKILL.md"), "# Dirty and preserved\n");
+    await rm(join(skills, "delete-me.md"));
+    expect((await run(["git", "add", "-u", ".claude/skills"], repo, env)).exitCode).toBe(0);
+    const before = await run(["git", "status", "--porcelain", "--", ".claude/skills"], repo, env);
+
+    const result = await runInit(repo, env);
+    const after = await run(["git", "status", "--porcelain", "--", ".claude/skills"], repo, env);
+
+    expect(result.exitCode).toBe(0);
+    expect(after.stdout).toBe(before.stdout);
+    expect((await lstat(skills)).isDirectory()).toBe(true);
+    expect(await Bun.file(join(skills, "local", "SKILL.md")).text()).toBe(
+      "# Dirty and preserved\n",
+    );
+    expect(
+      (await run(["git", "check-ignore", ".claude/skills/local/SKILL.md"], repo, env)).exitCode,
+    ).not.toBe(0);
+  });
+
   test("refuses loudly when something else owns the Claude skills adapter", async () => {
     const { env, repo } = await createScratchRepo();
     await mkdir(join(repo, ".claude"), { recursive: true });
