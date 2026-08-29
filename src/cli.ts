@@ -31,6 +31,8 @@ Flags:
              .gitignore, AGENTS.md and docs/agents — as they stand in the
              working tree, in one "chore: adopt Argus" commit. Without it
              Argus commits nothing and prints the command instead.
+  --from-now (up) seed every eye at the current transcript frontier; existing
+             history stays untouched for a separate bounded import.
 `;
 
 export const MINIMUM_BUN_VERSION = "1.3.12";
@@ -378,12 +380,17 @@ export async function main(args: string[]): Promise<number> {
   if (args[0] === "init" || args[0] === "up") {
     const command = args[0];
     const flags = args.slice(1);
-    const unknown = flags.find((flag) => flag !== "--commit");
+    const allowed =
+      command === "up" ? new Set(["--commit", "--from-now"]) : new Set(["--commit"]);
+    const unknown = flags.find((flag) => !allowed.has(flag));
     if (unknown !== undefined) {
       console.error(`argus ${command}: unknown argument '${unknown}'`);
       return 1;
     }
-    const options = { commit: flags.includes("--commit") };
+    const options = {
+      commit: flags.includes("--commit"),
+      fromNow: flags.includes("--from-now"),
+    };
     const { convergeUp, initRepo } = await import("./up.ts");
     try {
       return command === "init"

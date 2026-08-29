@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  chmod,
   mkdir,
   mkdtemp,
   realpath,
@@ -101,7 +102,27 @@ describe("repo transcript source", () => {
       const source = await createRepoTranscriptSource(parentAlias, {
         HOME: home,
       });
-      const events = await new Tailer(source).catchUp();
+      expect(await source.listFiles()).toEqual([
+        join(worktreeProject, "worktree-session.jsonl"),
+      ]);
+      const relevant = join(worktreeProject, "worktree-session.jsonl");
+      await mkdir(join(parent, ".argus", "eyes", "reviewer"), { recursive: true });
+      await Promise.all([
+        writeFile(
+          join(parent, ".argus", "start-from-now.json"),
+          '{"cutoff":"2099-01-01T00:00:00.000Z"}\n',
+        ),
+        writeFile(
+          join(parent, ".argus", "eyes", "reviewer", "cursors.json"),
+          `${JSON.stringify({ [source.fileKey!(relevant)]: 0 })}\n`,
+        ),
+        chmod(join(foreignProject, "foreign-session.jsonl"), 0),
+      ]);
+      const bootstrapped = await createRepoTranscriptSource(parentAlias, {
+        HOME: home,
+      });
+      expect(await bootstrapped.listFiles()).toEqual([relevant]);
+      const events = await new Tailer(bootstrapped).catchUp();
 
       expect(events).toContainEqual(
         expect.objectContaining({

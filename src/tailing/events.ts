@@ -107,6 +107,12 @@ export interface TranscriptSource {
   fileKey?(file: string): string;
   /** Source-specific reader for compressed or otherwise non-plain files. */
   readNewLines?(file: string, offset: number): Promise<ReadResult>;
+  /** Rebuild parser metadata for a resumed cursor without replaying old output. */
+  primeParser?(
+    parser: SourceParser,
+    file: string,
+    upTo: number,
+  ): Promise<void>;
   /** A fresh parser for one file; the tailer feeds it complete lines in order. */
   createParser(file: string): SourceParser;
 }

@@ -39,6 +39,7 @@ describe("argus CLI", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("--from-now");
     for (const command of [
       "init",
       "up",

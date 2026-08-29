@@ -222,6 +222,8 @@ export interface SetupOptions {
    * user's behalf is the surprising part, so it is opt-in and always printed.
    */
   commit?: boolean;
+  /** Begin after the current transcript frontier instead of importing history. */
+  fromNow?: boolean;
 }
 
 /**
@@ -290,6 +292,13 @@ export async function convergeUp(
     codexHome: process.env.CODEX_HOME ?? join(home, ".codex"),
     repo,
   });
+  if (options.fromNow === true) {
+    const { startFromNow } = await import("./up/from-now.ts");
+    const report = await startFromNow(repo, process.env);
+    console.log(
+      `Transcript frontier: ${report.files} existing files skipped at ${report.cutoff}`,
+    );
+  }
   await ensureSupervisorEnrollment(repo);
   await startSupervisor();
   await ensureTracker(repo);

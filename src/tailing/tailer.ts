@@ -107,6 +107,10 @@ export class Tailer {
     file: string,
     upTo: number,
   ): Promise<void> {
+    if (this.source.primeParser) {
+      await this.source.primeParser(parser, file, upTo);
+      return;
+    }
     const prior = this.source.readNewLines
       ? await this.source.readNewLines(file, 0)
       : await readNewLines(file, 0);

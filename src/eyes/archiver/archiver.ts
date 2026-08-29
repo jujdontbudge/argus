@@ -129,6 +129,20 @@ export class ArchiverEye {
     return Object.fromEntries(rows.map(({ file, offset }) => [file, offset]));
   }
 
+  /** Replace the durable read frontier for an explicit start-from-now bootstrap. */
+  replaceCursors(cursors: Readonly<CursorMap>): void {
+    const clear = this.database.query("DELETE FROM archive_cursors");
+    const write = this.database.query<unknown, [string, number]>(`
+      INSERT INTO archive_cursors (file, offset) VALUES (?, ?)
+    `);
+    this.database.transaction(() => {
+      clear.run();
+      for (const [file, offset] of Object.entries(cursors)) {
+        write.run(file, offset);
+      }
+    }).immediate();
+  }
+
   messageCount(): number {
     return this.database
       .query<{ count: number }, []>("SELECT count(*) AS count FROM archive_messages")
