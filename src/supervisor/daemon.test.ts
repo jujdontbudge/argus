@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createWatcherSpawner } from "./daemon.ts";
+import { createWatcherSpawner, sampleProcessRss } from "./daemon.ts";
 
 const roots: string[] = [];
 const cli = fileURLToPath(new URL("../cli.ts", import.meta.url));
@@ -40,7 +40,12 @@ describe("supervisor daemon", () => {
     });
   });
 
-  test("logs watcher exits and honors the configured restart brake", async () => {
+  test("samples the whole watcher fleet RSS in one external call", async () => {
+    const readings = await sampleProcessRss([process.pid]);
+    expect(readings.get(process.pid)).toBeGreaterThan(0);
+  });
+
+  test("externally kills and brakes over-limit watchers without replay", async () => {
     const root = await mkdtemp(join(tmpdir(), "argus-supervisor-brake-"));
     roots.push(root);
     const repoPath = join(root, "repo");
@@ -71,7 +76,8 @@ describe("supervisor daemon", () => {
         ARGUS_SUPERVISOR_RESTART_MS: "1",
         ARGUS_SUPERVISOR_RESTART_WINDOW_MS: "60000",
         ARGUS_SUPERVISOR_STATUS_FILE: statusPath,
-        ARGUS_WATCH_MAX_RSS_MB: "1",
+        ARGUS_SUPERVISOR_WATCH_MAX_RSS_MB: "1",
+        ARGUS_WATCH_MAX_RSS_MB: "4096",
         ARGUS_WATCH_POLL_MS: "5",
         CLAUDE_CONFIG_DIR: join(root, "claude"),
         CODEX_HOME: join(root, "codex"),
@@ -87,10 +93,9 @@ describe("supervisor daemon", () => {
       await supervisor.exited;
       const stderr = await new Response(supervisor.stderr).text();
 
-      expect(stderr).toContain("RSS ceiling exceeded");
-      expect(stderr).toContain("restart 1/2 in 1ms");
-      expect(stderr).toContain("restart 2/2 in 2ms");
-      expect(stderr).toContain("restart limit reached; giving up");
+      expect(stderr).toContain("RSS ceiling exceeded externally");
+      expect(stderr).toContain("SIGKILL and restart brake engaged");
+      expect(stderr).not.toContain("restart 1/2");
     } finally {
       supervisor.kill("SIGTERM");
       await supervisor.exited;

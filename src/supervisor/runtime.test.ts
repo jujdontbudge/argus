@@ -14,6 +14,7 @@ const roots: string[] = [];
 
 class FakeProcess implements WatcherProcess {
   killed = false;
+  killSignal: NodeJS.Signals | number | undefined;
   readonly exited: Promise<number>;
   #resolveExit!: (code: number) => void;
 
@@ -27,8 +28,10 @@ class FakeProcess implements WatcherProcess {
     this.#resolveExit(1);
   }
 
-  kill(): void {
+  kill(signal?: NodeJS.Signals | number): void {
     this.killed = true;
+    this.killSignal = signal;
+    if (signal === "SIGKILL") this.#resolveExit(137);
   }
 }
 
@@ -113,6 +116,62 @@ describe("watcher supervisor", () => {
     expect(status.watchers.some(({ pid }: { pid: number }) => pid === crashedPid)).toBe(
       false,
     );
+  });
+
+  test("an external RSS breach kills once and brakes before replaying bad input", async () => {
+    const root = await mkdtemp(join(tmpdir(), "argus-supervisor-"));
+    roots.push(root);
+    const registryPath = join(root, "repos");
+    const statusPath = join(root, "status.json");
+    const repo = join(root, "repo");
+    await Bun.write(registryPath, `${repo}\n`);
+    let now = 0;
+    let nextPid = 225;
+    let overLimitPid: number | null = null;
+    const spawned: Array<{ eye: string; process: FakeProcess }> = [];
+    const errorLog = spyOn(console, "error").mockImplementation(() => {});
+    const supervisor = new WatcherSupervisor({
+      maxWatcherRssBytes: 512,
+      now: () => now,
+      registryPath,
+      restartLimit: 2,
+      restartWindowMilliseconds: 1_000,
+      sampleRss: async (pids) =>
+        new Map(
+          pids.map((pid) => [pid, pid === overLimitPid ? 513 : 100]),
+        ),
+      spawn: ({ eye }) => {
+        const process = new FakeProcess(nextPid++);
+        spawned.push({ eye, process });
+        return process;
+      },
+      statusPath,
+    });
+    try {
+      await supervisor.reconcile();
+      const retro = spawned.find(({ eye }) => eye === "retro")!;
+      overLimitPid = retro.process.pid;
+
+      await supervisor.reconcile();
+      await Bun.sleep(1);
+      await supervisor.reconcile();
+
+      expect(retro.process.killed).toBe(true);
+      expect(retro.process.killSignal).toBe("SIGKILL");
+      expect(spawned).toHaveLength(5);
+      expect((await Bun.file(statusPath).json()).watchers).toHaveLength(4);
+      expect(errorLog.mock.calls.map((call) => String(call[0]))).toContainEqual(
+        expect.stringContaining("RSS ceiling exceeded externally"),
+      );
+
+      now = 1_001;
+      overLimitPid = null;
+      await supervisor.reconcile();
+      expect(spawned).toHaveLength(6);
+    } finally {
+      errorLog.mockRestore();
+      await supervisor.stop();
+    }
   });
 
   test("backs off exponentially and gives up after the restart-window limit", async () => {

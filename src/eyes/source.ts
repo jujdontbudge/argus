@@ -180,6 +180,10 @@ function combine(sources: readonly TranscriptSource[]): TranscriptSource {
       const source = owner.get(file);
       return `${source?.id ?? "unknown"}:${source?.fileKey?.(file) ?? file}`;
     },
+    async currentOffset(file) {
+      const source = owner.get(file);
+      return source?.currentOffset?.(file);
+    },
     readNewLines(file, offset) {
       const source = owner.get(file);
       if (source === undefined) {

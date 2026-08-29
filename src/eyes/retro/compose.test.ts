@@ -168,6 +168,42 @@ describe("composing the retro ticket (SPEC §5.5: prompts + the diff)", () => {
     expect(body).toContain("just add a frobnicator");
   });
 
+  test("oversized prompts, narratives, and file lists are bounded before composition", () => {
+    const files = Array.from({ length: 6_000 }, (_, index) =>
+      `generated/${index}/${"deep-".repeat(30)}asset.png`,
+    );
+    const sessions = Array.from({ length: 100 }, (_, index) => ({
+      sessionId: `session-${index}`,
+      agent: "claude",
+      digestFile: `adhoc-session-${index}.md`,
+      narrative: `narrative-${index}:${"n".repeat(200_000)}`,
+      johanTouched: true,
+    }));
+    const prompts = Array.from({ length: 100 }, (_, index) => ({
+      sessionId: `session-${index}`,
+      ts: "2026-08-29T20:00:00.000Z",
+      text: `prompt-${index}:${"p".repeat(200_000)}`,
+      author: "johan" as const,
+    }));
+
+    const { body } = compose({
+      prompts,
+      signal: {
+        ...signal,
+        sessions,
+        changes: {
+          ...changes,
+          commits: [],
+          workingTree: { files, diff: "+x\n".repeat(100_000) },
+        },
+      },
+    });
+
+    expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(MAX_BODY_BYTES);
+    expect(body).toContain("retro-0123456789abcdef");
+    expect(body).toMatch(/truncated|omitted/i);
+  });
+
   test("a transcript-only signal still composes a complete body", () => {
     const { body } = compose({
       signal: { ...signal, sources: ["transcript"], changes: null, dir: null },

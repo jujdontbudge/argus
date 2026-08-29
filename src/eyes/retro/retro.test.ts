@@ -547,7 +547,7 @@ describe("the Retro eye files closed retro sub-issues (SPEC §5.5)", () => {
 });
 
 describe("the Retro eye degrades loudly, never silently (ADR-0001)", () => {
-  test("tracker-less mode writes the retro into the session digest and says so", async () => {
+  test("tracker-less mode writes a separate bounded note and leaves the digest untouched", async () => {
     const place = await scratch();
     const gh = createFakeGh({ repo: "JohanSardar/argus", failView: "no git remotes" });
     try {
@@ -557,17 +557,24 @@ describe("the Retro eye degrades loudly, never silently (ADR-0001)", () => {
       await seedDigest(place.repo, "adhoc-sess-rogue.md", "Implemented something.");
       await eye.observeSession({ sessionId: "sess-rogue", cwd: place.repo });
       await eye.ingest([johanSays("sess-rogue", "do the thing")]);
+      const digestPath = join(place.repo, ".argus/sessions/adhoc-sess-rogue.md");
+      const before = await Bun.file(digestPath).text();
 
       const filings = await eye.scan();
 
       expect(filings).toHaveLength(1);
       expect(filings[0]!.outcome).toBe("digest-note");
       expect(gh.issues).toHaveLength(0);
-      const digest = await Bun.file(
-        join(place.repo, ".argus/sessions/adhoc-sess-rogue.md"),
+      expect(await Bun.file(digestPath).text()).toBe(before);
+      const note = await Bun.file(
+        join(
+          place.repo,
+          ".argus/eyes/retro/unfiled",
+          `${filings[0]!.signalId}.md`,
+        ),
       ).text();
-      expect(digest).toContain("Retro: rogue work");
-      expect(digest).toContain("do the thing");
+      expect(note).toContain("Retro: rogue work");
+      expect(note).toContain("do the thing");
       expect(audits.some((audit) => audit.type === "tracker-less")).toBe(true);
     } finally {
       await place.cleanup();
@@ -606,15 +613,23 @@ describe("the Retro eye degrades loudly, never silently (ADR-0001)", () => {
       await place.commit("src/rogue.ts", "export const rogue = 1;\n", "rogue work");
       await seedDigest(place.repo, "adhoc-sess-rogue.md", "Implemented something.");
       await eye.observeSession({ sessionId: "sess-rogue", cwd: place.repo });
+      const digestPath = join(place.repo, ".argus/sessions/adhoc-sess-rogue.md");
+      const before = await Bun.file(digestPath).text();
 
       const filings = await eye.scan();
 
       expect(filings[0]!.outcome).toBe("digest-note");
       expect(filings[0]!.reason).toContain("label 'retro' not found");
       expect(audits.some((audit) => audit.type === "retro-file-failed")).toBe(true);
-      expect(
-        await Bun.file(join(place.repo, ".argus/sessions/adhoc-sess-rogue.md")).text(),
-      ).toContain("Retro: rogue work");
+      expect(await Bun.file(digestPath).text()).toBe(before);
+      const note = await Bun.file(
+        join(
+          place.repo,
+          ".argus/eyes/retro/unfiled",
+          `${filings[0]!.signalId}.md`,
+        ),
+      ).text();
+      expect(note).toContain("Retro: rogue work");
     } finally {
       await place.cleanup();
     }
@@ -1166,7 +1181,7 @@ describe("scope drift never takes the eye down (ADR-0001)", () => {
     }
   }, BUDGET_MS);
 
-  test("a gh failure keeps the drift record in the digest and audits it", async () => {
+  test("a gh failure keeps the drift record separate from its source digest", async () => {
     const place = await scratch();
     const gh = createFakeGh({
       repo: "JohanSardar/argus",
@@ -1178,6 +1193,8 @@ describe("scope drift never takes the eye down (ADR-0001)", () => {
       await eye.prime();
       await registerTicketSession(place.repo, "sess-seven", "7", place.repo);
       await seedDigest(place.repo, "7-sess-seven.md", "Working ticket seven.");
+      const digestPath = join(place.repo, ".argus/sessions/7-sess-seven.md");
+      const before = await Bun.file(digestPath).text();
       await place.commit(
         "src/billing/stripe-webhooks.ts",
         "export const onStripeEvent = () => {};\n",
@@ -1189,9 +1206,15 @@ describe("scope drift never takes the eye down (ADR-0001)", () => {
       expect(filings).toHaveLength(1);
       expect(filings[0]!.outcome).toBe("digest-note");
       expect(audits.some((audit) => audit.type === "retro-file-failed")).toBe(true);
-      expect(
-        await Bun.file(join(place.repo, ".argus/sessions/7-sess-seven.md")).text(),
-      ).toContain("out of scope for #7");
+      expect(await Bun.file(digestPath).text()).toBe(before);
+      const note = await Bun.file(
+        join(
+          place.repo,
+          ".argus/eyes/retro/unfiled",
+          `${filings[0]!.signalId}.md`,
+        ),
+      ).text();
+      expect(note).toContain("out of scope for #7");
     } finally {
       await place.cleanup();
     }

@@ -41,7 +41,7 @@ import { createCodexBrain, type Brain, type BrainOutcome } from "../brain";
 import { createBrainCap, defaultBrainSlotsDirectory, type BrainCap } from "../cap";
 import { Coalescer, type CoalesceWindow } from "../coalesce";
 import { loadEyesConfig, type CadenceConfig } from "../config";
-import { applyDigestUpdate, listDigests, type StoredDigest } from "../digest/outputs";
+import { listDigests, type StoredDigest } from "../digest/outputs";
 import { attributeChanges, referencedTickets } from "./attribution";
 import {
   composeRetro,
@@ -928,40 +928,23 @@ export class RetroEye {
   }
 
   /**
-   * The degradation surface: the retro goes into the session's digest so the
-   * record survives, and into `.argus/eyes/retro/unfiled/` when there is no
-   * session to attach it to.
+   * The degradation surface is intentionally OUTSIDE `.argus/sessions`.
+   * Session digests are Retro INPUT; writing a Retro report back into them
+   * creates a feedback edge whose repeated tracker failures can amplify without
+   * bound. One signal owns one idempotent note under the eye's state directory.
    */
   private async writeNote(
     id: string,
-    sessions: readonly NoteSession[],
+    _sessions: readonly NoteSession[],
     title: string,
     body: string,
   ): Promise<string> {
-    const withDigests = sessions.filter(
-      (session) => session.digestFile !== undefined,
-    );
-    if (withDigests.length > 0) {
-      const written: string[] = [];
-      for (const session of withDigests) {
-        await applyDigestUpdate(
-          this.sessionsDir,
-          session.digestFile!,
-          { agent: session.agent ?? "unknown", startedBy: "johan" },
-          {
-            narrative: {
-              ts: new Date(this.now()).toISOString(),
-              text: `**UNFILED RETRO — ${title}**\n\n${body}`,
-            },
-          },
-        );
-        written.push(join(this.sessionsDir, session.digestFile!));
-      }
-      return written.join(", ");
-    }
     const path = join(this.options.repo, ".argus/eyes/retro/unfiled", `${id}.md`);
     await mkdir(dirname(path), { recursive: true });
-    await Bun.write(path, `# ${title}\n\n${body}\n`);
+    const next = `# ${title}\n\n${body}\n`;
+    // `body` is composition-capped. Overwrite directly so even a corrupt prior
+    // note can never be read back into memory or fed into a later signal.
+    await Bun.write(path, next);
     return path;
   }
 

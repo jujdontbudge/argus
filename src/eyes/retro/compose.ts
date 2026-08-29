@@ -49,6 +49,34 @@ export const MAX_BODY_BYTES = 60_000;
 const TITLE_PREFIX = "Retro: ";
 /** The quoted scope is evidence, not an archive: enough to argue with. */
 const MAX_QUOTED_SCOPE = 8_000;
+const MAX_PROMPTS = 20;
+const MAX_PROMPT_BYTES = 4_000;
+const MAX_SESSIONS = 40;
+const MAX_NARRATIVE_BYTES = 4_000;
+const MAX_FILES = 200;
+const MAX_FILE_PATH_BYTES = 300;
+const MAX_COMMITS = 50;
+const MAX_DIFF_EVIDENCE_BYTES = 30_000;
+const MAX_ONE_DIFF_BYTES = 8_000;
+const TRUNCATION = "… evidence truncated by Argus …";
+
+function bytes(text: string): number {
+  return Buffer.byteLength(text, "utf8");
+}
+
+function capBytes(text: string, limit: number, marker = TRUNCATION): string {
+  if (bytes(text) <= limit) return text;
+  const markerBytes = bytes(marker);
+  const prefix = Buffer.from(text)
+    .subarray(0, Math.max(0, limit - markerBytes))
+    .toString("utf8")
+    .replace(/�+$/, "");
+  return `${prefix}${marker}`;
+}
+
+function omission(label: string, omitted: number): string {
+  return omitted > 0 ? `\n\n_${omitted} additional ${label} omitted._` : "";
+}
 
 function cap(text: string, limit: number): string {
   return text.length <= limit ? text : `${text.slice(0, limit - 1)}…`;
@@ -82,11 +110,17 @@ function sourceLines(signal: RetroSignal, repoRoot: string): string[] {
     );
   }
   if (signal.sources.includes("transcript")) {
-    for (const session of signal.sessions.filter((entry) => entry.digestFile)) {
+    const transcriptSessions = signal.sessions.filter((entry) => entry.digestFile);
+    for (const session of transcriptSessions.slice(0, MAX_SESSIONS)) {
       lines.push(
-        `- **transcript** — the digest of session \`${session.sessionId}\`` +
-          ` (${session.agent ?? "unknown agent"}, \`${session.digestFile}\`)` +
+        `- **transcript** — the digest of session \`${capBytes(session.sessionId, MAX_FILE_PATH_BYTES)}\`` +
+          ` (${session.agent ?? "unknown agent"}, \`${capBytes(session.digestFile!, MAX_FILE_PATH_BYTES)}\`)` +
           " records work with no ticket claimed.",
+      );
+    }
+    if (transcriptSessions.length > MAX_SESSIONS) {
+      lines.push(
+        `- ${transcriptSessions.length - MAX_SESSIONS} additional transcript session(s) omitted.`,
       );
     }
   }
@@ -107,22 +141,26 @@ function changeSections(signal: RetroSignal): string[] {
     ]),
   ];
   if (files.length > 0) {
-    sections.push(
-      ["## Files touched", "", ...files.map((file) => `- \`${file}\``)].join("\n"),
-    );
+    const shown = files
+      .slice(0, MAX_FILES)
+      .map((file) => `- \`${capBytes(file, MAX_FILE_PATH_BYTES)}\``);
+    if (files.length > MAX_FILES) {
+      shown.push(`- _${files.length - MAX_FILES} additional file(s) omitted._`);
+    }
+    sections.push(["## Files touched", "", ...shown].join("\n"));
   }
   if (changes.commits.length > 0) {
-    sections.push(
-      [
-        "## Commits",
-        "",
-        ...changes.commits.map(
-          (commit) =>
-            `- \`${shortSha(commit.sha)}\` ${commit.subject} — ${commit.authorName}` +
-            ` <${commit.authorEmail}>, ${commit.ts}`,
-        ),
-      ].join("\n"),
+    const shown = changes.commits.slice(0, MAX_COMMITS).map(
+      (commit) =>
+        `- \`${shortSha(commit.sha)}\` ${capBytes(commit.subject, 500)} — ${capBytes(commit.authorName, 200)}` +
+        ` <${capBytes(commit.authorEmail, 300)}>, ${commit.ts}`,
     );
+    if (changes.commits.length > MAX_COMMITS) {
+      shown.push(
+        `- _${changes.commits.length - MAX_COMMITS} additional commit(s) omitted._`,
+      );
+    }
+    sections.push(["## Commits", "", ...shown].join("\n"));
   }
   return sections;
 }
@@ -131,16 +169,25 @@ function diffSection(signal: RetroSignal): string | null {
   const changes = signal.changes;
   if (changes === null) return null;
   const parts: string[] = [];
-  for (const commit of changes.commits) {
-    parts.push(`### \`${shortSha(commit.sha)}\` ${commit.subject}\n\n\`\`\`diff\n${commit.diff.trimEnd()}\n\`\`\``);
+  for (const commit of changes.commits.slice(0, MAX_COMMITS)) {
+    parts.push(
+      `### \`${shortSha(commit.sha)}\` ${capBytes(commit.subject, 500)}\n\n\`\`\`diff\n${capBytes(commit.diff.trimEnd(), MAX_ONE_DIFF_BYTES)}\n\`\`\``,
+    );
+  }
+  if (changes.commits.length > MAX_COMMITS) {
+    parts.push(`_${changes.commits.length - MAX_COMMITS} additional commit diff(s) omitted._`);
   }
   if (changes.workingTree) {
     parts.push(
-      `### Uncommitted working-tree changes\n\n\`\`\`diff\n${changes.workingTree.diff.trimEnd()}\n\`\`\``,
+      `### Uncommitted working-tree changes\n\n\`\`\`diff\n${capBytes(changes.workingTree.diff.trimEnd(), MAX_DIFF_EVIDENCE_BYTES)}\n\`\`\``,
     );
   }
   if (parts.length === 0) return null;
-  return ["## Diff", "", ...parts].join("\n\n");
+  return capBytes(
+    ["## Diff", "", ...parts].join("\n\n"),
+    MAX_DIFF_EVIDENCE_BYTES,
+    "\n\n… diff evidence truncated: read it from git …",
+  );
 }
 
 /**
@@ -149,28 +196,41 @@ function diffSection(signal: RetroSignal): string | null {
  * from git, so it is the only section allowed to lose bytes.
  */
 function fit(head: string, diff: string | null): string {
-  if (diff === null) return head;
-  const budget = MAX_BODY_BYTES - head.length - 2;
-  if (budget <= 0) return head;
-  if (diff.length <= budget) return `${head}\n\n${diff}`;
-  const marker = "\n… diff truncated: read it from the commits above …\n```\n";
-  const room = Math.max(0, budget - marker.length);
-  return `${head}\n\n${diff.slice(0, room)}${marker}`;
+  const boundedHead = capBytes(
+    head,
+    MAX_BODY_BYTES,
+    "\n\n… evidence sections omitted to fit the GitHub body limit …",
+  );
+  if (diff === null || bytes(boundedHead) >= MAX_BODY_BYTES) return boundedHead;
+  const separator = "\n\n";
+  const budget = MAX_BODY_BYTES - bytes(boundedHead) - bytes(separator);
+  if (budget <= 0) return boundedHead;
+  return `${boundedHead}${separator}${capBytes(
+    diff,
+    budget,
+    "\n… diff truncated: read it from git …",
+  )}`;
 }
 
 export function composeRetro(input: ComposeRetroInput): RetroComposition {
   const { signal } = input;
   const johan = input.prompts.filter((prompt) => prompt.author === "johan");
-  const sessions = signal.sessions.map((session) => session.sessionId);
+  const allSessions = signal.sessions.map((session) => session.sessionId);
+  const sessions = allSessions.slice(0, MAX_SESSIONS);
+  const shownPrompts = johan.slice(-MAX_PROMPTS);
 
   const promptSection =
-    johan.length > 0
+    shownPrompts.length > 0
       ? [
           "## Johan's prompts",
           "",
           "Provenance-verified Johan-authored turns from these sessions:",
           "",
-          ...johan.map((prompt) => `${quote(prompt.text)}\n> \n> — \`${prompt.sessionId}\`, ${prompt.ts}`),
+          ...shownPrompts.map(
+            (prompt) =>
+              `${quote(capBytes(prompt.text, MAX_PROMPT_BYTES))}\n> \n> — \`${capBytes(prompt.sessionId, MAX_FILE_PATH_BYTES)}\`, ${prompt.ts}`,
+          ),
+          omission("Johan-authored prompt(s)", johan.length - shownPrompts.length),
         ].join("\n\n")
       : [
           "## Johan's prompts",
@@ -178,25 +238,40 @@ export function composeRetro(input: ComposeRetroInput): RetroComposition {
           "_None: no Johan-authored prompts were classified for this work — it was autonomous agent work._",
         ].join("\n");
 
-  const narratives = signal.sessions
-    .filter((session) => session.narrative !== undefined)
-    .map(
+  const narrativeSessions = signal.sessions.filter(
+    (session) => session.narrative !== undefined,
+  );
+  const shownNarratives = narrativeSessions.slice(-MAX_SESSIONS);
+  const narratives = [
+    ...shownNarratives.map(
       (session) =>
-        `### \`${session.sessionId}\`\n\n${session.narrative!.trimEnd()}`,
-    );
+        `### \`${capBytes(session.sessionId, MAX_FILE_PATH_BYTES)}\`\n\n${capBytes(
+          session.narrative!.trimEnd(),
+          MAX_NARRATIVE_BYTES,
+        )}`,
+    ),
+    ...(narrativeSessions.length > shownNarratives.length
+      ? [
+          `_${narrativeSessions.length - shownNarratives.length} additional session narrative(s) omitted._`,
+        ]
+      : []),
+  ];
 
   const head = [
     "_Filed automatically by the Argus Retro eye (SPEC §5.5): implementation" +
       " work no claimed ticket covers. Filed closed — the work already" +
       " happened; edit freely._",
     "",
-    input.summary.trim(),
+    capBytes(input.summary.trim(), MAX_NARRATIVE_BYTES),
     "",
     "## Signal",
     "",
     ...sourceLines(signal, input.repoRoot),
     `- parent: ${input.parent.parent === null ? "none (root-level retro)" : `#${input.parent.parent}`} (rule: \`${input.parent.rule}\`)`,
-    `- sessions: ${sessions.length > 0 ? sessions.map((id) => `\`${id}\``).join(", ") : "none observed"}`,
+    `- sessions: ${sessions.length > 0 ? sessions.map((id) => `\`${capBytes(id, MAX_FILE_PATH_BYTES)}\``).join(", ") : "none observed"}` +
+      (allSessions.length > sessions.length
+        ? `; ${allSessions.length - sessions.length} additional session(s) omitted`
+        : ""),
     `- signal id: \`${signal.id}\``,
     "",
     promptSection,

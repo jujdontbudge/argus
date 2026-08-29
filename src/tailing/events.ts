@@ -105,6 +105,8 @@ export interface TranscriptSource {
   listFiles(): Promise<string[]>;
   /** Stable logical identity when a rollout can move or change suffix. */
   fileKey?(file: string): string;
+  /** Current source-native cursor (byte offset, row id, etc.) for start-from-now. */
+  currentOffset?(file: string): Promise<number | undefined>;
   /** Source-specific reader for compressed or otherwise non-plain files. */
   readNewLines?(file: string, offset: number): Promise<ReadResult>;
   /** Rebuild parser metadata for a resumed cursor without replaying old output. */

@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   applyDigestUpdate,
   digestFileName,
+  listDigests,
+  MAX_DIGEST_BYTES,
+  readDigest,
   updateIndex,
   type DigestSeed,
   type IndexEntry,
@@ -135,6 +138,55 @@ describe("the per-session running digest file", () => {
       const before = await Bun.file(join(dir, file)).text();
       await applyDigestUpdate(dir, file, SEED, { status: "blocked" });
       expect(await Bun.file(join(dir, file)).text()).toBe(before);
+    });
+  });
+
+  test("oversized input is refused from metadata before any full-file read", async () => {
+    await withSessionsDir(async (dir) => {
+      const path = join(dir, "adhoc-corrupt.md");
+      await mkdir(dir, { recursive: true });
+      await writeFile(path, "---\n");
+      await truncate(path, MAX_DIGEST_BYTES + 1);
+
+      await expect(
+        applyDigestUpdate(dir, "adhoc-corrupt.md", SEED, { status: "done" }),
+      ).rejects.toThrow(/digest.*exceeds/i);
+      await expect(readDigest(dir, "adhoc-corrupt.md")).rejects.toThrow(
+        /digest.*exceeds/i,
+      );
+    });
+  });
+
+  test("repeated narratives compact under the hard byte ceiling", async () => {
+    await withSessionsDir(async (dir) => {
+      const file = "42-bounded.md";
+      for (let index = 0; index < 20; index += 1) {
+        await applyDigestUpdate(dir, file, SEED, {
+          narrative: {
+            ts: `2026-08-29T20:${String(index).padStart(2, "0")}:00.000Z`,
+            text: `${index}:${"x".repeat(MAX_DIGEST_BYTES / 4)}`,
+          },
+        });
+      }
+      const path = join(dir, file);
+      expect((await stat(path)).size).toBeLessThanOrEqual(MAX_DIGEST_BYTES);
+      const text = await Bun.file(path).text();
+      expect(text).toContain("19:");
+      expect(text).toMatch(/older digest narrative truncated/i);
+    });
+  });
+
+  test("listing refuses a set whose bounded files exceed the aggregate budget", async () => {
+    await withSessionsDir(async (dir) => {
+      for (let index = 0; index < 80; index += 1) {
+        await applyDigestUpdate(dir, `adhoc-${index}.md`, SEED, {
+          narrative: {
+            ts: "2026-08-29T20:00:00.000Z",
+            text: "x".repeat(MAX_DIGEST_BYTES / 4),
+          },
+        });
+      }
+      await expect(listDigests(dir)).rejects.toThrow(/aggregate.*budget/i);
     });
   });
 });

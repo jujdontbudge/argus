@@ -26,15 +26,20 @@ export interface WatcherSpawnRequest {
 }
 
 export type SpawnWatcher = (request: WatcherSpawnRequest) => WatcherProcess;
+export type SampleWatcherRss = (
+  pids: readonly number[],
+) => Promise<ReadonlyMap<number, number>>;
 
 export interface WatcherSupervisorOptions {
   fleetLockPath?: string;
+  maxWatcherRssBytes?: number;
   now?: () => number;
   registryPath: string;
   restartDelayMilliseconds?: number;
   restartLimit?: number;
   restartMaxDelayMilliseconds?: number;
   restartWindowMilliseconds?: number;
+  sampleRss?: SampleWatcherRss;
   sleep?: (milliseconds: number) => Promise<void>;
   spawn: SpawnWatcher;
   statusPath: string;
@@ -174,6 +179,8 @@ export class WatcherSupervisor {
       this.#children.delete(key);
     }
 
+    await this.#containOverLimitChildren();
+
     for (const repo of repos) {
       for (const eye of EYE_NAMES) {
         const key = watcherKey(repo, eye);
@@ -208,6 +215,54 @@ export class WatcherSupervisor {
     }
 
     await this.#writeStatus();
+  }
+
+  /**
+   * The watcher cannot police itself while its main event loop is synchronously
+   * parsing a bad input. The supervisor is a separate process, so this sample
+   * remains live during that exact failure and brakes before replaying it.
+   */
+  async #containOverLimitChildren(): Promise<void> {
+    const sample = this.#options.sampleRss;
+    const limit = this.#options.maxWatcherRssBytes;
+    if (sample === undefined || limit === undefined || this.#children.size === 0) {
+      return;
+    }
+
+    let readings: ReadonlyMap<number, number>;
+    try {
+      readings = await sample(
+        [...this.#children.values()].map(({ process }) => process.pid),
+      );
+    } catch (error) {
+      console.error(
+        `argus supervisor: RSS sampling failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return;
+    }
+
+    for (const [key, child] of this.#children) {
+      const rss = readings.get(child.process.pid);
+      if (rss === undefined || rss <= limit) continue;
+      const now = this.#now();
+      const restartLimit = this.#restartLimit();
+      this.#restarts.set(key, {
+        braked: true,
+        nextSpawnAt: now + this.#restartWindowMilliseconds(),
+        restarts: Array.from({ length: restartLimit }, () => now),
+      });
+      // Remove first: the exit callback then sees this was an intentional hold
+      // and cannot schedule a fresh copy over the same bad input.
+      this.#children.delete(key);
+      console.error(
+        `argus supervisor: ${child.eye} watcher pid ${child.process.pid} for ${child.repo} RSS ceiling exceeded externally (${Math.ceil(rss / 1024 / 1024)} MiB > ${Math.floor(limit / 1024 / 1024)} MiB); SIGKILL and restart brake engaged for ${this.#restartWindowMilliseconds()}ms`,
+      );
+      try {
+        child.process.kill("SIGKILL");
+      } catch {
+        // It exited between the sample and kill; the hold still prevents replay.
+      }
+    }
   }
 
   async run(signal: AbortSignal, pollMilliseconds = 1_000): Promise<void> {

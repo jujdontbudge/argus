@@ -1,6 +1,7 @@
 import { supervisorConfiguration } from "./control.ts";
 import {
   WatcherSupervisor,
+  type SampleWatcherRss,
   type SpawnWatcher,
   type WatcherProcess,
 } from "./runtime.ts";
@@ -31,6 +32,33 @@ export function createWatcherSpawner(
   };
 }
 
+/** One `ps` call samples the whole fleet; values are returned in bytes. */
+export const sampleProcessRss: SampleWatcherRss = async (pids) => {
+  if (pids.length === 0) return new Map();
+  const child = Bun.spawn(
+    ["/bin/ps", "-o", "pid=,rss=", "-p", pids.join(",")],
+    { stderr: "pipe", stdout: "pipe" },
+  );
+  const [exitCode, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  // `ps` can return non-zero when every sampled pid exited between reconcile
+  // and spawn. An empty result is then accurate, not a supervisor failure.
+  if (exitCode !== 0 && stdout.trim() === "") {
+    if (stderr.trim() === "") return new Map();
+    throw new Error(stderr.trim());
+  }
+  const readings = new Map<number, number>();
+  for (const line of stdout.split(/\r?\n/)) {
+    const match = line.trim().match(/^(\d+)\s+(\d+)$/);
+    if (!match) continue;
+    readings.set(Number(match[1]), Number(match[2]) * 1024);
+  }
+  return readings;
+};
+
 function positiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
@@ -45,6 +73,13 @@ export async function runSupervisorDaemon(
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
   const supervisor = new WatcherSupervisor({
+    maxWatcherRssBytes:
+      positiveInteger(
+        env.ARGUS_SUPERVISOR_WATCH_MAX_RSS_MB ?? env.ARGUS_WATCH_MAX_RSS_MB,
+        512,
+      ) *
+      1024 *
+      1024,
     registryPath: configuration.job.registryPath,
     restartDelayMilliseconds: positiveInteger(
       env.ARGUS_SUPERVISOR_RESTART_MS,
@@ -59,6 +94,7 @@ export async function runSupervisorDaemon(
       env.ARGUS_SUPERVISOR_RESTART_WINDOW_MS,
       5 * 60_000,
     ),
+    sampleRss: sampleProcessRss,
     spawn: createWatcherSpawner([
       configuration.job.bunPath,
       configuration.job.cliPath,
@@ -69,7 +105,7 @@ export async function runSupervisorDaemon(
   try {
     await supervisor.run(
       controller.signal,
-      positiveInteger(env.ARGUS_SUPERVISOR_POLL_MS, 1_000),
+      positiveInteger(env.ARGUS_SUPERVISOR_POLL_MS, 250),
     );
     return 0;
   } finally {

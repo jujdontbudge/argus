@@ -213,6 +213,21 @@ class HermesDatabaseReader {
     }
   }
 
+  currentOffset(file: string): number {
+    const db = new Database(
+      readOnlyUri(file),
+      constants.SQLITE_OPEN_READONLY | constants.SQLITE_OPEN_URI,
+    );
+    try {
+      return (
+        db.query<{ id: number | null }, []>("SELECT max(id) AS id FROM messages")
+          .get()?.id ?? 0
+      );
+    } finally {
+      db.close();
+    }
+  }
+
   async read(file: string, offset: number): Promise<ReadResult> {
     const db = new Database(
       readOnlyUri(file),
@@ -297,6 +312,7 @@ export function createHermesSource(options: HermesSourceOptions): TranscriptSour
         .filter((file) => Bun.file(file).size > 0)
         .sort();
     },
+    currentOffset: async (file) => reader.currentOffset(file),
     readNewLines: (file, offset) => reader.read(file, offset),
     createParser: (file) => new HermesParser(file),
   };

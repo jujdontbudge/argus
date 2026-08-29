@@ -17,6 +17,58 @@ import { mkdir, readdir, rename, rmdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { DigestStatus } from "./schema";
 
+/** Hard storage ceiling for one running digest, including frontmatter. */
+export const MAX_DIGEST_BYTES = 256 * 1024;
+/** Retro may inspect at most this much digest data in one scan. */
+export const MAX_DIGEST_LIST_BYTES = 4 * 1024 * 1024;
+export const MAX_DIGEST_COUNT = 500;
+const MAX_NARRATIVE_BYTES = 64 * 1024;
+const BODY_TRUNCATION = "… older digest narrative truncated by Argus …\n\n";
+
+export class DigestSizeError extends Error {
+  constructor(path: string, size: number, limit: number, kind = "digest") {
+    super(`${kind} ${path} is ${size} bytes and exceeds the ${limit}-byte budget`);
+    this.name = "DigestSizeError";
+  }
+}
+
+function byteLength(text: string): number {
+  return Buffer.byteLength(text, "utf8");
+}
+
+function utf8Prefix(text: string, limit: number, marker: string): string {
+  if (byteLength(text) <= limit) return text;
+  const markerBytes = byteLength(marker);
+  const prefix = Buffer.from(text)
+    .subarray(0, Math.max(0, limit - markerBytes))
+    .toString("utf8")
+    .replace(/�+$/, "");
+  return `${prefix}${marker}`;
+}
+
+function compactBody(body: string, limit: number): string {
+  if (byteLength(body) <= limit) return body;
+  const markerBytes = byteLength(BODY_TRUNCATION);
+  const tail = Buffer.from(body)
+    .subarray(Math.max(0, byteLength(body) - Math.max(0, limit - markerBytes)))
+    .toString("utf8")
+    .replace(/^�+/, "");
+  return `${BODY_TRUNCATION}${tail}`;
+}
+
+async function boundedFileSize(path: string): Promise<number | null> {
+  try {
+    const size = (await stat(path)).size;
+    if (size > MAX_DIGEST_BYTES) {
+      throw new DigestSizeError(path, size, MAX_DIGEST_BYTES);
+    }
+    return size;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
 /** Session identity written once at file creation and preserved after. */
 export interface DigestSeed {
   agent: string;
@@ -128,9 +180,12 @@ export async function applyDigestUpdate(
   await mkdir(sessionsDir, { recursive: true });
   const path = join(sessionsDir, fileName);
   const file = Bun.file(path);
-  const existing: ParsedDigest = (await file.exists())
-    ? parseDigest(await file.text(), seed)
-    : { frontmatter: { ...seed, status: "running", johanTouched: false }, body: "" };
+  const existingSize = await boundedFileSize(path);
+  const existingText = existingSize === null ? null : await file.text();
+  const existing: ParsedDigest =
+    existingText === null
+      ? { frontmatter: { ...seed, status: "running", johanTouched: false }, body: "" }
+      : parseDigest(existingText, seed);
 
   const frontmatter: DigestFrontmatter = {
     ...existing.frontmatter,
@@ -140,13 +195,28 @@ export async function applyDigestUpdate(
         : (patch.status ?? existing.frontmatter.status),
     johanTouched: existing.frontmatter.johanTouched || patch.johanTouched === true,
   };
-  const body =
+  const narrative =
     patch.narrative === undefined
+      ? undefined
+      : utf8Prefix(
+          patch.narrative.text.replace(/\n*$/, ""),
+          MAX_NARRATIVE_BYTES,
+          "\n… digest narrative truncated by Argus …",
+        );
+  const appendedBody =
+    narrative === undefined
       ? existing.body
-      : `${existing.body}## ${patch.narrative.ts}\n\n${patch.narrative.text.replace(/\n*$/, "")}\n`;
-
-  const next = `${renderFrontmatter(frontmatter)}\n${body}`.replace(/\n?$/, "\n");
-  if (!(await file.exists()) || (await file.text()) !== next) {
+      : `${existing.body}## ${patch.narrative!.ts}\n\n${narrative}\n`;
+  const renderedFrontmatter = renderFrontmatter(frontmatter);
+  const bodyBudget =
+    MAX_DIGEST_BYTES - byteLength(renderedFrontmatter) - byteLength("\n\n");
+  const body = compactBody(appendedBody, Math.max(0, bodyBudget));
+  const next = `${renderedFrontmatter}\n${body}`.replace(/\n?$/, "\n");
+  const nextBytes = byteLength(next);
+  if (nextBytes > MAX_DIGEST_BYTES) {
+    throw new DigestSizeError(path, nextBytes, MAX_DIGEST_BYTES, "rendered digest");
+  }
+  if (existingText === null || existingText !== next) {
     await writeAtomic(path, next);
   }
   return frontmatter;
@@ -260,9 +330,10 @@ export async function readDigest(
   sessionsDir: string,
   fileName: string,
 ): Promise<StoredDigest | null> {
-  const file = Bun.file(join(sessionsDir, fileName));
-  if (!(await file.exists())) return null;
-  const { frontmatter, body } = parseDigest(await file.text(), READ_SEED);
+  const path = join(sessionsDir, fileName);
+  const size = await boundedFileSize(path);
+  if (size === null) return null;
+  const { frontmatter, body } = parseDigest(await Bun.file(path).text(), READ_SEED);
   return { fileName, sessionId: sessionIdOf(fileName), frontmatter, body };
 }
 
@@ -274,9 +345,34 @@ export async function listDigests(sessionsDir: string): Promise<StoredDigest[]> 
   } catch {
     return []; // no sessions directory yet: no digests, not an error
   }
+  const digestNames = names
+    .filter((name) => name.endsWith(".md") && name !== "INDEX.md")
+    .sort();
+  if (digestNames.length > MAX_DIGEST_COUNT) {
+    throw new DigestSizeError(
+      sessionsDir,
+      digestNames.length,
+      MAX_DIGEST_COUNT,
+      "digest count",
+    );
+  }
+  let totalBytes = 0;
+  for (const name of digestNames) {
+    const path = join(sessionsDir, name);
+    const size = await boundedFileSize(path);
+    if (size === null) continue;
+    totalBytes += size;
+    if (totalBytes > MAX_DIGEST_LIST_BYTES) {
+      throw new DigestSizeError(
+        sessionsDir,
+        totalBytes,
+        MAX_DIGEST_LIST_BYTES,
+        "digest aggregate",
+      );
+    }
+  }
   const digests: StoredDigest[] = [];
-  for (const name of names.sort()) {
-    if (!name.endsWith(".md") || name === "INDEX.md") continue;
+  for (const name of digestNames) {
     const digest = await readDigest(sessionsDir, name);
     if (digest) digests.push(digest);
   }

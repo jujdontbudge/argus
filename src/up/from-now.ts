@@ -32,12 +32,17 @@ async function persistJson(path: string, value: unknown): Promise<void> {
 async function snapshotCursors(source: TranscriptSource): Promise<CursorMap> {
   const cursors: CursorMap = {};
   for (const file of await source.listFiles()) {
+    const key = source.fileKey?.(file) ?? file;
+    const nativeOffset = await source.currentOffset?.(file);
+    if (nativeOffset !== undefined) {
+      cursors[key] = nativeOffset;
+      continue;
+    }
     if (file.endsWith(".zst")) {
       throw new Error(
         `argus up --from-now: cannot safely snapshot compressed transcript ${file}`,
       );
     }
-    const key = source.fileKey?.(file) ?? file;
     cursors[key] = await completeLineOffset(file);
   }
   return cursors;

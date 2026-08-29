@@ -114,9 +114,14 @@ test("every skip says which skip it is, and the default gate is shut", () => {
   expect(liveHalfTitle("x", gate.scratch)).toStartWith(
     `x — SKIPPED: ${LIVE_HERMES_GATE} is unset`,
   );
-  // Not SKIPPED. Nobody has to ask for a read that costs nothing, so the only
-  // thing the real half can report is that this machine has nothing to read.
-  expect(liveHalfTitle("x", gate.real)).toStartWith("x — NOT RUN: ");
+  // The real half is a read-only probe. Once a deployed profile contains an
+  // assistant row it runs even while the spend gate is shut; before that it
+  // reports NOT RUN with the missing-evidence reason.
+  if (gate.real.status === "run") {
+    expect(liveHalfTitle("x", gate.real)).toBe("x");
+  } else {
+    expect(liveHalfTitle("x", gate.real)).toStartWith("x — NOT RUN: ");
+  }
 });
 
 test.skipIf(gate.scratch.status !== "run")(
