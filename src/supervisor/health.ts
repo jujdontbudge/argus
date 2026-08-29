@@ -75,18 +75,36 @@ export class EyeHealthReporter {
     return this.#persist();
   }
 
+  /** Record liveness without treating an idle poll as recovery from an error. */
+  heartbeat(backlog: number): Promise<void> {
+    const at = new Date().toISOString();
+    this.#health = {
+      ...this.#health,
+      backlog,
+      updatedAt: at,
+    };
+    return this.#persist();
+  }
+
   #persist(): Promise<void> {
     const snapshot = this.#health;
-    this.#write = this.#write.then(async () => {
-      await mkdir(dirname(this.#path), { recursive: true });
-      const temporary = `${this.#path}.${process.pid}.${randomUUID()}.tmp`;
-      try {
-        await Bun.write(temporary, `${JSON.stringify(snapshot, null, 2)}\n`);
-        await rename(temporary, this.#path);
-      } finally {
-        await rm(temporary, { force: true });
-      }
-    });
+    this.#write = this.#write
+      .then(async () => {
+        await mkdir(dirname(this.#path), { recursive: true });
+        const temporary = `${this.#path}.${process.pid}.${randomUUID()}.tmp`;
+        try {
+          await Bun.write(temporary, `${JSON.stringify(snapshot, null, 2)}\n`);
+          await rename(temporary, this.#path);
+        } finally {
+          await rm(temporary, { force: true });
+        }
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(
+          `argus watch ${snapshot.eye}: health report write failed: ${message}`,
+        );
+      });
     return this.#write;
   }
 }
