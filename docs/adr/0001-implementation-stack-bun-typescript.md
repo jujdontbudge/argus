@@ -48,8 +48,10 @@ Codex rollout eras.
 
 - Dependency policy is lean-by-default: runtime built-ins first; any dependency needs
   stated justification in its ticket. `typescript` is the one sanctioned dev-only dep.
-- Every build ticket is gated by strict `tsc --noEmit` + `bun test` (Bun executes TS
-  without type-checking it); the §13 fake-Johan harness scenarios ride `bun test`.
+- Every Argus build ticket is gated by the root `typecheck` and `test` package scripts
+  (`tsc --noEmit` + `bun test`; Bun executes TS without type-checking it). Managed
+  repositories use their own [completion-gate contract](../completion-gates.md), not
+  this ADR's stack; the §13 fake-Johan harness scenarios ride `bun test`.
 - Accepted trade-offs: ~30–50MB RSS per watcher process at current repo counts;
   Bun-version drift above the floor is Johan's to manage; no dev/prod separation
   beyond the §13 sandbox repo — editing the checkout mutates the live system.

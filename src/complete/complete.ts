@@ -59,7 +59,7 @@ import { loadEyesConfig } from "../eyes/config";
 import { detectTracker, runGh, type GhRunner, type Tracker } from "../eyes/retro/gh";
 import { loadRegistry, registryPaths } from "../provenance";
 import {
-  DEFAULT_GATES,
+  resolveRepositoryGates,
   runGates,
   runGateCommand,
   type Gate,
@@ -97,6 +97,8 @@ export type CompletionStatus =
   | "merged"
   /** A gate refused. Nothing merged, nothing closed, ticket still claimed. */
   | "gate-failed"
+  /** Gates could not be selected safely. Nothing ran or merged. */
+  | "gate-configuration-error"
   /** The review refused, or could not answer. Same posture as a red gate. */
   | "review-blocked"
   /** The session wants a human (§6 blocked-on-human). Never a merge. */
@@ -139,6 +141,7 @@ export interface CompleteOptions {
   brain?: Brain;
   /** The cmux seam #95's teardown closes the worker's tab through. Stubbed in tests. */
   cmux?: CmuxRun;
+  /** Explicit caller override; production resolves repository gates when omitted. */
   gates?: readonly Gate[];
   gh?: GhRunner;
   git?: GitRun;
@@ -242,7 +245,7 @@ export async function completeReadyTickets(
   const repo = options.repo;
   const gh = options.gh ?? runGh;
   const git = options.git ?? runGit;
-  const gates = options.gates ?? DEFAULT_GATES;
+  const gates = options.gates;
   const gateRunner = options.runGate ?? runGateCommand;
   const config = await loadEyesConfig(repo);
   const brain =
@@ -350,7 +353,7 @@ export async function completeReadyTickets(
       entry,
       ...(options.cmux !== undefined && { cmux: options.cmux }),
       gateRunner,
-      gates,
+      ...(gates !== undefined && { gates }),
       gh,
       git,
       repo,
@@ -387,7 +390,7 @@ async function verifyOne(request: {
   cmux?: CmuxRun;
   entry: VerifyEntry;
   gateRunner: GateRunner;
-  gates: readonly Gate[];
+  gates?: readonly Gate[];
   gh: GhRunner;
   git: GitRun;
   repo: string;
@@ -444,6 +447,7 @@ async function verifyOne(request: {
 
   let mergeSha: string | undefined;
   let mergeDetail: string;
+  let successfulGateResults: GateResult[] | undefined;
 
   if (alreadyMerged) {
     // An earlier pass merged and then failed to close. Re-gating it would be
@@ -464,7 +468,31 @@ async function verifyOne(request: {
     const early = await checkoutRefusal({ base, git, repo });
     if (early !== null) return refuse("failed", early);
 
-    const gateReport = await runGates(worktree, request.gates, request.gateRunner);
+    const resolution =
+      request.gates === undefined
+        ? await resolveRepositoryGates(repo, worktree)
+        : request.gates.length > 0
+          ? { gates: request.gates, source: "CompleteOptions.gates", status: "resolved" as const }
+          : {
+              reason: "CompleteOptions.gates cannot be empty",
+              status: "error" as const,
+            };
+    if (resolution.status === "error") {
+      await comment(
+        gh,
+        repo,
+        tracker.repo,
+        ticket,
+        refusalComment(ticket, "completion gates are not configured", resolution.reason),
+      );
+      return refuse("gate-configuration-error", resolution.reason);
+    }
+
+    const gateReport = await runGates(
+      worktree,
+      resolution.gates,
+      request.gateRunner,
+    );
     if (!gateReport.passed) {
       const failure = gateReport.failure!;
       await comment(
@@ -484,6 +512,7 @@ async function verifyOne(request: {
         { gates: gateReport.results },
       );
     }
+    successfulGateResults = gateReport.results;
 
     const verdict = await request.review({
       body: scope.body,
@@ -605,6 +634,7 @@ async function verifyOne(request: {
       map: map.status === "failed" ? "no-map" : map.status,
       status: "merged",
       ...(mergeSha !== undefined && { mergeSha }),
+      ...(successfulGateResults !== undefined && { gates: successfulGateResults }),
     },
   };
 }

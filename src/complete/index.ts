@@ -18,10 +18,11 @@ export {
   type CompletionStatus,
 } from "./complete.ts";
 export {
-  DEFAULT_GATES,
+  resolveRepositoryGates,
   runGateCommand,
   runGates,
   type Gate,
+  type GateResolution,
   type GateReport,
   type GateResult,
   type GateRunner,

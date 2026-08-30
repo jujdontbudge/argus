@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createWorktree } from "../deploy/worktree.ts";
-import { DEFAULT_GATES, runGates } from "./gates.ts";
+import { resolveRepositoryGates, runGates } from "./gates.ts";
 
 const BUDGET_MS = 60_000;
 const GIT_IDENTITY = {
@@ -33,7 +33,7 @@ async function run(
 }
 
 test(
-  "a production-created ticket worktree runs every default gate and typecheck can refuse",
+  "a production-created Argus worktree detects native gates and typecheck can refuse",
   async () => {
     const root = await mkdtemp(join(tmpdir(), "argus-gates-worktree-"));
     const repo = join(root, "repo");
@@ -41,40 +41,6 @@ test(
 
     try {
       await mkdir(join(repo, "src"), { recursive: true });
-      await mkdir(join(repo, "vendor", "types-fixture"), { recursive: true });
-      await writeFile(
-        join(repo, "package.json"),
-        `${JSON.stringify(
-          {
-            devDependencies: {
-              "@types/fixture": "file:vendor/types-fixture",
-              typescript: "5.9.3",
-            },
-            private: true,
-            scripts: { test: "bun test --pass-with-no-tests" },
-          },
-          null,
-          2,
-        )}\n`,
-      );
-      await writeFile(
-        join(repo, "tsconfig.json"),
-        `${JSON.stringify(
-          {
-            compilerOptions: {
-              module: "Preserve",
-              moduleResolution: "Bundler",
-              noEmit: true,
-              strict: true,
-              target: "ESNext",
-              types: ["fixture"],
-            },
-            include: ["src/**/*.ts"],
-          },
-          null,
-          2,
-        )}\n`,
-      );
       await writeFile(join(repo, "src", "answer.ts"), "export const answer: number = 42;\n");
       await writeFile(
         join(repo, "src", "answer.test.js"),
@@ -85,23 +51,7 @@ test(
           "",
         ].join("\n"),
       );
-      await writeFile(
-        join(repo, "vendor", "types-fixture", "package.json"),
-        '{"name":"@types/fixture","version":"1.0.0","types":"index.d.ts"}\n',
-      );
-      await writeFile(
-        join(repo, "vendor", "types-fixture", "index.d.ts"),
-        "declare const fixtureReady: true;\n",
-      );
       await writeFile(join(repo, ".gitignore"), "node_modules/\n");
-
-      const seeded = await run(
-        ["bun", "install", "--ignore-scripts", "--offline"],
-        repo,
-      );
-      if (seeded.exitCode !== 0) {
-        throw new Error(`fixture bun install failed: ${seeded.stderr || seeded.stdout}`);
-      }
       expect((await run(["git", "init", "--quiet"], repo)).exitCode).toBe(0);
       expect((await run(["git", "add", "."], repo)).exitCode).toBe(0);
       expect((await run(["git", "commit", "--quiet", "-m", "fixture"], repo)).exitCode).toBe(
@@ -119,7 +69,59 @@ test(
         status: "created",
       });
 
-      const green = await runGates(worktree, DEFAULT_GATES);
+      await writeFile(
+        join(worktree, "package.json"),
+        `${JSON.stringify(
+          {
+            name: "argus-shaped-fixture",
+            private: true,
+            scripts: {
+              test: "bun test --pass-with-no-tests",
+              typecheck: `bun ${JSON.stringify(
+                join(process.cwd(), "node_modules", "typescript", "bin", "tsc"),
+              )} --noEmit`,
+            },
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      await writeFile(
+        join(worktree, "tsconfig.json"),
+        `${JSON.stringify(
+          {
+            compilerOptions: {
+              module: "Preserve",
+              moduleResolution: "Bundler",
+              noEmit: true,
+              strict: true,
+              target: "ESNext",
+            },
+            include: ["src/**/*.ts"],
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      await writeFile(
+        join(worktree, "bun.lock"),
+        `${JSON.stringify(
+          {
+            lockfileVersion: 1,
+            configVersion: 1,
+            workspaces: { "": { name: "argus-shaped-fixture" } },
+            packages: {},
+          },
+          null,
+          2,
+        )}\n`,
+      );
+
+      const resolution = await resolveRepositoryGates(repo, worktree);
+      expect(resolution.status).toBe("resolved");
+      if (resolution.status === "error") throw new Error(resolution.reason);
+
+      const green = await runGates(worktree, resolution.gates);
       expect(green.results.map(({ name, passed }) => ({ name, passed }))).toEqual([
         { name: "typecheck", passed: true },
         { name: "tests", passed: true },
@@ -130,7 +132,7 @@ test(
         join(worktree, "src", "answer.ts"),
         'export const answer: number = "not a number";\n',
       );
-      const deliberateFailure = await runGates(worktree, DEFAULT_GATES);
+      const deliberateFailure = await runGates(worktree, resolution.gates);
       expect(deliberateFailure.results[0]?.name).toBe("typecheck");
       expect(deliberateFailure.results[0]?.passed).toBe(false);
       expect(deliberateFailure.results[0]?.exitCode).not.toBe(0);

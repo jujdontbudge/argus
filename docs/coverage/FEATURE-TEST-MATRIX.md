@@ -172,10 +172,10 @@ being cloned somewhere else.
 | F74 | The skill **id** is part of the route | **ASSERTED** | see F4. Nothing checks the id resolves on this machine → folded into **#89** |
 | F75–F76 | Frontier read; claim → worktree → workspace → fresh session → register → dispatch | STRUCTURAL | `dispatch.test.ts` |
 | F77 | Cap 3, enforced at production's door | LIVE (mechanics) / **NONE** (under load) | #78 ran `ARGUS_LIVE_SLOTS`. Three *real* sessions have never been in flight at once → **#92** |
-| F78 | On green: merge, close, update the map | STRUCTURAL | `complete.test.ts`; scenario 1 now provisions a locked TypeScript project and runs `DEFAULT_GATES` in the production-created worktree (#87) |
+| F78 | On green: merge, close, update the map | STRUCTURAL | `complete.test.ts`; scenario 1 provisions a locked TypeScript project and runs its detected root package scripts in the production-created worktree (#87, #123) |
 | F79 | Johan can attach to any ticket workspace | **NONE** | same hole as F6 |
 | F80–F81 | Ad hoc coverage; planning exempt | STRUCTURAL | slot 3 |
-| F82 | **A gate is only a gate if it can refuse** | STRUCTURAL | `gates-worktree.test.ts` creates a real worktree through the production primitive, passes both defaults, then makes typecheck refuse a deliberate error (#87) |
+| F82 | **A gate is only a gate if it can refuse** | STRUCTURAL | `gates-worktree.test.ts` creates a real worktree through the production primitive, detects its root Bun/TypeScript scripts, passes both, then makes typecheck refuse a deliberate error (#87); ticket #123 adds fail-closed repository configuration and a Python/docs completion run |
 
 ### M. Memory and skills
 
