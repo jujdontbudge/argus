@@ -33,6 +33,18 @@ export interface ClaimRequest {
   ticket: string;
 }
 
+export interface TicketLabelRequest {
+  cwd: string;
+  label: string;
+  repo: string;
+  run: GhRunner;
+  ticket: string;
+}
+
+export type TicketLabelResult =
+  | { status: "marked"; ticket: string; label: string }
+  | { status: "failed"; ticket: string; reason: string };
+
 const detail = (result: { stderr: string; stdout: string }): string =>
   (result.stderr.trim() || result.stdout.trim()).slice(0, 300);
 
@@ -113,6 +125,69 @@ export async function releaseClaim(request: ClaimRequest): Promise<boolean> {
     cwd,
   );
   return result.exitCode === 0;
+}
+
+/** Add a durable tracker marker and read it back before a worker starts. */
+export async function addTicketLabel(
+  request: TicketLabelRequest,
+): Promise<TicketLabelResult> {
+  const { cwd, label, repo, run, ticket } = request;
+  const edited = await run(
+    ["issue", "edit", ticket, "--repo", repo, "--add-label", label],
+    cwd,
+  );
+  if (edited.exitCode !== 0) {
+    return {
+      reason: `gh issue edit --add-label failed (exit ${edited.exitCode}): ${detail(edited)}`,
+      status: "failed",
+      ticket,
+    };
+  }
+
+  const viewed = await run(
+    ["issue", "view", ticket, "--repo", repo, "--json", "labels"],
+    cwd,
+  );
+  if (viewed.exitCode !== 0) {
+    return {
+      reason: `gh issue view labels failed (exit ${viewed.exitCode}): ${detail(viewed)}`,
+      status: "failed",
+      ticket,
+    };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(viewed.stdout);
+  } catch {
+    return {
+      reason: "gh issue view labels returned output that is not JSON",
+      status: "failed",
+      ticket,
+    };
+  }
+  if (typeof parsed !== "object" || parsed === null) {
+    return {
+      reason: "gh issue view labels returned a non-object",
+      status: "failed",
+      ticket,
+    };
+  }
+  const labels = Array.isArray((parsed as { labels?: unknown }).labels)
+    ? (parsed as { labels: unknown[] }).labels.flatMap((entry) => {
+        if (typeof entry !== "object" || entry === null) return [];
+        const name = (entry as { name?: unknown }).name;
+        return typeof name === "string" ? [name] : [];
+      })
+    : [];
+  if (!labels.includes(label)) {
+    return {
+      reason: `gh issue edit reported success but ticket #${ticket} has no '${label}' label`,
+      status: "failed",
+      ticket,
+    };
+  }
+  return { label, status: "marked", ticket };
 }
 
 async function readClaim(

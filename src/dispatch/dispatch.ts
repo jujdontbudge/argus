@@ -43,9 +43,11 @@ import {
 } from "../deploy";
 import type { CmuxRun } from "../events";
 import { loadEyesConfig } from "../eyes/config";
+import { resolveGrillModel } from "../grill/config.ts";
+import { isGrillMode } from "../grill/skills.ts";
 import { enqueueVerification } from "../complete/queue.ts";
 import { runGh, trackerRepoName, type GhRunner } from "../eyes/retro/gh";
-import { claimingLogin, claimTicket, releaseClaim } from "./claim.ts";
+import { addTicketLabel, claimingLogin, claimTicket, releaseClaim } from "./claim.ts";
 import { readFrontier, type ExcludedTicket, type FrontierTicket } from "./frontier.ts";
 import { recoverDeadSlots, type RecoveredSlot } from "./recover.ts";
 import { routeAgent } from "./routing.ts";
@@ -256,6 +258,10 @@ export async function dispatchFrontier(
       }
       agent = routing.agent;
     }
+    const planningRoute = agent === "claude" && ticket.labels.some(isGrillMode);
+    const model = planningRoute
+      ? await resolveGrillModel(repo, options.model)
+      : options.model;
 
     // The slot BEFORE the claim and before anything is created: capacity is
     // the first thing checked, so a full cap cannot even assign a ticket.
@@ -279,6 +285,39 @@ export async function dispatchFrontier(
     }
     await slot.markClaimed();
 
+    // R3: an explicit Opus fallback is allowed only for planning work that
+    // needs to move now, and its owning ticket must carry the durable marker.
+    // Mark and read it back before launch so a worker can never start with an
+    // unrecorded degradation.
+    if (planningRoute && model === "claude-opus-5") {
+      const marked = await addTicketLabel({
+        cwd: repo,
+        label: "degraded-model",
+        repo: tracker,
+        run: gh,
+        ticket: ticket.number,
+      });
+      if (marked.status === "failed") {
+        const released = await releaseClaim({
+          cwd: repo,
+          login,
+          repo: tracker,
+          run: gh,
+          ticket: ticket.number,
+        });
+        await slot.release();
+        report.skipped.push({
+          reason: marked.reason,
+          ticket: ticket.number,
+        });
+        report.degraded.push(
+          `ticket #${ticket.number}: ${marked.reason}` +
+            (released ? "" : " (and the claim could not be released)"),
+        );
+        continue;
+      }
+    }
+
     // What "did this session produce anything?" will be measured against if it
     // dies. Read before the worktree exists, so it describes the starting point.
     const head = await git(["rev-parse", "HEAD"], repo);
@@ -293,7 +332,7 @@ export async function dispatchFrontier(
         repo,
         ticket: ticket.number,
         workspace: options.workspace ?? "auto",
-        ...(options.model !== undefined && { model: options.model }),
+        ...(model !== undefined && { model }),
       },
       {
         git,

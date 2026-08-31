@@ -644,6 +644,50 @@ describe("dispatchFrontier (#56): recovery tells a DEAD session from a SLOW one"
  * happens to cover the three implemented rows reads as green.
  */
 describe("dispatchFrontier (#88): SPEC §2's routing table, per ticket", () => {
+  test("every GRILL_MODES label dispatches Claude with the Fable default", async () => {
+    const repo = await scratchRepo();
+    try {
+      await writeConfig(repo, "dispatch:\n  max_concurrency: 5\n");
+      const gh = createFakeGh({ login: LOGIN, repo: REPO });
+      for (const [number, label] of [
+        [10, "grilling"],
+        [11, "spec"],
+        [12, "tickets"],
+        [13, "review"],
+        [14, "diagnosis"],
+      ] as const) {
+        gh.seed({ labels: [label], number, title: `${label} the change` });
+      }
+      const { spawn, witness } = witnessSpawn(repo, gh);
+
+      await dispatchFrontier(options(repo, gh, spawn));
+
+      expect(witness.calls).toHaveLength(5);
+      expect(witness.calls.every((call) => call.command.includes("claude-fable-5"))).toBe(
+        true,
+      );
+    } finally {
+      await cleanup(repo);
+    }
+  }, GIT_BUDGET_MS);
+
+  test("an Opus planning override marks the owning ticket as degraded-model", async () => {
+    const repo = await scratchRepo();
+    try {
+      await writeConfig(repo, "grill:\n  model: claude-opus-5\n");
+      const gh = createFakeGh({ login: LOGIN, repo: REPO });
+      gh.seed({ labels: ["diagnosis"], number: 11, title: "Diagnose the failure" });
+      const { spawn, witness } = witnessSpawn(repo, gh);
+
+      await dispatchFrontier(options(repo, gh, spawn));
+
+      expect(witness.calls[0]!.command).toContain("claude-opus-5");
+      expect(gh.find("11")!.labels).toContain("degraded-model");
+    } finally {
+      await cleanup(repo);
+    }
+  }, GIT_BUDGET_MS);
+
   test("spec→claude, diagnosis→claude, unlabelled→codex, spec+agent:codex→codex", async () => {
     const repo = await scratchRepo();
     try {

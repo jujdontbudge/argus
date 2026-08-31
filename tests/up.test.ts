@@ -537,6 +537,7 @@ if (args[0] === "label" && args[1] === "list") console.log(JSON.stringify([{ nam
       "wayfinder:prototype",
       "wayfinder:grilling",
       "wayfinder:task",
+      "degraded-model",
     ]);
     expect(await Bun.file(join(repo, "docs/agents/issue-tracker.md")).text()).toContain(
       "acme/widgets",

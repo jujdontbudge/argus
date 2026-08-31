@@ -159,6 +159,7 @@ export function createFakeGh(options: FakeGhOptions = {}): FakeGh {
           body: issue.body,
           state: issue.state.toUpperCase(),
           assignees: issue.assignees.map((login) => ({ login })),
+          labels: issue.labels.map((name) => ({ name })),
         }),
       );
     }
@@ -192,6 +193,9 @@ export function createFakeGh(options: FakeGhOptions = {}): FakeGh {
         }
         if (args[index] === "--remove-assignee") {
           issue.assignees = issue.assignees.filter((entry) => entry !== value);
+        }
+        if (args[index] === "--add-label" && !issue.labels.includes(value)) {
+          issue.labels.push(value);
         }
         // The wayfinder map update (#57) rewrites the map issue's body.
         if (args[index] === "--body") issue.body = value;

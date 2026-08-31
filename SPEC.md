@@ -106,10 +106,11 @@ Model names above are current defaults, not commitments; they are config knobs i
 individual launch may override it with `--model`.
 
 **Fable planning exception (R3–R4, superseding the 2026-08-25 "no fable"
-directive).** Planning, grill, diagnosis and review routes use Fable by default.
-If Fable quota is exhausted, that work queues and waits for reset. Only work
-Johan explicitly flags as time-critical may degrade to `claude-opus-5`, and its
-owning ticket must carry the `degraded-model` marker.
+directive).** The `GRILL_MODES` routes — `grilling`, `spec`, `tickets`, `review`,
+and `diagnosis` — use Fable by default. If Fable quota is exhausted, that work
+queues and waits for reset. Only work Johan explicitly flags as time-critical may
+degrade to `claude-opus-5`, and its owning ticket must carry the
+`degraded-model` marker.
 
 Routing is by ticket label. Hermes reads the label and picks the worker:
 

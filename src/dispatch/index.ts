@@ -20,10 +20,13 @@ export {
 } from "./dispatch.ts";
 export {
   claimingLogin,
+  addTicketLabel,
   claimTicket,
   releaseClaim,
   type ClaimRequest,
   type ClaimResult,
+  type TicketLabelRequest,
+  type TicketLabelResult,
 } from "./claim.ts";
 export {
   readFrontier,
