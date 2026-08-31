@@ -250,7 +250,11 @@ export async function escalateNeedsJohan(
   options: EscalationOptions = {},
 ): Promise<EscalationResult> {
   const cause = classifyEscalationCause(trigger);
-  const ticket = ticketNumber(trigger.ticket);
+  const ticket = ticketNumber(
+    typeof trigger === "object" && trigger !== null
+      ? (trigger as { ticket?: unknown }).ticket
+      : undefined,
+  );
   if (cause === null || ticket === null) return { status: "ignored", reason: "not-trigger" };
   const notification = notificationFor(ticket, cause);
 

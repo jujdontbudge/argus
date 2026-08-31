@@ -222,6 +222,28 @@ describe("needs-Johan escalation routing", () => {
     expect(await Bun.file(join(repo, ".argus/registry/lifecycle.jsonl")).exists()).toBe(false);
   });
 
+  test.each([undefined, null, "not-an-object", 42])(
+    "fails closed for malformed non-object trigger data: %o",
+    async (candidate) => {
+      const repo = await repoFixture();
+      const notifications: MacNotificationRequest[] = [];
+
+      const result = await escalateNeedsJohan(
+        repo,
+        candidate as unknown as EscalationTrigger,
+        {
+          notify: async (request) => {
+            notifications.push(request);
+          },
+        },
+      );
+
+      expect(result).toEqual({ status: "ignored", reason: "not-trigger" });
+      expect(notifications).toEqual([]);
+      expect(await Bun.file(join(repo, ".argus/registry/lifecycle.jsonl")).exists()).toBe(false);
+    },
+  );
+
   test("does not mutate ticket or surface state", async () => {
     const repo = await repoFixture();
     const ticket = join(repo, ".argus", "ticket.json");
