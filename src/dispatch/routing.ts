@@ -46,6 +46,7 @@ const PINS: Readonly<Record<string, DeployAgent>> = {
   "agent:claude": "claude",
   "agent:claude-code": "claude",
   "agent:codex": "codex",
+  "agent:hermes": "hermes",
 };
 
 /**
@@ -82,8 +83,9 @@ export function routeAgent(labels: readonly string[]): AgentRouting {
     if (pinned === undefined) {
       return {
         reason:
-          `unknown agent pin '${pin}': Argus deploys claude and codex, so this ` +
-          "names no worker; SPEC §2's pins are 'agent:claude-code' and 'agent:codex'",
+          `unknown agent pin '${pin}': Argus deploys claude, codex, and hermes, so ` +
+          "this names no worker; SPEC §2's pins are 'agent:claude-code', " +
+          "'agent:codex', and 'agent:hermes'",
         status: "refused",
       };
     }

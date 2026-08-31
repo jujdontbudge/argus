@@ -249,7 +249,7 @@ function parse(raw: string): SlotRecord | null {
     state,
     ticket: row.ticket,
     ...(typeof row.claimed === "boolean" && { claimed: row.claimed }),
-    ...((row.agent === "claude" || row.agent === "codex") && { agent: row.agent }),
+    ...((row.agent === "claude" || row.agent === "codex" || row.agent === "hermes") && { agent: row.agent }),
     ...(typeof row.sessionId === "string" && { sessionId: row.sessionId }),
     ...(typeof row.worktree === "string" && { worktree: row.worktree }),
     ...(typeof row.branch === "string" && { branch: row.branch }),
