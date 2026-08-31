@@ -2,7 +2,7 @@
  * Skill routing for the grill flow (ticket #62) — SPEC §1's routing table and
  * §7.1's chain, made executable.
  *
- * SPEC §1: "Routing is by ticket label. `grilling`, `spec`, `review`,
+ * SPEC §1: "Routing is by ticket label. `grilling`, `spec`, `tickets`, `review`,
  * `diagnosis` → Claude Code; implementation tickets (default) → Codex." SPEC
  * §7.1: the chain is "the Matt Pocock chain as shipped by pocock-plus:
  * `grilling → to-spec → to-tickets → implement`, with `wayfinder` for
@@ -104,4 +104,3 @@ export interface ResolvedGrillSkill {
 export function isGrillMode(value: string): value is GrillMode {
   return Object.hasOwn(GRILL_MODES, value);
 }
-

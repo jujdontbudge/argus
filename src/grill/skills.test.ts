@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 
 import { GRILL_MODES } from "./index.ts";
 
 /**
- * Ticket #62 — skill routing, SPEC §1 ("`grilling`, `spec`, `review`,
+ * Ticket #62 — skill routing, SPEC §1 ("`grilling`, `spec`, `tickets`, `review`,
  * `diagnosis` → Claude Code") and §7.1 (the pocock-plus chain).
  *
  * Routing has two halves and both are asserted here, because getting either
@@ -38,6 +39,14 @@ describe("GRILL_MODES (#62): SPEC §1's routing table and §7.1's chain", () => 
     expect(GRILL_MODES.grilling.skill).toBe("pocock-plus:grilling");
     expect(GRILL_MODES.spec.skill).toBe("pocock-plus:to-spec");
     expect(GRILL_MODES.tickets.skill).toBe("pocock-plus:to-tickets");
+  });
+
+  test("SPEC §2 names every GRILL_MODES route as Claude planning work", async () => {
+    const spec = await Bun.file(join(import.meta.dir, "../../SPEC.md")).text();
+
+    expect(spec).toContain(
+      "- `grilling`, `spec`, `tickets`, `review`, `diagnosis` → Claude Code",
+    );
   });
 
 });
