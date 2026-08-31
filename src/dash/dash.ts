@@ -6,7 +6,6 @@
  * polls the durable event directory and reconnects with Last-Event-ID; an
  * on-demand process therefore has no lifecycle state to supervise.
  */
-import { constants, Database } from "bun:sqlite";
 import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { loadRegistry, registryPaths } from "../provenance";
@@ -37,7 +36,7 @@ async function events(repo: string, request: Request): Promise<Response> {
   const selected = after === null ? names : names.filter(n => n > after);
   const chunks: string[] = [];
   for (const name of selected) chunks.push(`id: ${name}\ndata: ${await Bun.file(join(directory, name)).text()}\n\n`);
-  return new Response(chunks.join(""), { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" } });
+  return new Response(`retry: 1000\n${chunks.join("")}`, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" } });
 }
 
 export function createDashServer(options: DashOptions): ReturnType<typeof Bun.serve> {
@@ -59,11 +58,4 @@ export function createDashServer(options: DashOptions): ReturnType<typeof Bun.se
     if (url.pathname === "/api/events") return events(repo, request);
     return new Response("Not found", { status: 404 });
   } });
-}
-
-/** Open the archive exactly as the dashboard does, for the #128 read-only gate. */
-export function assertArchiveReadOnly(path: string): boolean {
-  const database = new Database(path, { readonly: true, strict: true });
-  try { return (database as unknown as { filename?: string }).filename !== undefined || constants.SQLITE_OPEN_READONLY !== undefined; }
-  finally { database.close(false); }
 }
