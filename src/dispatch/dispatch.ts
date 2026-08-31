@@ -50,6 +50,10 @@ import { readFrontier, type ExcludedTicket, type FrontierTicket } from "./fronti
 import { recoverDeadSlots, type RecoveredSlot } from "./recover.ts";
 import { routeAgent } from "./routing.ts";
 import { createDispatchSlots, dispatchSlotsDirectory } from "./slots.ts";
+import { dispatchMemoryPreamble } from "./preamble.ts";
+import { dispatchSkillPreamble } from "./skill-match.ts";
+import { DEFAULT_MEMORY_CAPS } from "./preamble.ts";
+import { DEFAULT_SKILL_CAPS } from "./skill-match.ts";
 
 export interface DispatchedTicket {
   ticket: string;
@@ -283,7 +287,9 @@ export async function dispatchFrontier(
     const deployment = await deployWorker(
       {
         agent,
-        dispatchPrompt: buildPrompt(ticket, tracker),
+        dispatchPrompt: buildPrompt(ticket, tracker) +
+          await dispatchMemoryPreamble(repo, `${ticket.title} ${ticket.body} ${ticket.labels.join(" ")}`, { maxFacts: config.dispatch.memoryMaxFacts ?? DEFAULT_MEMORY_CAPS.maxFacts, maxChars: config.dispatch.memoryMaxChars ?? DEFAULT_MEMORY_CAPS.maxChars }) +
+          (agent === "codex" ? await dispatchSkillPreamble(repo, `${ticket.title} ${ticket.body} ${ticket.labels.join(" ")}`, { maxSkills: config.dispatch.skillMaxCount ?? DEFAULT_SKILL_CAPS.maxSkills, maxChars: config.dispatch.skillMaxChars ?? DEFAULT_SKILL_CAPS.maxChars }) : ""),
         repo,
         ticket: ticket.number,
         workspace: options.workspace ?? "auto",
