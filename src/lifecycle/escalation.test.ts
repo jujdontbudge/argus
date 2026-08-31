@@ -180,6 +180,11 @@ describe("needs-Johan escalation routing", () => {
     trigger("dispatched-ticket-death", { deathCount: 1 }),
     trigger("dispatched-ticket-death", { automaticRelaunchCount: 0 }),
     trigger("grill-park-proposal", { parkedHours: 71.99 }),
+    {
+      kind: "unknown-trigger",
+      sessionId: "session-189",
+      ticket: "189",
+    } as unknown as EscalationTrigger,
   ])("does not escalate a non-trigger: %o", async (candidate) => {
     const repo = await repoFixture();
     const notifications: MacNotificationRequest[] = [];

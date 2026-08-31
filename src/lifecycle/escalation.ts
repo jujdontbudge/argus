@@ -110,7 +110,7 @@ export function classifyEscalationCause(
         ? ESCALATION_CAUSES.nudgeBudgetExhausted
         : null;
     case "r2-bailout":
-      return trigger.consequentialChoiceRecordedOnTicket
+      return trigger.consequentialChoiceRecordedOnTicket === true
         ? ESCALATION_CAUSES.r2Bailout
         : null;
     case "dispatched-ticket-death":
@@ -121,6 +121,8 @@ export function classifyEscalationCause(
       return Number.isFinite(trigger.parkedHours) && trigger.parkedHours >= 72
         ? ESCALATION_CAUSES.grillParkProposal
         : null;
+    default:
+      return null;
   }
 }
 
