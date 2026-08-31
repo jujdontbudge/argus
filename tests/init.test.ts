@@ -223,7 +223,7 @@ describe("argus init", () => {
     expect(result.stdout).toContain(
       "wiring: claude skills adapter OK (2 canonical skills readable through .claude/skills)",
     );
-    expect(result.stdout).toContain("wiring: AGENTS.md pointers OK (6/6 resolve)");
+    expect(result.stdout).toContain("wiring: AGENTS.md pointers OK (8/8 resolve)");
   });
 
   test("preserves a tracked dirty Claude skills directory byte-for-byte", async () => {

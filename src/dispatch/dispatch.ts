@@ -50,6 +50,8 @@ import { readFrontier, type ExcludedTicket, type FrontierTicket } from "./fronti
 import { recoverDeadSlots, type RecoveredSlot } from "./recover.ts";
 import { routeAgent } from "./routing.ts";
 import { createDispatchSlots, dispatchSlotsDirectory } from "./slots.ts";
+import { dispatchMemoryPreamble } from "./preamble.ts";
+import { dispatchSkillPreamble } from "./skill-match.ts";
 
 export interface DispatchedTicket {
   ticket: string;
@@ -283,7 +285,9 @@ export async function dispatchFrontier(
     const deployment = await deployWorker(
       {
         agent,
-        dispatchPrompt: buildPrompt(ticket, tracker),
+        dispatchPrompt: buildPrompt(ticket, tracker) +
+          await dispatchMemoryPreamble(repo, `${ticket.title} ${ticket.body} ${ticket.labels.join(" ")}`, { maxFacts: config.dispatch.memoryMaxFacts ?? 5, maxChars: config.dispatch.memoryMaxChars ?? 12000 }) +
+          (agent === "codex" ? await dispatchSkillPreamble(repo, `${ticket.title} ${ticket.body} ${ticket.labels.join(" ")}`, { maxSkills: config.dispatch.skillMaxCount ?? 3, maxChars: config.dispatch.skillMaxChars ?? 20000 }) : ""),
         repo,
         ticket: ticket.number,
         workspace: options.workspace ?? "auto",
