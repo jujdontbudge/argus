@@ -34,7 +34,7 @@ import { Coalescer, type CoalesceWindow } from "../coalesce";
 import { loadEyesConfig, type CadenceConfig } from "../config";
 import { chainRootOf } from "./chain";
 import { applyDigestUpdate, digestFileName, updateIndex, type DigestSeed } from "./outputs";
-import { parseDigestVerdict, DIGEST_OUTPUT_SCHEMA, type DigestVerdict } from "./schema";
+import { parseDigestVerdict, DIGEST_OUTPUT_SCHEMA, resolveKnownPitfallRepeat, type DigestVerdict } from "./schema";
 
 export type { ProvenanceRecord } from "../../provenance";
 
@@ -66,6 +66,7 @@ interface KnownSession {
   fileName: string;
   seed: DigestSeed;
   johanTouched: boolean;
+  dispatchMemoryEntries: string[];
 }
 
 interface PersistedState {
@@ -118,6 +119,9 @@ export function buildDigestPrompt(entries: PendingEntry[]): string {
     "- summary: ONE line describing where the session stands now.",
     '- status: "done" when the work concluded, "blocked" when it waits on a',
     '  human, otherwise "running".',
+    "- knownPitfallRepeat: return exactly one id from the dispatch-time MEMORY",
+    "  list only when the evidence is ended-badly and clearly repeats it;",
+    "  otherwise return null. Ambiguity and post-dispatch facts are null.",
     "",
     ...blocks,
   ].join("\n");
@@ -133,6 +137,8 @@ export class DigestEye {
   private readonly loadSessions: () => Promise<SessionRecord[]>;
   private readonly onAlert: (alert: StuckAlert) => void | Promise<void>;
   private evaluating = false;
+  /** Session-end asks are reserved for failures; clean ends need no judgment. */
+  private readonly endedBadly = new Set<string>();
   /** A lifecycle event happened: pending narrative is due NOW, not at cadence. */
   private fireNow = false;
 
@@ -210,6 +216,8 @@ export class DigestEye {
       fileName: digestFileName(ticket, root),
       seed,
       johanTouched: false,
+      dispatchMemoryEntries:
+        (rootRegistration?.dispatchMemorySnapshot ?? ownRegistration?.dispatchMemorySnapshot)?.entries ?? [],
     };
     this.known.set(root, session);
     return { root, session, isNew: true };
@@ -249,6 +257,9 @@ export class DigestEye {
         record,
       );
       this.pending.push({ record, ingestedAt: at, root });
+      if (/(?:failed|blocked|reverted)/i.test(record.text)) {
+        this.endedBadly.add(root);
+      }
       this.coalescer.note(at);
       const seen = touched.get(root) ?? { session, isNew };
       seen.isNew = seen.isNew || isNew;
@@ -270,6 +281,9 @@ export class DigestEye {
   /** A §6 lifecycle signal: fires the digest immediately, no brain involved. */
   async ingestLifecycle(event: SessionLifecycleEvent): Promise<void> {
     const { session, isNew } = await this.resolveSession(event.sessionId);
+    if (event.kind === "session-blocked" || event.kind === "session-dead") {
+      this.endedBadly.add(chainRootOf(await this.loadSessions(), event.sessionId));
+    }
     await this.surface(
       session,
       { status: LIFECYCLE_STATUS[event.kind] },
@@ -298,6 +312,17 @@ export class DigestEye {
       (this.fireNow && this.pending.length > 0) ||
       this.coalescer.shouldFire(this.now());
     if (this.evaluating || !due) return false;
+    if (
+      this.fireNow &&
+      this.pending.length > 0 &&
+      !this.pending.some((entry) => this.endedBadly.has(entry.root))
+    ) {
+      this.pending = [];
+      this.coalescer.flush();
+      this.fireNow = false;
+      await this.persist();
+      return false;
+    }
     this.evaluating = true;
     try {
       const batch = this.pending.slice();
@@ -379,6 +404,17 @@ export class DigestEye {
         session,
         {
           status: entry.status,
+          ...(resolveKnownPitfallRepeat(
+            entry.knownPitfallRepeat,
+            session.dispatchMemoryEntries,
+            entry.status === "blocked" || /(?:failed|blocked|reverted)/i.test(entry.narrative),
+          ) !== null && {
+            knownPitfallRepeat: resolveKnownPitfallRepeat(
+              entry.knownPitfallRepeat,
+              session.dispatchMemoryEntries,
+              entry.status === "blocked" || /(?:failed|blocked|reverted)/i.test(entry.narrative),
+            )!,
+          }),
           narrative: {
             ts: latestTs.get(root) ?? new Date(this.now()).toISOString(),
             text: entry.narrative,
