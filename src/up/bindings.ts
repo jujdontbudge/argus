@@ -845,14 +845,29 @@ async function storedCronJobs(profile: string): Promise<StoredCronJob[]> {
   }
 }
 
+async function removeHermesCronJob(
+  home: string,
+  id: string,
+  run: HermesCronRun,
+): Promise<string | null> {
+  try {
+    const result = await run(["cron", "remove", id], { HERMES_HOME: home });
+    return result.exitCode === 0
+      ? null
+      : result.stderr.trim() || `hermes cron remove exited ${result.exitCode}`;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
 async function ensureHermesSignalCron(
-  profile: string,
+  cronHome: string,
   repo: string,
   argusCli: string,
   bunExecutable: string,
   run: HermesCronRun,
 ): Promise<{ status: "created" | "existing" | "unavailable" | "updated"; error: string | null }> {
-  const scripts = join(profile, "scripts");
+  const scripts = join(cronHome, "scripts");
   await mkdir(scripts, { recursive: true });
   const script = join(scripts, SIGNAL_CRON_SCRIPT);
   const contents =
@@ -862,16 +877,46 @@ async function ensureHermesSignalCron(
   }
   await chmod(script, 0o755);
 
-  const existing = (await storedCronJobs(profile)).find(
+  const existingJobs = (await storedCronJobs(cronHome)).filter(
     ({ name }) => name === SIGNAL_CRON_NAME,
   );
-  if (
-    existing?.enabled !== false &&
-    existing?.schedule_display === SIGNAL_CRON_SCHEDULE &&
-    existing?.script === SIGNAL_CRON_SCRIPT &&
-    existing?.workdir === repo
-  ) {
+  const existing = existingJobs.find(
+    ({ enabled, schedule_display, script: storedScript, workdir }) =>
+      enabled !== false &&
+      schedule_display === SIGNAL_CRON_SCHEDULE &&
+      storedScript === SIGNAL_CRON_SCRIPT &&
+      workdir === repo,
+  );
+
+  if (existingJobs.some(({ id }) => typeof id !== "string" || id === "")) {
+    return {
+      error: `Hermes cron job '${SIGNAL_CRON_NAME}' has no removable id`,
+      status: "unavailable",
+    };
+  }
+
+  const updateTarget = existing ?? existingJobs[0];
+  const duplicateJobs = existingJobs.filter((job) => job !== updateTarget);
+
+  if (existing && duplicateJobs.length === 0) {
     return { error: null, status: "existing" };
+  }
+
+  if (existing && duplicateJobs.length > 0) {
+    for (const duplicate of duplicateJobs) {
+      const error = await removeHermesCronJob(
+        cronHome,
+        duplicate.id as string,
+        run,
+      );
+      if (error !== null) {
+        return {
+          error,
+          status: "unavailable",
+        };
+      }
+    }
+    return { error: null, status: "updated" };
   }
 
   const common = [
@@ -882,12 +927,12 @@ async function ensureHermesSignalCron(
     "--workdir",
     repo,
   ] as const;
-  const updating = typeof existing?.id === "string" && existing.id !== "";
+  const updating = typeof updateTarget?.id === "string" && updateTarget.id !== "";
   const args = updating
     ? [
         "cron",
         "edit",
-        existing.id as string,
+        updateTarget!.id as string,
         "--schedule",
         SIGNAL_CRON_SCHEDULE,
         "--prompt",
@@ -903,20 +948,63 @@ async function ensureHermesSignalCron(
         ...common,
       ];
   try {
-    const result = await run(args, { HERMES_HOME: profile });
+    const result = await run(args, { HERMES_HOME: cronHome });
     if (result.exitCode !== 0) {
       return {
         error: result.stderr.trim() || `hermes cron exited ${result.exitCode}`,
         status: "unavailable",
       };
     }
-    return { error: null, status: updating ? "updated" : "created" };
+    const staleJobs = updating ? duplicateJobs : [];
+    for (const stale of staleJobs) {
+      const error = await removeHermesCronJob(
+        cronHome,
+        stale.id as string,
+        run,
+      );
+      if (error !== null) {
+        return {
+          error,
+          status: "unavailable",
+        };
+      }
+    }
+    return {
+      error: null,
+      status:
+        updating || duplicateJobs.length > 0 ? "updated" : "created",
+    };
   } catch (error) {
     return {
       error: error instanceof Error ? error.message : String(error),
       status: "unavailable",
     };
   }
+}
+
+async function removeHermesSignalCronCopies(
+  profile: string,
+  run: HermesCronRun,
+): Promise<{ error: string | null; removed: boolean }> {
+  const jobs = (await storedCronJobs(profile)).filter(
+    ({ name }) => name === SIGNAL_CRON_NAME,
+  );
+  for (const job of jobs) {
+    if (typeof job.id !== "string" || job.id === "") {
+      return {
+        error: `Hermes cron job '${SIGNAL_CRON_NAME}' in ${profile} has no removable id`,
+        removed: false,
+      };
+    }
+    const error = await removeHermesCronJob(profile, job.id, run);
+    if (error !== null) {
+      return {
+        error,
+        removed: false,
+      };
+    }
+  }
+  return { error: null, removed: jobs.length > 0 };
 }
 
 /**
@@ -1003,7 +1091,7 @@ export async function convergeAgentBindings(
   let cronError: string | null = null;
   if (options.argusCli !== undefined && options.bunExecutable !== undefined) {
     const result = await ensureHermesSignalCron(
-      join(options.hermesRoot, "profiles", profile),
+      options.hermesRoot,
       canonicalRepo,
       options.argusCli,
       options.bunExecutable,
@@ -1011,6 +1099,22 @@ export async function convergeAgentBindings(
     );
     cron = result.status;
     cronError = result.error;
+    if (cronError === null) {
+      const profilePath = join(options.hermesRoot, "profiles", profile);
+      const retired = await removeHermesSignalCronCopies(
+        profilePath,
+        options.hermesCron ?? runHermesCron,
+      );
+      cronError = retired.error;
+      if (cronError !== null) {
+        cron = "unavailable";
+      } else if (cron === "existing" && retired.removed) {
+        // A same-name job was removed from the old profile. Report the
+        // convergence as an update while preserving the existing/created
+        // distinction for the scheduler-home job itself.
+        cron = "updated";
+      }
+    }
   }
 
   let honcho: AgentBindingReport["honcho"];
