@@ -652,6 +652,20 @@ skills:
     ]);
     expect(jobsByHome.get(hermesRoot)).toHaveLength(1);
     expect(jobsByHome.get(profile)).toEqual([]);
+
+    const second = await convergeAgentBindings({
+      argusCli: "/opt/argus/src/cli.ts",
+      bunExecutable: "/opt/bun/bin/bun",
+      hermesCron: cron,
+      hermesRoot,
+      honcho: new FakeHoncho(),
+      honchoUrl: "http://honcho.test:8000",
+      repo,
+    });
+
+    expect(second.cron).toBe("existing");
+    expect(jobsByHome.get(hermesRoot)).toHaveLength(1);
+    expect(jobsByHome.get(profile)).toEqual([]);
   });
 
   test("deduplicates same-name poll jobs in the ticking home", async () => {
