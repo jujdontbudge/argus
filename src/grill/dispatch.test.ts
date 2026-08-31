@@ -44,6 +44,15 @@ async function promptFor(
 }
 
 describe("resolveGrillDispatch (#97): the form, not the existence", () => {
+  test("the planning prompt loads Wayfinder and creates executable tickets", async () => {
+    const machine = await fakeMachine();
+    const prompt = await promptFor(machine, "grilling");
+
+    expect(prompt).toContain("load the repository Wayfinder contract");
+    expect(prompt).toContain("file executable tickets");
+    expect(prompt).toContain("verification commands fixed at creation time");
+  });
+
   /**
    * THE BUG. `to-spec` resolves, so #89's check said "resolved" and the grill
    * started — against a prompt asking for a model invocation the frontmatter

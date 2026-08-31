@@ -66,6 +66,7 @@ describe("argus CLI", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("pocock-plus:grilling");
+    expect(result.stdout).toContain("model: claude-fable-5");
     expect(result.stdout).toContain("the retro eye's scope-drift question");
     expect(result.stdout).toContain("no cmux workspace, no registry row and no session");
   });

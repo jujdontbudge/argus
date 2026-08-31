@@ -98,11 +98,18 @@ in this repo.
 | Agent | Runs on | Role |
 | --- | --- | --- |
 | **Hermes** | ChatGPT subscription, `gpt-5.6-sol` via `openai-codex` provider | Orchestrator. Deploys, monitors, routes, nudges. **Never implements.** |
-| **Claude Code** | Claude subscription, Fable | Grilling, specs, domain modeling, diagnosis, code review. |
+| **Claude Code** | Claude subscription, `claude-fable-5` (Fable) | Grilling, specs, domain modeling, diagnosis, code review. |
 | **Codex** | ChatGPT subscription, `gpt-5.6-sol`, high reasoning effort | Default implementer for build tickets. |
 
-Model names above are current defaults, not commitments; both are config knobs in
-`.argus/config.yaml`.
+Model names above are current defaults, not commitments; they are config knobs in
+`.argus/config.yaml`. Argus' `grill.model` defaults to `claude-fable-5`, and an
+individual launch may override it with `--model`.
+
+**Fable planning exception (R3–R4, superseding the 2026-08-25 "no fable"
+directive).** Planning, grill, diagnosis and review routes use Fable by default.
+If Fable quota is exhausted, that work queues and waits for reset. Only work
+Johan explicitly flags as time-critical may degrade to `claude-opus-5`, and its
+owning ticket must carry the `degraded-model` marker.
 
 Routing is by ticket label. Hermes reads the label and picks the worker:
 

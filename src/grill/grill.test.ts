@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -186,6 +186,55 @@ const decodedTransportValues = (line: string): string[] =>
   );
 
 describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () => {
+  test("uses the repo Fable default, with an explicit launch override winning", async () => {
+    const repo = await sandboxRepo();
+    try {
+      await mkdir(join(repo, ".argus"));
+      await Bun.write(
+        join(repo, ".argus", "config.yaml"),
+        "grill:\n  model: claude-opus-5\n",
+      );
+      const configuredCmux = cmuxStub();
+      const configured = await startGrill(
+        { repo, topic: TOPIC },
+        {
+          cmux: configuredCmux.run,
+          env: GRILL_ENV,
+          git: gitStub().run,
+          manifestFile: MACHINE.manifest,
+          newSessionId: () => SESSION,
+        },
+      );
+      expect(configured.status).toBe("started");
+      expect(decodedTransportValues(configuredCmux.launches[0] ?? "")).toContain(
+        "claude-opus-5",
+      );
+
+      const overrideRepo = await sandboxRepo();
+      try {
+        const overrideCmux = cmuxStub();
+        const overridden = await startGrill(
+          { model: "claude-fable-5", repo: overrideRepo, topic: TOPIC },
+          {
+            cmux: overrideCmux.run,
+            env: GRILL_ENV,
+            git: gitStub().run,
+            manifestFile: MACHINE.manifest,
+            newSessionId: () => SESSION,
+          },
+        );
+        expect(overridden.status).toBe("started");
+        expect(decodedTransportValues(overrideCmux.launches[0] ?? "")).toContain(
+          "claude-fable-5",
+        );
+      } finally {
+        await rm(overrideRepo, { force: true, recursive: true });
+      }
+    } finally {
+      await rm(repo, { force: true, recursive: true });
+    }
+  });
+
   test("the deployment row is durable before the launch line is typed", async () => {
     const repo = await sandboxRepo();
     try {

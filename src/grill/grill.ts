@@ -61,6 +61,7 @@ import {
 } from "../deploy";
 import { runCmux, type CmuxRun } from "../events";
 import { CLAUDE_GRILL_ROUTE } from "./route.ts";
+import { resolveGrillModel } from "./config.ts";
 import { createCmuxLaunch } from "./launch.ts";
 import { resolveGrillDispatch } from "./dispatch.ts";
 import { grillPrompt } from "./prompt.ts";
@@ -147,6 +148,7 @@ export async function startGrill(
     };
   }
   const resolved = dispatch.invocation;
+  const model = await resolveGrillModel(request.repo, request.model);
   const prompt = grillPrompt({ invocation: resolved, topic: request.topic });
   // Minted here rather than inside `deployWorker` so a deployment that fails
   // AFTER the row is durable can name the session it left behind. A row is
@@ -187,7 +189,7 @@ export async function startGrill(
       surfaceRef: workspace.surface,
       workspaceRef: workspace.workspace,
       ...(request.executable !== undefined && { executable: request.executable }),
-      ...(request.model !== undefined && { model: request.model }),
+      model,
     },
     {
       cmux,
