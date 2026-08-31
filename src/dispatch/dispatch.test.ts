@@ -28,6 +28,24 @@ const LOGIN = "argus-bot";
 /** Real `git` under this machine's load swings; a small budget is not a signal. */
 const GIT_BUDGET_MS = 120_000;
 
+describe("defaultDispatchPrompt (#165): planning routes carry R5 execution guidance", () => {
+  test("planning tickets load Wayfinder and create executable tickets with fixed verification", () => {
+    const prompt = defaultDispatchPrompt(
+      {
+        body: "Turn the decision into work.",
+        labels: ["spec"],
+        number: "165",
+        title: "Route planning through Fable",
+      },
+      REPO,
+    );
+
+    expect(prompt).toContain("load the repository Wayfinder contract");
+    expect(prompt).toContain("file executable tickets");
+    expect(prompt).toContain("verification commands fixed at creation time");
+  });
+});
+
 const GIT_ENV = {
   ...process.env,
   GIT_AUTHOR_EMAIL: "dispatch@invalid.example",

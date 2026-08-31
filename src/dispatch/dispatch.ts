@@ -125,6 +125,16 @@ export function defaultDispatchPrompt(
   ticket: FrontierTicket,
   tracker: string,
 ): string {
+  const planningGuidance = ticket.labels.some(isGrillMode)
+    ? [
+        "",
+        "Before planning, load the repository Wayfinder contract from",
+        "docs/agents/WAYFINDER.md and follow it. When the decisions identify concrete",
+        "work, file executable tickets rather than leaving implementation in prose;",
+        "each ticket must carry verification commands fixed at creation time (D4).",
+      ]
+    : [];
+
   return [
     `You are an Argus worker on ticket #${ticket.number} of ${tracker}: ${ticket.title}`,
     "",
@@ -137,6 +147,7 @@ export function defaultDispatchPrompt(
     "Do not merge, do not push, and do not close the ticket — the dispatcher owns",
     "ticket state. Stay inside the ticket's stated scope; anything else belongs in",
     "its own ticket.",
+    ...planningGuidance,
   ].join("\n");
 }
 
