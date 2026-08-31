@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { DIGEST_OUTPUT_SCHEMA, parseDigestVerdict } from "./schema";
+import {
+  DIGEST_OUTPUT_SCHEMA,
+  parseDigestVerdict,
+  resolveKnownPitfallRepeat,
+} from "./schema";
 
 const entry = {
   sessionId: "sess-1",
@@ -9,6 +13,12 @@ const entry = {
 };
 
 describe("digest brain output contract", () => {
+  test("the #134 tripwire accepts only one pre-dispatch entry", () => {
+    expect(resolveKnownPitfallRepeat("metro-port", ["metro-port"], true)).toBe("metro-port");
+    expect(resolveKnownPitfallRepeat("new-fact", ["metro-port"], true)).toBeNull();
+    expect(resolveKnownPitfallRepeat("metro-port", ["metro-port"], false)).toBeNull();
+    expect(resolveKnownPitfallRepeat(null, ["metro-port"], true)).toBeNull();
+  });
   test("a conforming verdict parses into typed session digests", () => {
     const verdict = parseDigestVerdict(
       JSON.stringify({

@@ -28,6 +28,16 @@ export interface DigestVerdict {
   sessions: SessionDigest[];
 }
 
+/** Schema-bound tripwire: zero or one pre-dispatch entry, never a guess. */
+export function resolveKnownPitfallRepeat(
+  candidate: string | null | undefined,
+  dispatchEntries: readonly string[],
+  endedBadly: boolean,
+): string | null {
+  if (!endedBadly || candidate === null || candidate === undefined) return null;
+  return dispatchEntries.includes(candidate) ? candidate : null;
+}
+
 export const DIGEST_OUTPUT_SCHEMA = {
   type: "object",
   additionalProperties: false,

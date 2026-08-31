@@ -34,7 +34,7 @@ import { Coalescer, type CoalesceWindow } from "../coalesce";
 import { loadEyesConfig, type CadenceConfig } from "../config";
 import { chainRootOf } from "./chain";
 import { applyDigestUpdate, digestFileName, updateIndex, type DigestSeed } from "./outputs";
-import { parseDigestVerdict, DIGEST_OUTPUT_SCHEMA, type DigestVerdict } from "./schema";
+import { parseDigestVerdict, DIGEST_OUTPUT_SCHEMA, resolveKnownPitfallRepeat, type DigestVerdict } from "./schema";
 
 export type { ProvenanceRecord } from "../../provenance";
 
@@ -385,8 +385,16 @@ export class DigestEye {
         session,
         {
           status: entry.status,
-          ...(entry.knownPitfallRepeat !== null && {
-            knownPitfallRepeat: entry.knownPitfallRepeat,
+          ...(resolveKnownPitfallRepeat(
+            entry.knownPitfallRepeat,
+            session.dispatchMemoryEntries,
+            entry.status === "blocked" || /(?:failed|blocked|reverted)/i.test(entry.narrative),
+          ) !== null && {
+            knownPitfallRepeat: resolveKnownPitfallRepeat(
+              entry.knownPitfallRepeat,
+              session.dispatchMemoryEntries,
+              entry.status === "blocked" || /(?:failed|blocked|reverted)/i.test(entry.narrative),
+            )!,
           }),
           narrative: {
             ts: latestTs.get(root) ?? new Date(this.now()).toISOString(),
