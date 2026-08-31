@@ -106,6 +106,53 @@ describe("needs-Johan escalation routing", () => {
     expect(digest?.body.match(/\[needs-johan\]/g)).toHaveLength(1);
   });
 
+  test("dedupes a rotated session against its existing digest-chain root", async () => {
+    const repo = await repoFixture();
+    await mkdir(join(repo, ".argus/registry"), { recursive: true });
+    await writeFile(
+      join(repo, ".argus/registry/sessions.jsonl"),
+      [
+        {
+          ts: "2026-08-31T11:59:00.000Z",
+          sessionId: "session-root",
+          ticket: "189",
+          dispatchPrompt: "work",
+        },
+        {
+          ts: "2026-08-31T12:00:00.000Z",
+          sessionId: "session-rotated",
+          ticket: "189",
+          continues: "session-root",
+          dispatchPrompt: "continued work",
+        },
+      ]
+        .map((row) => JSON.stringify(row))
+        .join("\n") + "\n",
+    );
+    const notifications: MacNotificationRequest[] = [];
+
+    await escalateNeedsJohan(repo, trigger("r2-bailout", { sessionId: "session-root" }), {
+      notify: async (request) => {
+        notifications.push(request);
+      },
+    });
+    const restarted = await escalateNeedsJohan(
+      repo,
+      trigger("r2-bailout", { sessionId: "session-rotated" }),
+      {
+        notify: async (request) => {
+          notifications.push(request);
+        },
+      },
+    );
+
+    expect(restarted.status).toBe("duplicate");
+    expect(notifications).toHaveLength(1);
+    expect((await lifecycleRows(repo))).toHaveLength(1);
+    const digest = await readDigest(join(repo, ".argus/sessions"), "189-session-root.md");
+    expect(digest?.body.match(/\[needs-johan\]/g)).toHaveLength(1);
+  });
+
   test("the push ignores transcript-shaped free text and stays bounded", async () => {
     const repo = await repoFixture();
     const notifications: MacNotificationRequest[] = [];

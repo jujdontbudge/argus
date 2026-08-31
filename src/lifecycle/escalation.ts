@@ -244,8 +244,12 @@ export async function escalateNeedsJohan(
   const notification = notificationFor(ticket, cause);
 
   return withLifecycleLock(repo, async () => {
+    // Digest chain rotation gives one logical session several physical ids.
+    // Resolve that identity before deduping so a restart under a new id cannot
+    // produce a second escalation for the same cause.
+    const root = await logicalSessionId(repo, trigger.sessionId);
     const existing = await readLifecycleRecords(repo);
-    if (existing.some((record) => recordKey(record.sessionId, record.cause) === recordKey(trigger.sessionId, cause))) {
+    if (existing.some((record) => recordKey(record.sessionId, record.cause) === recordKey(root, cause))) {
       return { status: "duplicate", cause, ticket };
     }
 
@@ -254,14 +258,13 @@ export async function escalateNeedsJohan(
     const record: LifecycleEscalationRecord = {
       schemaVersion: 1,
       kind: "needs-johan-escalation",
-      sessionId: trigger.sessionId,
+      sessionId: root,
       ticket,
       cause,
       createdAt: (options.now?.() ?? new Date()).toISOString(),
     };
     await appendDurably(lifecyclePath(repo), record);
 
-    const root = await logicalSessionId(repo, trigger.sessionId);
     const fileName = digestFileName(ticket, root);
     const seed = { agent: trigger.agent ?? "argus", ticket, startedBy: "hermes" as const };
     const marker = `[needs-johan] ticket #${ticket}: ${cause}`;
