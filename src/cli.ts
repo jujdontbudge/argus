@@ -104,7 +104,17 @@ async function install(): Promise<number> {
  * whole batch behaviour. A resident loop would add a process that must itself
  * be supervised, and would make the cap depend on that process staying alive.
  */
-async function dispatch(): Promise<number> {
+async function dispatch(args: string[]): Promise<number> {
+  const usage = "Usage: argus dispatch";
+  if (args.length === 1 && (args[0] === "--help" || args[0] === "-h")) {
+    console.log(usage);
+    return 0;
+  }
+  if (args.length > 0) {
+    console.error(`argus dispatch: unknown argument '${args[0]}'\n${usage}`);
+    return 1;
+  }
+
   const { gitRoot } = await import("./up/git.ts");
   const repo = await gitRoot(process.cwd());
   if (repo === null) {
@@ -420,7 +430,7 @@ export async function main(args: string[]): Promise<number> {
   }
 
   if (args[0] === "dispatch") {
-    return dispatch();
+    return dispatch(args.slice(1));
   }
 
   if (args[0] === "complete") {

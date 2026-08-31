@@ -83,7 +83,9 @@ function witnessSpawn(
       // which would look exactly like a routing bug and hide the real one.
       announcedSessionId: async () =>
         request.agent === "codex" ? `01a03c64-8acb-7c40-9cf5-000000000${witness.calls.length}` : null,
-      exited: Promise.resolve({ exitCode: 0, stderr: "", stdout: "" }),
+      // A normal witness represents a worker that remains alive after startup.
+      // Immediate exit is a distinct production failure exercised below.
+      exited: new Promise(() => {}),
       kill: () => {
         throw new Error("the dispatcher must never kill a worker");
       },
@@ -106,7 +108,7 @@ function options(
   spawn: NonNullable<DispatchOptions["spawn"]>,
   extra: Partial<DispatchOptions> = {},
 ): DispatchOptions {
-  return { cmux: noCmux, gh: gh.run, repo, spawn, ...extra };
+  return { cmux: noCmux, gh: gh.run, repo, spawn, startupGraceMs: 0, ...extra };
 }
 
 async function deadPid(): Promise<number> {
@@ -304,6 +306,42 @@ describe("dispatchFrontier (#56): losing a claim never becomes a spawn", () => {
       // Back on the frontier: unassigned, and no slot is held.
       expect(gh.find("1")!.assignees).toEqual([]);
       expect(report.inFlight).toBe(0);
+    } finally {
+      await cleanup(repo);
+    }
+  }, GIT_BUDGET_MS);
+
+  test("a worker that announces then exits immediately is recovered in the same pass", async () => {
+    const repo = await scratchRepo();
+    try {
+      const gh = createFakeGh({ login: LOGIN, repo: REPO });
+      gh.seed({ number: 1, title: "announces then dies" });
+      const dead = await deadPid();
+      const spawn: NonNullable<DispatchOptions["spawn"]> = async () => ({
+        announcedSessionId: async () => "01a03c64-8acb-7c40-9cf5-dead00000001",
+        exited: Promise.resolve({
+          exitCode: 1,
+          stderr: "worker rejected its startup arguments",
+          stdout: "",
+        }),
+        kill: () => {},
+        pid: dead,
+      });
+
+      const report = await dispatchFrontier(
+        options(repo, gh, spawn, { maxConcurrency: 1, startupGraceMs: 10 }),
+      );
+
+      expect(report.dispatched).toEqual([]);
+      expect(report.inFlight).toBe(0);
+      expect(report.recovered).toContainEqual(
+        expect.objectContaining({ outcome: "returned-to-frontier", ticket: "1" }),
+      );
+      expect(report.skipped).toContainEqual(
+        expect.objectContaining({ reason: expect.stringContaining("exited 1"), ticket: "1" }),
+      );
+      expect(report.degraded.join("\n")).toContain("worker rejected its startup arguments");
+      expect(gh.find("1")!.assignees).toEqual([]);
     } finally {
       await cleanup(repo);
     }

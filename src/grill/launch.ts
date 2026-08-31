@@ -34,7 +34,12 @@
  * `dispatchPrompt`, and it classifies `hermes`/`dispatch-prompt` when it
  * lands.
  */
+import { mkdtemp, open, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { STRIPPED_ENV, type WorkerProcess, type WorkerSpawn } from "../deploy";
+import { decodedShellWord } from "../deploy/cmux-command.ts";
 import { createCmuxSend, runCmux, type CmuxRun } from "../events";
 
 /**
@@ -54,15 +59,7 @@ import { createCmuxSend, runCmux, type CmuxRun } from "../events";
  * it, only backslash and the closing quote are special; `$`, backtick and `!`
  * are literal, so no expansion can reach the prompt's contents.
  */
-export function shellQuote(text: string): string {
-  const escaped = text
-    .replace(/\\/g, "\\\\")
-    .replace(/'/g, "\\'")
-    .replace(/\n/g, "\\n")
-    .replace(/\r/g, "\\r")
-    .replace(/\t/g, "\\t");
-  return `$'${escaped}'`;
-}
+export const shellQuote = decodedShellWord;
 
 /**
  * `cd … && env -u … claude --session-id … $'…'`, as one line a shell accepts.
@@ -96,13 +93,13 @@ export function launchLine(
 ): string {
   const unset = STRIPPED_ENV.flatMap((name) => ["-u", name]);
   const command = ["env", ...unset, executable, ...argv.slice(1)]
-    .map(shellQuote)
+    .map(decodedShellWord)
     .join(" ");
   if (cwd === undefined) return command;
   // `&&`, never `;`: a `cd` that fails must not leave the session starting in
   // whatever directory the shell happened to be in, which is the whole failure
   // this argument exists to close.
-  return `cd ${shellQuote(cwd)} && ${command}`;
+  return `cd ${decodedShellWord(cwd)} && ${command}`;
 }
 
 export interface CmuxLaunchOptions {
@@ -122,8 +119,36 @@ export interface CmuxLaunchOptions {
    * surface, and `createCmuxSend` resolves it before it types.
    */
   surface: string;
+  /** Fresh short ref used only for terminal input on cmux 0.62.2. */
+  inputSurface: string;
   /** Defaults to the production cmux runner; injected in tests. */
   cmux?: CmuxRun;
+  /** Bounded launch-script handshake; configurable only to keep failure tests fast. */
+  startupTimeoutMs?: number;
+}
+
+async function directoryExists(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isDirectory();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+async function waitForLaunch(path: string, surface: string, timeoutMs: number): Promise<void> {
+  const started = Date.now();
+  while (!(await directoryExists(path))) {
+    if (Date.now() - started >= timeoutMs) {
+      throw new Error(
+        `timed out waiting for grill process to start in cmux surface ${surface} after ${timeoutMs}ms`,
+      );
+    }
+    await Bun.sleep(50);
+  }
+  // The marker is written immediately before `exec`. Yield one polling interval
+  // so the shell can complete that handoff before the caller reports started.
+  await Bun.sleep(50);
 }
 
 /**
@@ -149,16 +174,43 @@ export function createCmuxLaunch(options: CmuxLaunchOptions): WorkerSpawn {
     // `request.cwd` is the repo `deployWorker` resolved (`checkout: "repo"`
     // for a grill). Dropping it is how #89's drive ran in the wrong repo.
     const line = launchLine(request.executable, request.command, request.cwd);
-    const delivered = await send({
-      surface: options.surface,
-      text: line,
-      workspace: options.workspace,
-    });
-    if (!delivered.ok) {
-      throw new Error(
-        delivered.error ??
-          `cmux would not deliver the grill launch line to ${options.surface}`,
+    const launchDirectory = await mkdtemp(join(tmpdir(), "argus-grill-launch-"));
+    const launchFile = join(launchDirectory, "launch.zsh");
+    const startedDirectory = join(launchDirectory, "started");
+    const launchHandle = await open(launchFile, "wx", 0o600);
+    try {
+      await launchHandle.writeFile(
+        [
+          "#!/bin/zsh",
+          `/bin/mkdir ${decodedShellWord(startedDirectory)} && ${line}`,
+          "",
+        ].join("\n"),
+        "utf8",
       );
+      await launchHandle.sync();
+    } finally {
+      await launchHandle.close();
+    }
+
+    try {
+      const delivered = await send({
+        surface: options.inputSurface,
+        text: `/bin/zsh ${decodedShellWord(launchFile)}`,
+        workspace: options.workspace,
+      });
+      if (!delivered.ok) {
+        throw new Error(
+          delivered.error ??
+            `cmux would not deliver the grill launch line to ${options.surface}`,
+        );
+      }
+      await waitForLaunch(
+        startedDirectory,
+        options.surface,
+        options.startupTimeoutMs ?? 5_000,
+      );
+    } finally {
+      await rm(launchDirectory, { force: true, recursive: true });
     }
     return {
       announcedSessionId: async () => null,

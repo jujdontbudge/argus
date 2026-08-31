@@ -24,11 +24,14 @@
  * CLI rather than by Argus: codex names its own session, so its row follows
  * the CLI's announcement instead of preceding the process.
  */
+import { join } from "node:path";
+
 import {
   appendSessionRow,
   registryPaths,
   type SessionRow,
 } from "../provenance";
+import { createCmuxWorkerSpawn } from "./cmux-spawn.ts";
 import { ROUTES, type AgentRoute, type DeployAgent } from "./routes.ts";
 import {
   spawnWorker,
@@ -102,6 +105,8 @@ export interface DeployRequest {
    * Johan is looking at.
    */
   surfaceRef?: string;
+  /** Fresh cmux short ref used only to type into a newly opened terminal. */
+  inputSurfaceRef?: string;
   /**
    * Override the route for this deployment (#62). The routes in
    * `./routes.ts` are the AFK, headless shapes; §7.2's grill is the same
@@ -125,6 +130,9 @@ export interface Deployment {
   agent: DeployAgent;
   branch: string;
   dispatchPrompt: string;
+  executable: string;
+  /** Durable stdout/stderr/exit evidence for this exact launch. */
+  logFile: string;
   process: WorkerProcess;
   sessionId: string;
   ticket?: string;
@@ -155,7 +163,6 @@ export async function deployWorker(
 ): Promise<DeployResult> {
   const route = request.route ?? ROUTES[request.agent];
   const git = options.git ?? runGit;
-  const spawn = options.spawn ?? spawnWorker;
 
   // 1. The checkout. Parallel agents in one working tree race the index
   //    (§7.3.3), and a deployment with nowhere to work is not a deployment —
@@ -184,6 +191,19 @@ export async function deployWorker(
     request.workspaceRef ?? (tab?.status === "opened" ? tab.workspace : undefined);
   const surfaceRef =
     request.surfaceRef ?? (tab?.status === "opened" ? tab.surface : undefined);
+  const inputSurfaceRef =
+    request.inputSurfaceRef ??
+    (tab?.status === "opened" ? tab.inputSurface : request.surfaceRef);
+  const spawn =
+    options.spawn ??
+    (workspaceRef !== undefined && surfaceRef !== undefined && inputSurfaceRef !== undefined
+      ? createCmuxWorkerSpawn({
+          ...(options.cmux !== undefined && { cmux: options.cmux }),
+          inputSurface: inputSurfaceRef,
+          surface: surfaceRef,
+          workspace: workspaceRef,
+        })
+      : spawnWorker);
 
   // 2b. THE TRUST DIALOG (#96). Claude Code stops the FIRST session in any
   //     directory it has not seen on "Is this a project you created or one
@@ -201,10 +221,29 @@ export async function deployWorker(
     trust?.status === "failed" ? { trustDegraded: trust.reason } : {};
 
   const env = subscriptionEnv(options.env ?? Bun.env);
+  const executablePath = env["PATH"];
+  const configuredExecutable =
+    route.agent === "codex" ? env["ARGUS_CODEX_EXECUTABLE"] : undefined;
+  const executable =
+    request.executable ??
+    configuredExecutable ??
+    Bun.which(
+      route.executable,
+      executablePath === undefined ? undefined : { PATH: executablePath },
+    ) ??
+    route.executable;
   const ts = (options.now?.() ?? new Date()).toISOString();
+  const logFile = join(
+    request.repo,
+    ".argus",
+    "workers",
+    `${request.ticket ?? "adhoc"}-${crypto.randomUUID()}.log`,
+  );
   const row = (sessionId: string): SessionRow => ({
     agent: route.agent,
     dispatchPrompt: request.dispatchPrompt,
+    executable,
+    logFile,
     sessionId,
     ts,
     worktree: worktree.path,
@@ -220,6 +259,8 @@ export async function deployWorker(
       agent: route.agent,
       branch: worktree.branch,
       dispatchPrompt: request.dispatchPrompt,
+      executable,
+      logFile,
       process,
       sessionId,
       worktree: worktree.path,
@@ -243,7 +284,9 @@ export async function deployWorker(
     }
     // 4. The session.
     try {
-      const process = await spawn(spawnRequest(route, request, worktree.path, env, sessionId));
+      const process = await spawn(
+        spawnRequest(route, request, worktree.path, env, executable, logFile, sessionId),
+      );
       return deployed(sessionId, process);
     } catch (error) {
       return { reason: message(error), stage: "spawn", status: "failed" };
@@ -256,7 +299,9 @@ export async function deployWorker(
   // running: an unattributable worker is worse than no worker.
   let process: WorkerProcess;
   try {
-    process = await spawn(spawnRequest(route, request, worktree.path, env));
+    process = await spawn(
+      spawnRequest(route, request, worktree.path, env, executable, logFile),
+    );
   } catch (error) {
     return { reason: message(error), stage: "spawn", status: "failed" };
   }
@@ -333,6 +378,8 @@ function spawnRequest(
   request: DeployRequest,
   cwd: string,
   env: Record<string, string>,
+  executable: string,
+  logFile: string,
   sessionId?: string,
 ): Parameters<WorkerSpawn>[0] {
   return {
@@ -345,7 +392,8 @@ function spawnRequest(
     }),
     cwd,
     env,
-    executable: request.executable ?? route.executable,
+    executable,
+    logFile,
     ...(route.announce !== undefined && { announce: route.announce }),
   };
 }

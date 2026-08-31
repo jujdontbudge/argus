@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { launchLine, shellQuote } from "./launch.ts";
+import type { CmuxRun } from "../events";
+import { createCmuxLaunch, launchLine, shellQuote } from "./launch.ts";
 
 /**
  * Ticket #62 — the grill session is LAUNCHED BY TYPING into a fresh cmux
@@ -59,24 +63,25 @@ describe("launchLine (#62): subscription mode survives Johan's own shell", () =>
     // `subscriptionEnv`, which BUILDS the child environment; a grill is typed
     // into Johan's own shell and inherits his environment instead, so the
     // unsetting has to happen at the command or it does not happen at all.
-    const line = launchLine("claude", ["claude", "--session-id", "abc", "hello"]);
+    const line = launchLine("/usr/bin/printenv", ["/usr/bin/printenv"]);
     expect(line.split("\n")).toHaveLength(1);
-    for (const name of ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"]) {
-      expect(line).toContain(name);
-    }
-
-    // Asserted through a real shell, because "the line mentions the variable"
-    // and "the variable is gone from the child" are different claims.
-    const child = Bun.spawn(
-      ["/bin/zsh", "-c", line.replace(/\$'claude'/, "$'printenv'")],
-      {
-        env: { ...Bun.env, ANTHROPIC_API_KEY: "sk-should-not-survive" },
-        stderr: "pipe",
-        stdout: "pipe",
+    // Asserted through a real shell rather than through plaintext command
+    // representation: cmux-safe transport intentionally encodes every dynamic
+    // value, while the behavior we need is that none reaches the child.
+    const child = Bun.spawn(["/bin/zsh", "-c", line], {
+      env: {
+        ...Bun.env,
+        ANTHROPIC_API_KEY: "argus-test-api-key",
+        ANTHROPIC_AUTH_TOKEN: "argus-test-auth-token",
+        CLAUDE_CODE_OAUTH_TOKEN: "argus-test-oauth-token",
       },
-    );
+      stderr: "pipe",
+      stdout: "pipe",
+    });
     const [, out] = await Promise.all([child.exited, new Response(child.stdout).text()]);
-    expect(out).not.toContain("sk-should-not-survive");
+    expect(out).not.toContain("argus-test-api-key");
+    expect(out).not.toContain("argus-test-auth-token");
+    expect(out).not.toContain("argus-test-oauth-token");
   });
 
   /**
@@ -87,7 +92,7 @@ describe("launchLine (#62): subscription mode survives Johan's own shell", () =>
    * answer the whole time and this route dropped it.
    */
   test("the deployment's cwd reaches the shell, through a real shell", async () => {
-    const line = launchLine("claude", ["claude", "hello"], "/tmp");
+    const line = launchLine("/bin/pwd", ["/bin/pwd"], "/tmp");
 
     expect(line.split("\n")).toHaveLength(1);
     expect(line.startsWith("cd ")).toBe(true);
@@ -95,12 +100,11 @@ describe("launchLine (#62): subscription mode survives Johan's own shell", () =>
     // `pwd` through zsh, because "the line contains the path" and "the command
     // runs there" are different claims — the same distinction the credential
     // assertion above draws.
-    const child = Bun.spawn(
-      // A function replacement: in a string one, `$'` is the "text after the
-      // match" pattern and would silently rebuild the line.
-      ["/bin/zsh", "-c", line.replace(/\$'claude'.*/, () => "$'pwd'")],
-      { env: { ...Bun.env }, stderr: "pipe", stdout: "pipe" },
-    );
+    const child = Bun.spawn(["/bin/zsh", "-c", line], {
+      env: { ...Bun.env },
+      stderr: "pipe",
+      stdout: "pipe",
+    });
     const [, out] = await Promise.all([child.exited, new Response(child.stdout).text()]);
     // The logical path: `cd` exports PWD and `pwd` reports it, which is
     // exactly what the session inherits.
@@ -109,11 +113,12 @@ describe("launchLine (#62): subscription mode survives Johan's own shell", () =>
 
   /** `&&`, so a failed `cd` cannot fall through into the wrong directory. */
   test("a cd that fails does not start the session anyway", async () => {
-    const line = launchLine("claude", ["claude", "hello"], "/no/such/directory");
-    const child = Bun.spawn(
-      ["/bin/zsh", "-c", line.replace(/\$'claude'.*/, () => "$'pwd'")],
-      { env: { ...Bun.env }, stderr: "pipe", stdout: "pipe" },
-    );
+    const line = launchLine("/bin/pwd", ["/bin/pwd"], "/no/such/directory");
+    const child = Bun.spawn(["/bin/zsh", "-c", line], {
+      env: { ...Bun.env },
+      stderr: "pipe",
+      stdout: "pipe",
+    });
     const [code, out] = await Promise.all([
       child.exited,
       new Response(child.stdout).text(),
@@ -125,5 +130,68 @@ describe("launchLine (#62): subscription mode survives Johan's own shell", () =>
   /** Callers that never had a cwd keep the exact line they had. */
   test("no cwd is still a bare command", () => {
     expect(launchLine("claude", ["claude", "hello"]).startsWith("cd ")).toBe(false);
+  });
+});
+
+describe("createCmuxLaunch (#122): bounded terminal transport", () => {
+  test("delivers a long multiline argv value without crossing cmux's input boundary", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "argus-grill-launch-"));
+    const output = join(dir, "received.txt");
+    const prompt = Array.from(
+      { length: 300 },
+      (_, index) => `decision ${index}: preserve quotes ' \" and \\ backslashes`,
+    ).join("\n");
+    let typed = "";
+    try {
+      const cmux: CmuxRun = async (args) => {
+        if (args[0] === "list-workspaces") {
+          return { exitCode: 0, stderr: "", stdout: "workspace:8\n" };
+        }
+        if (args[0] === "list-pane-surfaces") {
+          return { exitCode: 0, stderr: "", stdout: "surface:92\n" };
+        }
+        if (args[0] === "send") {
+          typed = (args.at(-1) ?? "").slice(0, 1_000);
+          return { exitCode: 0, stderr: "", stdout: "" };
+        }
+        if (args[0] === "send-key") {
+          const child = Bun.spawn(["/bin/zsh", "-c", typed], {
+            stderr: "pipe",
+            stdout: "pipe",
+          });
+          const [code, stderr] = await Promise.all([
+            child.exited,
+            new Response(child.stderr).text(),
+          ]);
+          return { exitCode: code, stderr, stdout: "" };
+        }
+        throw new Error(`unexpected cmux call: ${args.join(" ")}`);
+      };
+      const spawn = createCmuxLaunch({
+        cmux,
+        inputSurface: "surface:92",
+        surface: "706E40BA-AA9D-4F3A-BF98-3C04FB9011D6",
+        workspace: "workspace:8",
+      });
+
+      await spawn({
+        agent: "claude",
+        command: [
+          "/bin/sh",
+          "-c",
+          `printf %s "$1" > ${JSON.stringify(output)}`,
+          "argus-grill-test",
+          prompt,
+        ],
+        cwd: dir,
+        env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+        executable: "/bin/sh",
+      });
+
+      expect(typed.length).toBeLessThan(1_000);
+      expect(await readFile(output, "utf8")).toBe(prompt);
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
   });
 });

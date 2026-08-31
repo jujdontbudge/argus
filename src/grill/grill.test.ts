@@ -76,13 +76,15 @@ function cmuxStub(
     notify?: CmuxRunResult;
     onSend?: () => Promise<void> | void;
   } = {},
-): { calls: string[][]; run: CmuxRun } {
+): { calls: string[][]; launches: string[]; run: CmuxRun } {
   const sets = overrides.surfaceSets ?? [
     [DISPATCHER],
     [DISPATCHER, GRILL],
     [DISPATCHER, GRILL],
   ];
   const calls: string[][] = [];
+  const launches: string[] = [];
+  let sent = "";
   let read = 0;
   const current = (): string[] => {
     const set = sets[Math.min(read, sets.length - 1)] ?? [];
@@ -125,18 +127,31 @@ function cmuxStub(
         return ok("");
       case "rename-tab":
         return ok("");
-      case "send":
+      case "send": {
         await overrides.onSend?.();
+        sent = args.at(-1) ?? "";
+        const encodedPath = sent.match(/printf %s '([^']+)' \| \/usr\/bin\/base64 -D/)?.[1];
+        if (encodedPath !== undefined) {
+          const launchFile = Buffer.from(encodedPath, "base64").toString("utf8");
+          launches.push(await Bun.file(launchFile).text());
+        }
         return ok("");
-      case "send-key":
+      }
+      case "send-key": {
+        const child = Bun.spawn(["/bin/zsh", "-c", sent], {
+          stderr: "ignore",
+          stdout: "ignore",
+        });
+        child.unref();
         return ok("");
+      }
       case "notify":
         return overrides.notify ?? ok("");
       default:
         throw new Error(`unscripted cmux ${args.join(" ")}`);
     }
   };
-  return { calls, run };
+  return { calls, launches, run };
 }
 
 /** A git that answers the one question a repo-checkout grill asks. */
@@ -163,6 +178,12 @@ const landing = (text: string, ts: string): MessageEvent => ({
   ts,
   type: "message",
 });
+
+/** Decode dynamic words from the one-line cmux transport for argv assertions. */
+const decodedTransportValues = (line: string): string[] =>
+  [...line.matchAll(/printf %s '([^']*)' \| \/usr\/bin\/base64 -D/g)].map((match) =>
+    Buffer.from(match[1] ?? "", "base64").toString("utf8"),
+  );
 
 describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () => {
   test("the deployment row is durable before the launch line is typed", async () => {
@@ -217,8 +238,9 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
       expect(git.args.some((a) => a[0] === "worktree")).toBe(false);
 
       const typed = cmux.calls.find((a) => a[0] === "send")?.at(-1) ?? "";
-      expect(typed).toContain("--session-id");
-      expect(typed).toContain(SESSION);
+      const transported = decodedTransportValues(cmux.launches[0] ?? "");
+      expect(transported).toContain("--session-id");
+      expect(transported).toContain(SESSION);
       expect(typed.split("\n")).toHaveLength(1);
     } finally {
       await rm(repo, { force: true, recursive: true });
@@ -233,6 +255,7 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
         { repo, topic: TOPIC },
         {
           cmux: cmux.run,
+          env: GRILL_ENV,
           git: gitStub().run,
           manifestFile: MACHINE.manifest,
           newSessionId: () => SESSION,
@@ -512,7 +535,7 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
       // And it reaches the terminal in that shape: the registry's copy and the
       // typed copy are the same string, so the §5 dispatch match still holds.
       const typed = cmux.calls.find((a) => a[0] === "send")?.at(-1) ?? "";
-      expect(typed).toContain("/pocock-plus:to-spec");
+      expect(decodedTransportValues(cmux.launches[0] ?? "")).toContain(result.prompt);
       expect(typed.split("\n")).toHaveLength(1);
     } finally {
       await rm(repo, { force: true, recursive: true });
