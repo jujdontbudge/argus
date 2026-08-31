@@ -106,6 +106,25 @@ describe("needs-Johan escalation routing", () => {
     expect(digest?.body.match(/\[needs-johan\]/g)).toHaveLength(1);
   });
 
+  test("does not retry the push after a recorded local delivery failure", async () => {
+    const repo = await repoFixture();
+    let attempts = 0;
+    const notify = async (_request: MacNotificationRequest): Promise<void> => {
+      attempts += 1;
+      throw new Error("osascript unavailable");
+    };
+
+    const first = await escalateNeedsJohan(repo, trigger("r2-bailout"), { notify });
+    const repeated = await escalateNeedsJohan(repo, trigger("r2-bailout"), { notify });
+
+    expect(first.status).toBe("degraded");
+    expect(repeated.status).toBe("duplicate");
+    expect(attempts).toBe(1);
+    expect((await lifecycleRows(repo))).toHaveLength(1);
+    const digest = await readDigest(join(repo, ".argus/sessions"), "189-session-189.md");
+    expect(digest?.body.match(/\[needs-johan\]/g)).toHaveLength(1);
+  });
+
   test("dedupes a rotated session against its existing digest-chain root", async () => {
     const repo = await repoFixture();
     await mkdir(join(repo, ".argus/registry"), { recursive: true });
