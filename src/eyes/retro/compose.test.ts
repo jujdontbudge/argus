@@ -102,6 +102,16 @@ describe("composing the retro ticket (SPEC §5.5: prompts + the diff)", () => {
     expect(body).toContain("retro-0123456789abcdef");
   });
 
+  test("#134 carries a known pitfall stamp into the tracker body", () => {
+    const { body } = compose({
+      signal: {
+        ...signal,
+        sessions: [{ ...signal.sessions[0]!, knownPitfallRepeat: "metro-port" }],
+      },
+    });
+    expect(body).toContain("known_pitfall_repeat: metro-port");
+  });
+
   test("ONLY provenance-verified Johan prompts are quoted as Johan's", () => {
     const { body } = compose({
       prompts: [

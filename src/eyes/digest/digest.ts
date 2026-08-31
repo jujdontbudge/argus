@@ -137,6 +137,8 @@ export class DigestEye {
   private readonly loadSessions: () => Promise<SessionRecord[]>;
   private readonly onAlert: (alert: StuckAlert) => void | Promise<void>;
   private evaluating = false;
+  /** Session-end asks are reserved for failures; clean ends need no judgment. */
+  private readonly endedBadly = new Set<string>();
   /** A lifecycle event happened: pending narrative is due NOW, not at cadence. */
   private fireNow = false;
 
@@ -255,6 +257,9 @@ export class DigestEye {
         record,
       );
       this.pending.push({ record, ingestedAt: at, root });
+      if (/(?:failed|blocked|reverted)/i.test(record.text)) {
+        this.endedBadly.add(root);
+      }
       this.coalescer.note(at);
       const seen = touched.get(root) ?? { session, isNew };
       seen.isNew = seen.isNew || isNew;
@@ -276,6 +281,9 @@ export class DigestEye {
   /** A §6 lifecycle signal: fires the digest immediately, no brain involved. */
   async ingestLifecycle(event: SessionLifecycleEvent): Promise<void> {
     const { session, isNew } = await this.resolveSession(event.sessionId);
+    if (event.kind === "session-blocked" || event.kind === "session-dead") {
+      this.endedBadly.add(chainRootOf(await this.loadSessions(), event.sessionId));
+    }
     await this.surface(
       session,
       { status: LIFECYCLE_STATUS[event.kind] },
@@ -304,6 +312,17 @@ export class DigestEye {
       (this.fireNow && this.pending.length > 0) ||
       this.coalescer.shouldFire(this.now());
     if (this.evaluating || !due) return false;
+    if (
+      this.fireNow &&
+      this.pending.length > 0 &&
+      !this.pending.some((entry) => this.endedBadly.has(entry.root))
+    ) {
+      this.pending = [];
+      this.coalescer.flush();
+      this.fireNow = false;
+      await this.persist();
+      return false;
+    }
     this.evaluating = true;
     try {
       const batch = this.pending.slice();
