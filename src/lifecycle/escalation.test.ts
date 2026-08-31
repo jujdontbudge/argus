@@ -201,6 +201,27 @@ describe("needs-Johan escalation routing", () => {
     expect(await Bun.file(join(repo, ".argus/sessions/189-session-189.md")).exists()).toBe(false);
   });
 
+  test("fails closed for malformed runtime trigger data", async () => {
+    const repo = await repoFixture();
+    const notifications: MacNotificationRequest[] = [];
+    const malformed = {
+      kind: "nudge-budget-exhausted",
+      sessionId: undefined,
+      ticket: "189",
+      liveState: "stalled-live",
+    } as unknown as EscalationTrigger;
+
+    const result = await escalateNeedsJohan(repo, malformed, {
+      notify: async (request) => {
+        notifications.push(request);
+      },
+    });
+
+    expect(result).toEqual({ status: "ignored", reason: "not-trigger" });
+    expect(notifications).toEqual([]);
+    expect(await Bun.file(join(repo, ".argus/registry/lifecycle.jsonl")).exists()).toBe(false);
+  });
+
   test("does not mutate ticket or surface state", async () => {
     const repo = await repoFixture();
     const ticket = join(repo, ".argus", "ticket.json");

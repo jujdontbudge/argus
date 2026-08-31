@@ -90,7 +90,8 @@ function lifecycleLockPath(repo: string): string {
   return join(repo, ".argus", "registry", LIFECYCLE_LOCK);
 }
 
-function ticketNumber(value: string | number): string | null {
+function ticketNumber(value: unknown): string | null {
+  if (typeof value !== "string" && typeof value !== "number") return null;
   const ticket = String(value).trim();
   return /^\d+$/.test(ticket) ? ticket : null;
 }
@@ -103,7 +104,15 @@ function isCause(value: unknown): value is EscalationCause {
 export function classifyEscalationCause(
   trigger: EscalationTrigger,
 ): EscalationCause | null {
-  if (ticketNumber(trigger.ticket) === null || trigger.sessionId.trim() === "") return null;
+  if (
+    typeof trigger !== "object" ||
+    trigger === null ||
+    ticketNumber((trigger as { ticket?: unknown }).ticket) === null ||
+    typeof (trigger as { sessionId?: unknown }).sessionId !== "string" ||
+    (trigger as { sessionId: string }).sessionId.trim() === ""
+  ) {
+    return null;
+  }
   switch (trigger.kind) {
     case "nudge-budget-exhausted":
       return trigger.liveState === "stalled-live"
