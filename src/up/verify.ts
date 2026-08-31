@@ -10,11 +10,13 @@
 
 import { lstat, readdir, readlink, realpath, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { VERIFIED_HERMES_CLI_VERSION } from "../tailing/hermes-compat.ts";
 
 export interface WiringCheck {
   detail: string;
   name: string;
   ok: boolean;
+  warning?: boolean;
 }
 
 function missing(error: unknown): boolean {
@@ -236,7 +238,51 @@ async function checkHermesSkillsBinding(
 
 export interface WiringOptions {
   /** Set only by `argus up`, which is the half that writes the binding. */
-  hermes?: { profile: string; root: string };
+  hermes?: { profile: string; root: string; cli?: string };
+}
+
+/**
+ * Compare the executable `argus up` will actually run with #126's verified
+ * pin. This is deliberately warning-only: an unknown Hermes is degraded
+ * operation, not a reason to stop the repo's other eyes from starting.
+ */
+async function checkHermesCompatibility(cli = "hermes"): Promise<WiringCheck> {
+  const name = "Hermes compatibility";
+  try {
+    const child = Bun.spawn([cli, "--version"], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [exitCode, stdout] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+    ]);
+    const reported = stdout.split("\n")[0]?.trim();
+    if (exitCode !== 0 || !reported) {
+      return {
+        detail: "WARN: never verified against this install (hermes --version unavailable)",
+        name,
+        ok: true,
+        warning: true,
+      };
+    }
+    if (reported !== VERIFIED_HERMES_CLI_VERSION) {
+      return {
+        detail: `WARN: installed ${reported}; verified against ${VERIFIED_HERMES_CLI_VERSION}`,
+        name,
+        ok: true,
+        warning: true,
+      };
+    }
+    return { detail: `installed version matches ${VERIFIED_HERMES_CLI_VERSION}`, name, ok: true };
+  } catch {
+    return {
+      detail: "WARN: never verified against this install (hermes CLI missing)",
+      name,
+      ok: true,
+      warning: true,
+    };
+  }
 }
 
 export async function verifyWiring(
@@ -251,6 +297,7 @@ export async function verifyWiring(
     checks.push(
       await checkHermesMemoryBinding(repo, options.hermes.root, options.hermes.profile),
       await checkHermesSkillsBinding(repo, options.hermes.root, options.hermes.profile),
+      await checkHermesCompatibility(options.hermes.cli),
     );
   }
   return checks;
@@ -260,8 +307,12 @@ export async function verifyWiring(
 export function printWiring(checks: WiringCheck[]): boolean {
   let ok = true;
   for (const check of checks) {
-    if (check.ok) {
+    if (check.ok && !check.warning) {
       console.log(`wiring: ${check.name} OK (${check.detail})`);
+      continue;
+    }
+    if (check.warning) {
+      console.error(`HERMES DEGRADED: ${check.name} — ${check.detail}`);
       continue;
     }
     ok = false;
