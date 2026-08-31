@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { createFakeGh, type FakeGh } from "../eyes/retro/fake-gh";
 import { registryPaths } from "../provenance";
 import type { WorkerProcess, WorkerSpawnRequest } from "../deploy";
-import { dispatchFrontier, type DispatchOptions } from "./dispatch.ts";
+import { defaultDispatchPrompt, dispatchFrontier, type DispatchOptions } from "./dispatch.ts";
 
 /**
  * Ticket #56 — the dispatcher, tested THROUGH THE DOOR PRODUCTION USES.
@@ -771,5 +771,45 @@ describe("dispatchFrontier (#88): SPEC §2's routing table, per ticket", () => {
     } finally {
       await cleanup(repo);
     }
+  }, GIT_BUDGET_MS);
+});
+
+describe("dispatch prompt retrieval audit copies (#132, #133)", () => {
+  test("stores matched memory and Codex skill in the registry prompt", async () => {
+    const repo = await scratchRepo();
+    try {
+      await mkdir(join(repo, ".argus/memory"), { recursive: true });
+      await mkdir(join(repo, ".argus/skills/deploy"), { recursive: true });
+      await writeFile(join(repo, ".argus/memory/MEMORY.md"), "- [Port fact](port.md) — Metro port\n");
+      await writeFile(join(repo, ".argus/memory/port.md"), "Metro uses port 8082.\n");
+      await writeFile(join(repo, ".argus/skills/deploy/SKILL.md"), "---\nname: deploy\ndescription: deploy implementation tickets\n---\nDeploy body verbatim.\n");
+      const gh = createFakeGh({ login: LOGIN, repo: REPO });
+      gh.seed({ number: 132, title: "Metro port dispatch", body: "implementation" });
+      gh.seed({ number: 133, title: "Deploy implementation", body: "skill match", labels: ["ready-for-agent"] });
+      const { spawn, witness } = witnessSpawn(repo, gh);
+      await dispatchFrontier(options(repo, gh, spawn, { maxConcurrency: 2 }));
+      const prompts = (await Bun.file(registryPaths(repo).sessionsFile).text()).split(/\r?\n/).filter(Boolean).map((text) => String(JSON.parse(text).dispatchPrompt));
+      expect(prompts.join("\n")).toContain("RECORDED PROJECT FACTS");
+      expect(prompts.join("\n")).toContain("Metro uses port 8082.\n");
+      expect(prompts.join("\n")).toContain("MATCHED CODEX SKILLS");
+      expect(prompts.join("\n")).toContain("Deploy body verbatim.\n");
+    } finally { await cleanup(repo); }
+  }, GIT_BUDGET_MS);
+
+  test("missing or entry-less memory preserves the default prompt bytes", async () => {
+    const first = await scratchRepo(); const second = await scratchRepo();
+    try {
+      await mkdir(join(second, ".argus/memory"), { recursive: true });
+      await writeFile(join(second, ".argus/memory/MEMORY.md"), "# Memory index\n");
+      const ticket = { number: "1", title: "plain", body: "body", labels: [] };
+      const expected = defaultDispatchPrompt(ticket, REPO);
+      for (const repo of [first, second]) {
+        const gh = createFakeGh({ login: LOGIN, repo: REPO }); gh.seed({ number: 1, title: ticket.title, body: ticket.body });
+        const { spawn, witness } = witnessSpawn(repo, gh);
+        await dispatchFrontier(options(repo, gh, spawn));
+        const stored = await Bun.file(registryPaths(repo).sessionsFile).text();
+        expect(String(JSON.parse(stored.split(/\r?\n/).filter(Boolean).at(-1)!).dispatchPrompt)).toBe(expected);
+      }
+    } finally { await cleanup(first); await cleanup(second); }
   }, GIT_BUDGET_MS);
 });
