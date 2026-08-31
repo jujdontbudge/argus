@@ -50,6 +50,7 @@ import {
   type WorktreeResult,
 } from "./worktree.ts";
 import type { CmuxRun } from "../events";
+import { snapshotMemory } from "../memory/snapshot";
 
 export interface DeployRequest {
   agent: DeployAgent;
@@ -239,6 +240,7 @@ export async function deployWorker(
     "workers",
     `${request.ticket ?? "adhoc"}-${crypto.randomUUID()}.log`,
   );
+  const dispatchMemorySnapshot = await snapshotMemory(join(request.repo, ".argus/memory/MEMORY.md"));
   const row = (sessionId: string): SessionRow => ({
     agent: route.agent,
     dispatchPrompt: request.dispatchPrompt,
@@ -250,6 +252,7 @@ export async function deployWorker(
     ...(request.ticket !== undefined && { ticket: request.ticket }),
     ...(workspaceRef !== undefined && { workspace: workspaceRef }),
     ...(surfaceRef !== undefined && { surface: surfaceRef }),
+    dispatchMemorySnapshot,
   });
   const { sessionsFile } = registryPaths(request.repo);
   const degraded = tab?.status === "degraded" ? { workspaceDegraded: tab.reason } : {};

@@ -21,6 +21,7 @@ export interface SessionRecord {
   /** The previous session id when this deployment is a Hermes compression
    * restart of an earlier session (§5.4: the chain digests as ONE session). */
   continues?: string;
+  dispatchMemorySnapshot?: { entries: string[]; contentHash: string };
 }
 
 /** A registry line that could not be used, surfaced loudly (never a crash). */
@@ -139,8 +140,18 @@ export function parseSessionsJsonl(content: string, file: string): ParsedSession
       ...(typeof row.workspace === "string" && { workspace: row.workspace }),
       ...(typeof row.surface === "string" && { surface: row.surface }),
       ...(typeof row.continues === "string" && { continues: row.continues }),
+      ...(isMemorySnapshot(row.dispatchMemorySnapshot) && {
+        dispatchMemorySnapshot: row.dispatchMemorySnapshot,
+      }),
     };
   });
+}
+
+function isMemorySnapshot(value: unknown): value is { entries: string[]; contentHash: string } {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return Array.isArray(row.entries) && row.entries.every((entry) => typeof entry === "string") &&
+    typeof row.contentHash === "string";
 }
 
 const SEND_KINDS: readonly SendKind[] = ["prompt", "slash", "bang"];

@@ -80,6 +80,7 @@ export interface DigestSeed {
 export interface DigestFrontmatter extends DigestSeed {
   status: DigestStatus;
   johanTouched: boolean;
+  knownPitfallRepeat?: string;
 }
 
 export interface DigestPatch {
@@ -87,6 +88,7 @@ export interface DigestPatch {
   status?: DigestStatus;
   /** Sticky-true. */
   johanTouched?: boolean;
+  knownPitfallRepeat?: string;
   /** Appended to the body under a timestamp heading. */
   narrative?: { ts: string; text: string };
 }
@@ -109,6 +111,7 @@ function renderFrontmatter(frontmatter: DigestFrontmatter): string {
     `status: ${frontmatter.status}`,
     `started_by: ${frontmatter.startedBy}`,
     `johan_touched: ${frontmatter.johanTouched}`,
+    ...(frontmatter.knownPitfallRepeat !== undefined ? [`known_pitfall_repeat: ${frontmatter.knownPitfallRepeat}`] : []),
     "---",
     "",
   ].join("\n");
@@ -138,6 +141,7 @@ function parseDigest(text: string, seed: DigestSeed): ParsedDigest {
   }
   const status = fields.get("status");
   const ticket = fields.get("ticket");
+  const knownPitfallRepeat = fields.get("known_pitfall_repeat");
   return {
     frontmatter: {
       agent: fields.get("agent") ?? seed.agent,
@@ -155,6 +159,7 @@ function parseDigest(text: string, seed: DigestSeed): ParsedDigest {
           ? (status as DigestStatus)
           : "running",
       johanTouched: fields.get("johan_touched") === "true",
+      ...(knownPitfallRepeat !== undefined && knownPitfallRepeat !== "null" && { knownPitfallRepeat }),
     },
     body: text.slice(match[0].length).replace(/^\n/, ""),
   };
@@ -194,6 +199,7 @@ export async function applyDigestUpdate(
         ? "dead"
         : (patch.status ?? existing.frontmatter.status),
     johanTouched: existing.frontmatter.johanTouched || patch.johanTouched === true,
+    ...(patch.knownPitfallRepeat !== undefined && { knownPitfallRepeat: patch.knownPitfallRepeat }),
   };
   const narrative =
     patch.narrative === undefined

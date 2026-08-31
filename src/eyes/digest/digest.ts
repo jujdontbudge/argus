@@ -66,6 +66,7 @@ interface KnownSession {
   fileName: string;
   seed: DigestSeed;
   johanTouched: boolean;
+  dispatchMemoryEntries: string[];
 }
 
 interface PersistedState {
@@ -118,6 +119,9 @@ export function buildDigestPrompt(entries: PendingEntry[]): string {
     "- summary: ONE line describing where the session stands now.",
     '- status: "done" when the work concluded, "blocked" when it waits on a',
     '  human, otherwise "running".',
+    "- knownPitfallRepeat: return exactly one id from the dispatch-time MEMORY",
+    "  list only when the evidence is ended-badly and clearly repeats it;",
+    "  otherwise return null. Ambiguity and post-dispatch facts are null.",
     "",
     ...blocks,
   ].join("\n");
@@ -210,6 +214,8 @@ export class DigestEye {
       fileName: digestFileName(ticket, root),
       seed,
       johanTouched: false,
+      dispatchMemoryEntries:
+        (rootRegistration?.dispatchMemorySnapshot ?? ownRegistration?.dispatchMemorySnapshot)?.entries ?? [],
     };
     this.known.set(root, session);
     return { root, session, isNew: true };
@@ -379,6 +385,9 @@ export class DigestEye {
         session,
         {
           status: entry.status,
+          ...(entry.knownPitfallRepeat !== null && {
+            knownPitfallRepeat: entry.knownPitfallRepeat,
+          }),
           narrative: {
             ts: latestTs.get(root) ?? new Date(this.now()).toISOString(),
             text: entry.narrative,
