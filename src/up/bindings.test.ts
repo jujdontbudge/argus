@@ -720,6 +720,59 @@ skills:
     expect(jobs[0]!.id).toBe("canonical-job");
   });
 
+  test("resumes a paused poll after converging its configuration", async () => {
+    const { repo, root } = await scratchRepo("Paused Poll");
+    const canonicalRepo = await realpath(repo);
+    const hermesRoot = join(root, "hermes");
+    const jobs = [
+      {
+        enabled: false,
+        id: "paused-job",
+        name: "argus-signal-poll",
+        schedule_display: "every 1h",
+        script: "old-poll.sh",
+        workdir: "/old/repo",
+      },
+    ];
+    await mkdir(join(hermesRoot, "cron"), { recursive: true });
+    await Bun.write(
+      join(hermesRoot, "cron", "jobs.json"),
+      `${JSON.stringify({ jobs })}\n`,
+    );
+
+    const calls: (readonly string[])[] = [];
+    const cron: HermesCronRun = async (args, env) => {
+      calls.push(args);
+      if (args[1] === "edit") {
+        jobs[0]!.schedule_display = "every 5m";
+        jobs[0]!.script = "argus-signal-poll.sh";
+        jobs[0]!.workdir = canonicalRepo;
+      } else if (args[1] === "resume") {
+        jobs[0]!.enabled = true;
+      }
+      await Bun.write(
+        join(env.HERMES_HOME!, "cron", "jobs.json"),
+        `${JSON.stringify({ jobs })}\n`,
+      );
+      return { exitCode: 0, stderr: "", stdout: "ok\n" };
+    };
+
+    const report = await convergeAgentBindings({
+      argusCli: "/opt/argus/src/cli.ts",
+      bunExecutable: "/opt/bun/bin/bun",
+      hermesCron: cron,
+      hermesRoot,
+      honcho: new FakeHoncho(),
+      honchoUrl: "http://honcho.test:8000",
+      repo,
+    });
+
+    expect(report.cron).toBe("updated");
+    expect(calls[0]?.[1]).toBe("edit");
+    expect(calls[1]).toEqual(["cron", "resume", "paused-job"]);
+    expect(jobs[0]!.enabled).toBe(true);
+  });
+
   test("fills only missing settings in an existing profile and repairs its memories directory", async () => {
     const { repo, root } = await scratchRepo("Existing Profile");
     const hermesRoot = join(root, "hermes");

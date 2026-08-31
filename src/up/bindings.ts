@@ -860,6 +860,21 @@ async function removeHermesCronJob(
   }
 }
 
+async function resumeHermesCronJob(
+  home: string,
+  id: string,
+  run: HermesCronRun,
+): Promise<string | null> {
+  try {
+    const result = await run(["cron", "resume", id], { HERMES_HOME: home });
+    return result.exitCode === 0
+      ? null
+      : result.stderr.trim() || `hermes cron resume exited ${result.exitCode}`;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
 async function ensureHermesSignalCron(
   cronHome: string,
   repo: string,
@@ -956,6 +971,19 @@ async function ensureHermesSignalCron(
       };
     }
     const staleJobs = updating ? duplicateJobs : [];
+    if (updating && updateTarget?.enabled === false) {
+      const error = await resumeHermesCronJob(
+        cronHome,
+        updateTarget.id as string,
+        run,
+      );
+      if (error !== null) {
+        return {
+          error,
+          status: "unavailable",
+        };
+      }
+    }
     for (const stale of staleJobs) {
       const error = await removeHermesCronJob(
         cronHome,
