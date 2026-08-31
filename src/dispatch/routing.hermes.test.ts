@@ -5,9 +5,10 @@ import { defaultDispatchPrompt } from "./dispatch.ts";
 import { DEFAULT_AGENT, routeAgent } from "./routing.ts";
 
 const R2_BAIL_OUT =
-  "the moment Hermes or Codex detects an unfiled consequential choice inside its " +
-  "ticket, it stops, records the question on the ticket, the ticket is " +
-  "relabeled/pinned to Fable, and the event queues to the digest per D9.";
+  "R2 (mandatory bail-out): the moment Hermes or Codex detects an unfiled " +
+  "consequential choice inside its ticket, it stops, records the question on " +
+  "the ticket, the ticket is relabeled/pinned to Fable, and the event queues " +
+  "to the digest per D9.";
 
 const ticket: FrontierTicket = {
   body: "Run the filed non-coding operation.",
