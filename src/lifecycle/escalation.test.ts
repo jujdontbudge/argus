@@ -106,6 +106,29 @@ describe("needs-Johan escalation routing", () => {
     expect(digest?.body.match(/\[needs-johan\]/g)).toHaveLength(1);
   });
 
+  test("dedupes concurrent repeated sweeps to one durable marker and push", async () => {
+    const repo = await repoFixture();
+    const notifications: MacNotificationRequest[] = [];
+    const options = {
+      notify: async (request: MacNotificationRequest) => {
+        notifications.push(request);
+      },
+    };
+
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        escalateNeedsJohan(repo, trigger("r2-bailout"), options),
+      ),
+    );
+
+    expect(results.filter((result) => result.status === "escalated")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "duplicate")).toHaveLength(7);
+    expect(notifications).toHaveLength(1);
+    expect((await lifecycleRows(repo))).toHaveLength(1);
+    const digest = await readDigest(join(repo, ".argus/sessions"), "189-session-189.md");
+    expect(digest?.body.match(/\[needs-johan\]/g)).toHaveLength(1);
+  });
+
   test("does not retry the push after a recorded local delivery failure", async () => {
     const repo = await repoFixture();
     let attempts = 0;
