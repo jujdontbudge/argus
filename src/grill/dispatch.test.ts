@@ -40,7 +40,7 @@ async function promptFor(
 ): Promise<string> {
   const dispatch = await resolveGrillDispatch(machine.repo, mode, machine.manifest);
   if (dispatch.status !== "ready") throw new Error(dispatch.reason);
-  return grillPrompt({ invocation: dispatch.invocation, topic: TOPIC });
+  return grillPrompt({ invocation: dispatch.invocation, ticket: "97", topic: TOPIC });
 }
 
 describe("resolveGrillDispatch (#97): the form, not the existence", () => {

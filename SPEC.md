@@ -30,8 +30,9 @@ in this repo.
    one canonical file/store per repo. Agent-specific integration is done with adapters
    (symlinks, pointer files), never with agent-specific copies. claude-mem is retired
    (§8.3).
-3. **Every implemented thing is a ticket.** Planning is exempt. If work lands without a
-   ticket, a retro ticket is created automatically after the fact (§7.5).
+3. **Every implemented thing is a ticket.** Planning is exempt from implementation-scope
+   enforcement only. If work lands without a ticket, a retro ticket is created
+   automatically after the fact (§7.5).
 4. **Fork with a tether, never edit the cache.** The Matt Pocock skill chain
    (grilling → to-spec → to-tickets → implement, wayfinder for multi-session maps)
    runs from **pocock-plus** — Johan's fork (`~/pocock-plus`, installed globally as
@@ -478,7 +479,9 @@ without a ticket triggers the Retro watcher.
 ### 7.5 Every implemented thing is a ticket
 
 Enforced by construction for dispatched work (a session exists because a ticket does)
-and by the Retro watcher for everything else. Planning/grilling sessions are exempt.
+and by the Retro watcher for everything else. Planning/grilling sessions are exempt
+from implementation-scope enforcement only; they are still registered to an owning
+ticket and covered by ticketing and lifecycle monitoring.
 
 ---
 

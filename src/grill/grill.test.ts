@@ -191,7 +191,7 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
     try {
       const defaultCmux = cmuxStub();
       const defaults = await startGrill(
-        { repo: defaultRepo, topic: TOPIC },
+        { repo: defaultRepo, ticket: "62", topic: TOPIC },
         {
           cmux: defaultCmux.run,
           env: GRILL_ENV,
@@ -217,7 +217,7 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
       );
       const configuredCmux = cmuxStub();
       const configured = await startGrill(
-        { repo, topic: TOPIC },
+        { repo, ticket: "62", topic: TOPIC },
         {
           cmux: configuredCmux.run,
           env: GRILL_ENV,
@@ -235,7 +235,7 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
       try {
         const overrideCmux = cmuxStub();
         const overridden = await startGrill(
-          { model: "claude-fable-5", repo: overrideRepo, topic: TOPIC },
+          { model: "claude-fable-5", repo: overrideRepo, ticket: "62", topic: TOPIC },
           {
             cmux: overrideCmux.run,
             env: GRILL_ENV,
@@ -268,7 +268,7 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
       });
       const git = gitStub();
       const result = await startGrill(
-        { repo, topic: TOPIC },
+        { repo, ticket: "62", topic: TOPIC },
         {
           cmux: cmux.run,
           env: GRILL_ENV,
@@ -297,10 +297,9 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
       expect(row.surface).toBe(GRILL);
       expect(row.dispatchPrompt).toBe(result.prompt);
       expect(row.agent).toBe("claude");
-      // §7.5: planning and grilling sessions are exempt from "every
-      // implemented thing is a ticket". A grill row that carried a ticket
-      // would make the Retro eye judge it against a scope it never had.
-      expect(row.ticket).toBeUndefined();
+      // §7.5: planning and grilling sessions are exempt from implementation-
+      // scope enforcement, but remain registered to their owning ticket.
+      expect(row.ticket).toBe("62");
 
       // §7.2 (as amended by #95) says a tab "in R" — the repo itself. A grill produces
       // a spec and tickets, and on a worktree branch nobody merges that output
@@ -322,7 +321,7 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
     try {
       const cmux = cmuxStub();
       const result = await startGrill(
-        { repo, topic: TOPIC },
+        { repo, ticket: "62", topic: TOPIC },
         {
           cmux: cmux.run,
           env: GRILL_ENV,
@@ -366,7 +365,7 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
     try {
       const cmux = cmuxStub();
       const started = await startGrill(
-        { repo, topic: TOPIC },
+        { repo, ticket: "62", topic: TOPIC },
         { cmux: cmux.run, env: GRILL_ENV, git: gitStub().run, manifestFile: MACHINE.manifest,
           newSessionId: () => SESSION },
       );
@@ -399,7 +398,7 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
     try {
       const cmux = cmuxStub();
       await startGrill(
-        { repo, topic: TOPIC },
+        { repo, ticket: "62", topic: TOPIC },
         { cmux: cmux.run, env: GRILL_ENV, git: gitStub().run, manifestFile: MACHINE.manifest,
           newSessionId: () => SESSION },
       );
@@ -425,7 +424,7 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
       // looking at (#7), and it is a shell command, so it would RUN there.
       const cmux = cmuxStub({ surfaceSets: [[DISPATCHER], [DISPATCHER]] });
       const result = await startGrill(
-        { repo, topic: TOPIC },
+        { repo, ticket: "62", topic: TOPIC },
         { cmux: cmux.run, env: GRILL_ENV, git: gitStub().run, manifestFile: MACHINE.manifest,
           newSessionId: () => SESSION },
       );
@@ -445,7 +444,7 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
         surfaceSets: [[DISPATCHER], [DISPATCHER, GRILL], [DISPATCHER]],
       });
       const result = await startGrill(
-        { repo, topic: TOPIC },
+        { repo, ticket: "62", topic: TOPIC },
         { cmux: cmux.run, env: GRILL_ENV, git: gitStub().run, manifestFile: MACHINE.manifest,
           newSessionId: () => SESSION },
       );
@@ -476,7 +475,7 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
         return cmux.run(args);
       };
       const result = await startGrill(
-        { repo, topic: TOPIC },
+        { repo, ticket: "62", topic: TOPIC },
         { cmux: guarded, env: GRILL_ENV, git: gitStub().run, manifestFile: MACHINE.manifest,
           newSessionId: () => SESSION },
       );
@@ -492,7 +491,7 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
     try {
       const cmux = cmuxStub({ notify: fail("notification centre is not available") });
       const result = await startGrill(
-        { repo, topic: TOPIC },
+        { repo, ticket: "62", topic: TOPIC },
         { cmux: cmux.run, env: GRILL_ENV, git: gitStub().run, manifestFile: MACHINE.manifest,
           newSessionId: () => SESSION },
       );
@@ -514,7 +513,7 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
     const repo = await sandboxRepo();
     try {
       const result = await startGrill(
-        { repo, topic: TOPIC },
+        { repo, ticket: "62", topic: TOPIC },
         { cmux: cmuxStub().run, env: GRILL_ENV, git: gitStub().run, manifestFile: MACHINE.manifest,
           newSessionId: () => SESSION },
       );
@@ -551,7 +550,7 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
     try {
       const cmux = cmuxStub();
       const result = await startGrill(
-        { mode: "spec", repo, topic: TOPIC },
+        { mode: "spec", repo, ticket: "62", topic: TOPIC },
         {
           cmux: cmux.run,
           env: GRILL_ENV,
@@ -588,7 +587,7 @@ describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () =>
     try {
       const cmux = cmuxStub();
       const result = await startGrill(
-        { mode: "spec", repo, topic: TOPIC },
+        { mode: "spec", repo, ticket: "62", topic: TOPIC },
         {
           cmux: cmux.run,
           env: GRILL_ENV,

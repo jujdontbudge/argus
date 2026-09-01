@@ -83,9 +83,9 @@ export interface DeployRequest {
   /** The repo the registry belongs to — never the worktree. */
   repo: string;
   /**
-   * Optional, because §7.5 exempts planning and grilling sessions from "every
-   * implemented thing is a ticket". Required in `"worktree"` mode, where the
-   * branch and the worktree path are named after it.
+   * Optional in `"repo"` mode, which is used by interactive planning sessions;
+   * required in `"worktree"` mode, where the branch and worktree path are named
+   * after it. The grill caller supplies its owning ticket in either case.
    */
   ticket?: string;
   worktree?: string;
@@ -359,7 +359,7 @@ async function resolveCheckout(
     return {
       reason:
         "a worktree deployment needs a ticket: the branch and the worktree path " +
-        'are named after it (pass checkout: "repo" for a ticketless planning session)',
+        'are named after it (pass checkout: "repo" for an interactive planning session)',
       status: "failed",
     };
   }

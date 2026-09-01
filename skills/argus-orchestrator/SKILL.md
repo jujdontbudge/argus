@@ -158,7 +158,8 @@ makes uncovered implementation safe as specified in §5 and §7.5.
 ## Open a grill session when Johan asks to be grilled
 
 "Grill X for repo R" is SPEC §7.2, and it is a command, not a procedure to
-improvise: run `argus grill "<X>"` from repo R. Do not create the workspace,
+improvise: run `argus grill "<X>" --ticket <n>` from repo R, where `<n>` is the
+owning GitHub ticket. Do not create the workspace,
 write the session row, or type the `claude` line yourself — the command does
 all three in the order §5 rule 1 requires, and doing it by hand is how an
 unregistered prompt lands and classifies as Johan.
@@ -172,8 +173,9 @@ unregistered prompt lands and classifies as Johan.
 - The command prints the cmux workspace ref and sends Johan a `cmux notify`.
   Tell him the ref as well: the notification is best-effort and a failed one
   degrades rather than stopping the session.
-- A grill session has NO ticket, on purpose (§7.5 exempts planning). Do not
-  invent one for it, and do not put it on the dispatch frontier.
+- A grill session names its owning ticket. §7.5 exempts the session from
+  implementation-scope enforcement only; registration, ticketing, and lifecycle
+  monitoring still apply. Do not put it on the dispatch frontier.
 - It runs in repo R's own checkout, not a worktree, so its spec and tickets are
   not stranded on a branch nobody merges.
 - Follow-ups into a live grill go through the same logged send protocol as any
