@@ -140,7 +140,7 @@ export const spawnWorker: WorkerSpawn = async (request) => {
     const [exitCode, stdout, stderr] = await Promise.all([
       child.exited,
       collect(child.stdout as ReadableStream<Uint8Array>, true),
-      collect(child.stderr as ReadableStream<Uint8Array>, false),
+      collect(child.stderr as ReadableStream<Uint8Array>, announce !== undefined),
     ]);
     // A process that ended without announcing never will: unblock the waiter
     // with the honest answer rather than hanging the dispatcher forever.

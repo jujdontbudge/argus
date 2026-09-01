@@ -33,7 +33,7 @@
  *   transcript nothing reads until an eye tails it. A route that never
  *   announces is a failure, never a guess: see `deployWorker`.
  */
-export type DeployAgent = "claude" | "codex";
+export type DeployAgent = "claude" | "codex" | "hermes";
 
 export type SessionIdMode =
   /** Argus names the session; the row is durable before the process starts. */
@@ -94,6 +94,7 @@ export const CLAUDE_ROUTE: AgentRoute = {
 };
 
 const THREAD_STARTED = /"type"\s*:\s*"thread\.started"/;
+const HERMES_SESSION_ID = /^\s*session_id:\s*(\S+)\s*$/;
 
 /**
  * #104 finding 1: the sandbox posture a deployed Codex worker gets, SET BY
@@ -210,7 +211,25 @@ export const CODEX_ROUTE: AgentRoute = {
   sessionIdMode: "announced",
 };
 
+export const HERMES_ROUTE: AgentRoute = {
+  agent: "hermes",
+  announce: (line) => HERMES_SESSION_ID.exec(line)?.[1] ?? null,
+  command: ({ dispatchPrompt, extraArgs = [], model }) => [
+    "hermes",
+    "chat",
+    "-Q",
+    "-m",
+    model ?? "gpt-5.6-sol",
+    ...extraArgs,
+    "-q",
+    dispatchPrompt,
+  ],
+  executable: "hermes",
+  sessionIdMode: "announced",
+};
+
 export const ROUTES: Readonly<Record<DeployAgent, AgentRoute>> = {
   claude: CLAUDE_ROUTE,
   codex: CODEX_ROUTE,
+  hermes: HERMES_ROUTE,
 };

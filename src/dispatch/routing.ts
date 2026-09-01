@@ -4,8 +4,10 @@
  *
  * > Routing is by ticket label. Hermes reads the label and picks the worker:
  * > `grilling`, `spec`, `review`, `diagnosis` → Claude Code; implementation
- * > tickets (default) → Codex; exceptions can be pinned per-ticket with an
- * > explicit `agent:claude-code` / `agent:codex` label.
+ * > tickets (default) → Codex; exact filed non-coding tickets Hermes can
+ * > execute directly can be pinned with `agent:hermes`; other exceptions can
+ * > be pinned per-ticket with an explicit `agent:claude-code` /
+ * > `agent:codex` label.
  *
  * Until this module existed the labels were fetched (`./frontier.ts` asks
  * `gh` for `number,title,body,labels,assignees`) and then thrown away:
@@ -46,6 +48,7 @@ const PINS: Readonly<Record<string, DeployAgent>> = {
   "agent:claude": "claude",
   "agent:claude-code": "claude",
   "agent:codex": "codex",
+  "agent:hermes": "hermes",
 };
 
 /**
@@ -82,8 +85,9 @@ export function routeAgent(labels: readonly string[]): AgentRouting {
     if (pinned === undefined) {
       return {
         reason:
-          `unknown agent pin '${pin}': Argus deploys claude and codex, so this ` +
-          "names no worker; SPEC §2's pins are 'agent:claude-code' and 'agent:codex'",
+          `unknown agent pin '${pin}': Argus deploys claude, codex, and hermes, so ` +
+          "this names no worker; SPEC §2's pins are 'agent:claude-code', " +
+          "'agent:codex', and 'agent:hermes'",
         status: "refused",
       };
     }

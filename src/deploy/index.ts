@@ -26,6 +26,7 @@ export {
   CLAUDE_ROUTE,
   CODEX_ROUTE,
   CODEX_SANDBOX_POSTURE,
+  HERMES_ROUTE,
   ROUTES,
   type AgentRoute,
   type DeployAgent,

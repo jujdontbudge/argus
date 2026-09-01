@@ -97,7 +97,7 @@ in this repo.
 
 | Agent | Runs on | Role |
 | --- | --- | --- |
-| **Hermes** | ChatGPT subscription, `gpt-5.6-sol` via `openai-codex` provider | Orchestrator. Deploys, monitors, routes, nudges. **Never implements.** |
+| **Hermes** | ChatGPT subscription, `gpt-5.6-sol` via `openai-codex` provider | Orchestrator. Deploys, monitors, routes, nudges, and implements exact filed non-coding tickets it can execute directly. Never authors consequential choices. |
 | **Claude Code** | Claude subscription, Fable | Grilling, specs, domain modeling, diagnosis, code review. |
 | **Codex** | ChatGPT subscription, `gpt-5.6-sol`, high reasoning effort | Default implementer for build tickets. |
 
@@ -108,8 +108,9 @@ Routing is by ticket label. Hermes reads the label and picks the worker:
 
 - `grilling`, `spec`, `review`, `diagnosis` → Claude Code
 - implementation tickets (default) → Codex
-- exceptions can be pinned per-ticket with an explicit `agent:claude-code` /
-  `agent:codex` label.
+- exact filed non-coding tickets Hermes can execute directly can be pinned with
+  `agent:hermes`; other exceptions can be pinned per-ticket with an explicit
+  `agent:claude-code` / `agent:codex` label.
 
 All three agents in a given repo read the same `.argus/` stores and are watched by the
 same five watchers. The watchers treat the three transcript sources uniformly:
