@@ -52,6 +52,80 @@ describe("the frontier (open, unblocked, unclaimed)", () => {
     ]);
   });
 
+  test("a ticket labeled blocked-on-human is excluded with that reason", async () => {
+    const gh = createFakeGh({ repo: REPO });
+    gh.seed({
+      labels: ["argus:blocked-on-human"],
+      number: 12,
+      title: "Waiting on Johan",
+    });
+
+    const frontier = await readFrontier({ cwd: "/repo", repo: REPO, run: gh.run });
+
+    expect(frontier.tickets).toEqual([]);
+    expect(frontier.excluded).toContainEqual(
+      expect.objectContaining({ number: "12", reason: "blocked-on-human" }),
+    );
+  });
+
+  test("a newer owner comment auto-unpauses a blocked ticket and removes its label", async () => {
+    let removed = false;
+    const run = async (args: readonly string[], _cwd: string) => {
+      if (args[0] === "issue" && args[1] === "list") {
+        return {
+          exitCode: 0,
+          stderr: "",
+          stdout: JSON.stringify([
+            {
+              assignees: [],
+              body: "Need a decision.",
+              labels: [{ name: "argus:blocked-on-human" }],
+              number: 12,
+              title: "Waiting on Johan",
+            },
+          ]),
+        };
+      }
+      if (args[0] === "api" && args[1]?.includes("/timeline")) {
+        return {
+          exitCode: 0,
+          stderr: "",
+          stdout: JSON.stringify([
+            {
+              actor: { login: "argus-bot" },
+              created_at: "2026-08-31T10:00:00Z",
+              event: "labeled",
+              label: { name: "argus:blocked-on-human" },
+            },
+            {
+              created_at: "2026-08-31T11:00:00Z",
+              event: "commented",
+              user: { login: "JohanSardar" },
+              body: "Please continue with option B.",
+            },
+          ]),
+        };
+      }
+      if (args[0] === "issue" && args[1] === "edit") {
+        removed = args.includes("--remove-label") && args.includes("argus:blocked-on-human");
+        return { exitCode: 0, stderr: "", stdout: "" };
+      }
+      if (args[0] === "api" && args[1]?.includes("/dependencies/blocked_by")) {
+        return { exitCode: 0, stderr: "", stdout: "[]" };
+      }
+      if (args[0] === "api" && args[1]?.includes("/sub_issues")) {
+        return { exitCode: 0, stderr: "", stdout: "[]" };
+      }
+      throw new Error(`unexpected gh call: ${args.join(" ")}`);
+    };
+
+    const frontier = await readFrontier({ cwd: "/repo", repo: REPO, run });
+
+    expect(frontier.tickets.map((ticket) => ticket.number)).toEqual(["12"]);
+    expect(frontier.excluded).toEqual([]);
+    expect(removed).toBe(true);
+  });
+
   test("a ticket blocked by an OPEN dependency is excluded", async () => {
     const gh = createFakeGh({ repo: REPO });
     gh.seed({ number: 11, title: "blocker" });

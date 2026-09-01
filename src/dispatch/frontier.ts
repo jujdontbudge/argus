@@ -13,6 +13,8 @@
  * 3. no OPEN issue blocks it (GitHub issue dependencies, `blocked_by`);
  * 4. it has no OPEN sub-issues — a parent with unfinished children is an epic,
  *    and dispatching one would put an agent on work its children still own.
+ * 5. it is not paused for a human decision — unless the repository owner has
+ *    answered since the pause label was added.
  *
  * THE POSTURE ON WHAT CANNOT BE DETERMINED IS FAIL CLOSED, AND LOUD. If the
  * dependency read fails — rate limit, network, permissions — the ticket is
@@ -41,6 +43,8 @@ export type ExclusionReason =
   | "blocked"
   /** It is a parent whose children are not finished. */
   | "has-open-sub-issues"
+  /** The last worker is waiting for the repository owner to answer. */
+  | "blocked-on-human"
   /** Blocked-ness could NOT be read; fail closed rather than guess. */
   | "unknown-dependencies";
 
@@ -76,6 +80,8 @@ interface ListedIssue {
   labels: string[];
   assignees: string[];
 }
+
+const BLOCKED_ON_HUMAN_LABEL = "argus:blocked-on-human";
 
 const detail = (result: { stderr: string; stdout: string }): string =>
   (result.stderr.trim() || result.stdout.trim()).slice(0, 300);
@@ -130,6 +136,47 @@ export async function readFrontier(
         reason: "claimed",
       });
       continue;
+    }
+
+    if (issue.labels.includes(BLOCKED_ON_HUMAN_LABEL)) {
+      const resumed = await ownerResumed(run, cwd, repo, issue.number);
+      if (typeof resumed === "string") {
+        excluded.push({
+          detail: `blocked-on-human activity could not be read: ${resumed}`,
+          number: issue.number,
+          reason: "blocked-on-human",
+        });
+        continue;
+      }
+      if (!resumed) {
+        excluded.push({
+          detail: `labeled ${BLOCKED_ON_HUMAN_LABEL}; awaiting a newer owner comment or body edit`,
+          number: issue.number,
+          reason: "blocked-on-human",
+        });
+        continue;
+      }
+      const removed = await run(
+        [
+          "issue",
+          "edit",
+          issue.number,
+          "--repo",
+          repo,
+          "--remove-label",
+          BLOCKED_ON_HUMAN_LABEL,
+        ],
+        cwd,
+      );
+      if (removed.exitCode !== 0) {
+        excluded.push({
+          detail: `owner activity resumed it, but the blocked-on-human label could not be removed: ${detail(removed)}`,
+          number: issue.number,
+          reason: "blocked-on-human",
+        });
+        continue;
+      }
+      issue.labels = issue.labels.filter((label) => label !== BLOCKED_ON_HUMAN_LABEL);
     }
 
     const blockers = await openRelated(
@@ -187,6 +234,100 @@ export async function readFrontier(
   }
 
   return { degraded, excluded, tickets };
+}
+
+/**
+ * A blocked ticket is resumed only by activity that can reasonably be an
+ * answer from the owner. Timeline events are used instead of issue.updated_at:
+ * the latter also changes for Argus's own label and comments by other users.
+ */
+async function ownerResumed(
+  run: GhRunner,
+  cwd: string,
+  repo: string,
+  ticket: string,
+): Promise<boolean | string> {
+  const result = await run(
+    [
+      "api",
+      `repos/${repo}/issues/${ticket}/timeline`,
+      "--paginate",
+      "--slurp",
+    ],
+    cwd,
+  );
+  if (result.exitCode !== 0) return detail(result);
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch (error) {
+    return `not valid JSON: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  const events = timelineEvents(parsed);
+  if (events === null) return "not a JSON array of timeline events";
+
+  const owner = repo.split("/", 1)[0];
+  if (owner === undefined || owner === "") return "tracker repository has no owner";
+  const labelEvent = events
+    .filter(
+      (event) =>
+        event.event === "labeled" &&
+        event.labelName === BLOCKED_ON_HUMAN_LABEL &&
+        event.createdAt !== null,
+    )
+    .at(-1);
+  if (labelEvent === undefined || labelEvent.createdAt === null) {
+    return `no ${BLOCKED_ON_HUMAN_LABEL} label event found`;
+  }
+  const labelTime = labelEvent.createdAt;
+
+  return events.some((event) => {
+    if (event.createdAt === null || event.createdAt <= labelTime) return false;
+    if (event.event === "commented") {
+      return event.userLogin?.toLowerCase() === owner.toLowerCase();
+    }
+    return event.event === "edited" && event.bodyWasEdited;
+  });
+}
+
+interface TimelineEvent {
+  event: string;
+  createdAt: string | null;
+  labelName: string | null;
+  userLogin: string | null;
+  bodyWasEdited: boolean;
+}
+
+function timelineEvents(value: unknown): TimelineEvent[] | null {
+  const pages = Array.isArray(value) && value.every(Array.isArray) ? value.flat() : value;
+  if (!Array.isArray(pages)) return null;
+  return pages.flatMap((entry): TimelineEvent[] => {
+    if (typeof entry !== "object" || entry === null) return [];
+    const row = entry as Record<string, unknown>;
+    const event = typeof row.event === "string" ? row.event : "";
+    const createdAt =
+      typeof row.created_at === "string" && !Number.isNaN(Date.parse(row.created_at))
+        ? row.created_at
+        : null;
+    const label = row.label;
+    const labelName =
+      typeof label === "object" && label !== null &&
+      typeof (label as Record<string, unknown>).name === "string"
+        ? (label as { name: string }).name
+        : null;
+    const user = row.user;
+    const userLogin =
+      typeof user === "object" && user !== null &&
+      typeof (user as Record<string, unknown>).login === "string"
+        ? (user as { login: string }).login
+        : null;
+    const changes = row.changes;
+    const bodyWasEdited =
+      event === "edited" && typeof changes === "object" && changes !== null &&
+      Object.prototype.hasOwnProperty.call(changes, "body");
+    return [{ event, createdAt, labelName, userLogin, bodyWasEdited }];
+  });
 }
 
 /**

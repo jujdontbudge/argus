@@ -656,6 +656,32 @@ describe("dispatchFrontier (#56): recovery tells a DEAD session from a SLOW one"
     }
   }, GIT_BUDGET_MS);
 
+  test("recovery keeps the claim on a ticket labeled blocked-on-human", async () => {
+    const repo = await scratchRepo();
+    try {
+      const gh = createFakeGh({ login: LOGIN, repo: REPO });
+      gh.seed({ number: 80, title: "Waiting on Johan" });
+      const dead = await deadPid();
+      const first = witnessSpawn(repo, gh, () => dead);
+      await dispatchFrontier(options(repo, gh, first.spawn, { maxConcurrency: 1 }));
+      gh.find("80")!.labels.push("argus:blocked-on-human");
+
+      const second = witnessSpawn(repo, gh);
+      const report = await dispatchFrontier(
+        options(repo, gh, second.spawn, { maxConcurrency: 1 }),
+      );
+
+      expect(report.recovered[0]).toMatchObject({
+        outcome: "blocked-on-human",
+        ticket: "80",
+      });
+      expect(second.witness.calls).toHaveLength(0);
+      expect(gh.find("80")!.assignees).toEqual([LOGIN]);
+    } finally {
+      await cleanup(repo);
+    }
+  }, GIT_BUDGET_MS);
+
   test("a DEAD worker that COMMITTED keeps its claim — never re-dispatched over its work", async () => {
     const repo = await scratchRepo();
     try {
