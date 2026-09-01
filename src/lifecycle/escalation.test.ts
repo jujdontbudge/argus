@@ -196,6 +196,52 @@ describe("needs-Johan escalation routing", () => {
     expect(digest?.body.match(/\[needs-johan\]/g)).toHaveLength(1);
   });
 
+  test("dedupes when the session chain is registered after the first escalation", async () => {
+    const repo = await repoFixture();
+    const notifications: MacNotificationRequest[] = [];
+    const options = {
+      notify: async (request: MacNotificationRequest) => {
+        notifications.push(request);
+      },
+    };
+
+    // A lifecycle signal can beat the registry append that describes a
+    // compression restart. The later sweep must still recognize the earlier
+    // reservation as the same logical session.
+    await escalateNeedsJohan(repo, trigger("r2-bailout", { sessionId: "session-rotated" }), options);
+    await mkdir(join(repo, ".argus/registry"), { recursive: true });
+    await writeFile(
+      join(repo, ".argus/registry/sessions.jsonl"),
+      [
+        {
+          ts: "2026-08-31T11:59:00.000Z",
+          sessionId: "session-root",
+          ticket: "189",
+          dispatchPrompt: "work",
+        },
+        {
+          ts: "2026-08-31T12:00:00.000Z",
+          sessionId: "session-rotated",
+          ticket: "189",
+          continues: "session-root",
+          dispatchPrompt: "continued work",
+        },
+      ]
+        .map((row) => JSON.stringify(row))
+        .join("\n") + "\n",
+    );
+
+    const repeated = await escalateNeedsJohan(
+      repo,
+      trigger("r2-bailout", { sessionId: "session-rotated" }),
+      options,
+    );
+
+    expect(repeated.status).toBe("duplicate");
+    expect(notifications).toHaveLength(1);
+    expect((await lifecycleRows(repo))).toHaveLength(1);
+  });
+
   test("the push ignores transcript-shaped free text and stays bounded", async () => {
     const repo = await repoFixture();
     const notifications: MacNotificationRequest[] = [];

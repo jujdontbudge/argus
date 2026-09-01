@@ -180,10 +180,6 @@ export const sendMacOSNotification: MacNotification = async (request) => {
   }
 };
 
-function recordKey(sessionId: string, cause: EscalationCause): string {
-  return `${sessionId}\u0000${cause}`;
-}
-
 function parseLifecycleRecord(value: unknown): LifecycleEscalationRecord | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const row = value as Record<string, unknown>;
@@ -250,11 +246,6 @@ async function withLifecycleLock<T>(repo: string, body: () => Promise<T>): Promi
   }
 }
 
-async function logicalSessionId(repo: string, sessionId: string): Promise<string> {
-  const registry = await loadRegistry(registryPaths(repo));
-  return chainRootOf(registry.sessions, sessionId);
-}
-
 /** Route one classified lifecycle trigger to the digest marker and local push. */
 export async function escalateNeedsJohan(
   repo: string,
@@ -271,9 +262,16 @@ export async function escalateNeedsJohan(
     // Digest chain rotation gives one logical session several physical ids.
     // Resolve that identity before deduping so a restart under a new id cannot
     // produce a second escalation for the same cause.
-    const root = await logicalSessionId(repo, sessionId);
+    const registry = await loadRegistry(registryPaths(repo));
+    const root = chainRootOf(registry.sessions, sessionId);
     const existing = await readLifecycleRecords(repo);
-    if (existing.some((record) => recordKey(record.sessionId, record.cause) === recordKey(root, cause))) {
+    if (
+      existing.some(
+        (record) =>
+          record.cause === cause &&
+          chainRootOf(registry.sessions, record.sessionId) === root,
+      )
+    ) {
       return { status: "duplicate", cause, ticket };
     }
 
