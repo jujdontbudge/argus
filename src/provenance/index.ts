@@ -4,6 +4,7 @@
  * `ProvenanceRecord` / `ProvenanceAudit` are the seam for tickets #30–#33.
  */
 export {
+  ARGUS_AGENT_DISPATCH_MARKER,
   classifierFromRegistry,
   ProvenanceClassifier,
   type Author,
