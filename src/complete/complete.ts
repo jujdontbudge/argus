@@ -189,14 +189,12 @@ function refusalComment(ticket: string, headline: string, body: string): string 
  * already looking. The row stays too — it is what an operator watching a live
  * pass sees — so this is both, each doing the thing the other cannot.
  *
- * HOW THIS AVOIDS A COMMENT PER POLL. It does not need its own dedup, and
- * deliberately does not add one: `pollHermesSignals` already delivers each
- * `(sessionId, status)` pair exactly once, persisting the delivered set to
- * `.argus/registry/signal-consumer.json` under a lock. That is #100's "one
- * alarm per FACT, deduped" with the fact being "this session blocked", and it
- * holds across passes and restarts, not just within one sweep. Commenting here
- * — inside the loop over freshly-delivered signals, not in the queue loop that
- * re-runs every pass — inherits that guarantee rather than duplicating it.
+ * HOW THIS AVOIDS A COMMENT PER POLL. The session-keyed dedup in
+ * `pollHermesSignals` still prevents one session's signal from being handled
+ * twice. The ticket-keyed check below is a second guard for a repeated signal
+ * or a replay after the consumer state was lost: it compares the complete
+ * `[argus]` comment body before posting, so an unchanged explanation cannot
+ * accumulate on the ticket.
  */
 function blockedComment(ticket: string, reason: string): string {
   const trimmed = reason.trim();
@@ -211,6 +209,130 @@ function blockedComment(ticket: string, reason: string): string {
     "The ticket stays open and stays claimed. Nothing further happens on it until",
     "you answer — no later `argus complete` pass will retry it on its own.",
   ].join("\n");
+}
+
+const BLOCKED_ON_HUMAN_LABEL = "argus:blocked-on-human";
+
+async function ensureBlockedLabel(
+  gh: GhRunner,
+  cwd: string,
+  tracker: string,
+  ticket: string,
+): Promise<{ ok: boolean; detail: string }> {
+  const listed = await gh(
+    ["label", "list", "--repo", tracker, "--limit", "100", "--json", "name"],
+    cwd,
+  );
+  if (listed.exitCode !== 0) {
+    return {
+      detail: `gh label list failed (exit ${listed.exitCode}): ${listed.stderr.trim() || listed.stdout.trim()}`,
+      ok: false,
+    };
+  }
+  let labels: unknown;
+  try {
+    labels = JSON.parse(listed.stdout);
+  } catch (error) {
+    return {
+      detail: `gh label list returned invalid JSON: ${error instanceof Error ? error.message : String(error)}`,
+      ok: false,
+    };
+  }
+  if (
+    !Array.isArray(labels) ||
+    !labels.every(
+      (label) =>
+        typeof label === "object" &&
+        label !== null &&
+        typeof (label as Record<string, unknown>).name === "string",
+    )
+  ) {
+    return { detail: "gh label list returned an invalid label list", ok: false };
+  }
+  if (!labels.some((label) => (label as { name: string }).name === BLOCKED_ON_HUMAN_LABEL)) {
+    const created = await gh(
+      [
+        "label",
+        "create",
+        BLOCKED_ON_HUMAN_LABEL,
+        "--repo",
+        tracker,
+        "--color",
+        "B60205",
+        "--description",
+        "Ticket is waiting for the repository owner",
+      ],
+      cwd,
+    );
+    if (created.exitCode !== 0 && !/already exists/i.test(created.stderr)) {
+      return {
+        detail: `gh label create failed (exit ${created.exitCode}): ${created.stderr.trim() || created.stdout.trim()}`,
+        ok: false,
+      };
+    }
+  }
+
+  const edited = await gh(
+    ["issue", "edit", ticket, "--repo", tracker, "--add-label", BLOCKED_ON_HUMAN_LABEL],
+    cwd,
+  );
+  return edited.exitCode === 0
+    ? { detail: "", ok: true }
+    : {
+        detail: `gh issue edit --add-label failed (exit ${edited.exitCode}): ${edited.stderr.trim() || edited.stdout.trim()}`,
+        ok: false,
+      };
+}
+
+interface TicketComment {
+  body: string;
+  createdAt: string | null;
+}
+
+async function latestArgusComment(
+  gh: GhRunner,
+  cwd: string,
+  tracker: string,
+  ticket: string,
+): Promise<TicketComment | null | { error: string }> {
+  const result = await gh(
+    [
+      "api",
+      `repos/${tracker}/issues/${ticket}/comments`,
+      "--paginate",
+      "--slurp",
+    ],
+    cwd,
+  );
+  if (result.exitCode !== 0) {
+    return {
+      error: `gh api issue comments failed (exit ${result.exitCode}): ${result.stderr.trim() || result.stdout.trim()}`,
+    };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch (error) {
+    return {
+      error: `gh api issue comments returned invalid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  const pages = Array.isArray(parsed) && parsed.every(Array.isArray) ? parsed.flat() : parsed;
+  if (!Array.isArray(pages)) return { error: "gh api issue comments returned a non-array" };
+  const comments = pages.flatMap((value): TicketComment[] => {
+    if (typeof value !== "object" || value === null) return [];
+    const row = value as Record<string, unknown>;
+    if (typeof row.body !== "string" || !row.body.startsWith("[argus]")) return [];
+    const createdAt =
+      typeof row.created_at === "string" && !Number.isNaN(Date.parse(row.created_at))
+        ? row.created_at
+        : null;
+    return [{ body: row.body, createdAt }];
+  });
+  return comments.sort((a, b) => {
+    if (a.createdAt === null || b.createdAt === null) return 0;
+    return a.createdAt.localeCompare(b.createdAt);
+  }).at(-1) ?? null;
 }
 
 async function comment(
@@ -291,17 +413,28 @@ export async function completeReadyTickets(
         // block that goes back to being invisible. That is worth degrading
         // loudly about (#96's shape: degraded with a readable reason), even
         // though, like every other comment here, it cannot change the verdict.
-        const posted = await comment(
-          gh,
-          repo,
-          tracker.repo,
-          ticket,
-          // `signal.reason` and NOT `signal.prompt`: the prompt is a dispatch
-          // instruction pointing at `.argus/events/<file>.json`, so commenting
-          // it would send Johan to a JSON file on a machine he may not be at —
-          // the same invisibility relocated rather than fixed.
-          blockedComment(ticket, signal.reason),
-        );
+        const text = blockedComment(ticket, signal.reason);
+        const label = await ensureBlockedLabel(gh, repo, tracker.repo, ticket);
+        if (!label.ok) {
+          report.degraded.push(
+            `ticket #${ticket} is blocked on a human but could not be labeled: ${label.detail}`,
+          );
+        }
+        const latest = await latestArgusComment(gh, repo, tracker.repo, ticket);
+        let posted: { ok: boolean; detail: string };
+        if (latest !== null && "error" in latest) {
+          // The comment remains best effort, but a failed read is visible: the
+          // caller cannot know whether this ticket already has this exact
+          // explanation, so the next successful pass should be investigated.
+          report.degraded.push(
+            `ticket #${ticket} blocked-comment dedupe could not be read: ${latest.error}`,
+          );
+          posted = await comment(gh, repo, tracker.repo, ticket, text);
+        } else if (latest?.body === text) {
+          posted = { detail: "", ok: true };
+        } else {
+          posted = await comment(gh, repo, tracker.repo, ticket, text);
+        }
         if (!posted.ok) {
           report.degraded.push(
             `ticket #${ticket} is blocked on a human and the comment saying so could ` +
@@ -313,7 +446,11 @@ export async function completeReadyTickets(
           detail:
             "the session reported blocked-on-human; a ticket waiting on Johan is " +
             "not a ticket to merge" +
-            (posted.ok ? " (the reason was commented on the ticket)" : ""),
+            posted.ok
+              ? latest !== null && !("error" in latest) && latest.body === text
+                ? " (an identical ticket comment already exists)"
+                : " (the reason was commented on the ticket)"
+              : "",
           sessionId: signal.sessionId,
           status: "blocked-on-human",
           ticket,

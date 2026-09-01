@@ -583,6 +583,67 @@ describe("completeReadyTickets (#57): finished is not the same as died", () => {
   );
 
   test(
+    "an identical blocked reason is suppressed by the ticket's latest Argus comment",
+    async () => {
+      const repo = await scratchRepo();
+      try {
+        const gh = seedTracker(78, "Waiting on Johan");
+        await deployAndCommit(repo, "78", "sess-78");
+        const signal = {
+          prompt: "",
+          reason: "Need a decision.",
+          sessionId: "sess-78",
+          source: "event" as const,
+          status: "blocked" as const,
+        };
+
+        await completeReadyTickets(options(repo, gh, { signals: async () => [signal] }));
+        await completeReadyTickets(options(repo, gh, { signals: async () => [signal] }));
+
+        expect(gh.find("78")!.comments).toHaveLength(1);
+        expect(gh.find("78")!.labels).toContain("argus:blocked-on-human");
+        expect(
+          gh.calls.filter((call) => call[0] === "label" && call[1] === "create"),
+        ).toHaveLength(1);
+      } finally {
+        await cleanup(repo);
+      }
+    },
+    BUDGET_MS,
+  );
+
+  test(
+    "a changed blocked reason still posts a new ticket comment",
+    async () => {
+      const repo = await scratchRepo();
+      try {
+        const gh = seedTracker(79, "Waiting on Johan");
+        await deployAndCommit(repo, "79", "sess-79");
+        const signal = (reason: string) => ({
+          prompt: "",
+          reason,
+          sessionId: "sess-79",
+          source: "event" as const,
+          status: "blocked" as const,
+        });
+
+        await completeReadyTickets(
+          options(repo, gh, { signals: async () => [signal("Need a decision.")] }),
+        );
+        await completeReadyTickets(
+          options(repo, gh, { signals: async () => [signal("The requested choice changed.")] }),
+        );
+
+        expect(gh.find("79")!.comments).toHaveLength(2);
+        expect(gh.find("79")!.comments[1]).toContain("The requested choice changed.");
+      } finally {
+        await cleanup(repo);
+      }
+    },
+    BUDGET_MS,
+  );
+
+  test(
     "a block whose comment cannot be posted degrades loudly instead of going quiet",
     async () => {
       const repo = await scratchRepo();

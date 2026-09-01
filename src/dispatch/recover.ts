@@ -32,6 +32,8 @@
  *                   verify/merge/close loop (#57, which owns what happens next);
  *   - cannot tell → treated exactly like "commits", loudly. Fail closed: a
  *                   stuck-but-visible ticket beats two agents on one branch.
+ *   - blocked-on-human label → the dead session's slot is freed, but its
+ *                   claim stands so recovery cannot re-feed the frontier.
  */
 import { stat } from "node:fs/promises";
 
@@ -48,6 +50,8 @@ export type RecoveryOutcome =
   | "awaiting-verification"
   /** Dead with uncommitted changes in the worktree: nothing is thrown away. */
   | "uncommitted-work"
+  /** Dead, but the ticket is intentionally paused for its repository owner. */
+  | "blocked-on-human"
   /** Dead, and whether it produced work could not be read. Claim stands. */
   | "unknown-work"
   /** A slot with no readable ticket; freed so the cap stops lying. */
@@ -136,6 +140,18 @@ export async function recoverDeadSlots(
     }
 
     const give = async (detail: string): Promise<void> => {
+      const blocked = record.claimed
+        ? await isBlockedOnHuman(request, record.ticket)
+        : false;
+      if (typeof blocked === "string") {
+        await request.slots.releaseAt(entry.path);
+        degraded.push(
+          `ticket #${record.ticket}: could not determine whether it is blocked on a human ` +
+            `(${blocked}); the claim stands rather than re-feed the frontier`,
+        );
+        recovered.push({ detail: blocked, outcome: "unknown-work", ticket: record.ticket });
+        return;
+      }
       const cleaned = await discardWorktree(git, request.repo, record);
       if (cleaned !== null) {
         // The ticket cannot be re-dispatched while its branch exists, so a
@@ -153,7 +169,7 @@ export async function recoverDeadSlots(
         });
         return;
       }
-      const released = record.claimed
+      const released = record.claimed && !blocked
         ? await releaseClaim({
             cwd: request.cwd,
             login: request.login,
@@ -169,7 +185,13 @@ export async function recoverDeadSlots(
         );
       }
       await request.slots.releaseAt(entry.path);
-      recovered.push({ detail, outcome: "returned-to-frontier", ticket: record.ticket });
+      recovered.push({
+        detail: blocked
+          ? `${detail}; the ticket is blocked on a human, so its claim stays in place`
+          : detail,
+        outcome: blocked ? "blocked-on-human" : "returned-to-frontier",
+        ticket: record.ticket,
+      });
     };
 
     // A reserved slot never reached a session: there is no branch to weigh.
@@ -220,6 +242,37 @@ export async function recoverDeadSlots(
   }
 
   return { degraded, live, recovered };
+}
+
+async function isBlockedOnHuman(
+  request: RecoverRequest,
+  ticket: string,
+): Promise<boolean | string> {
+  const result = await request.gh(
+    ["issue", "view", ticket, "--repo", request.tracker, "--json", "labels"],
+    request.cwd,
+  );
+  if (result.exitCode !== 0) {
+    return (result.stderr.trim() || result.stdout.trim() || `gh exited ${result.exitCode}`).slice(
+      0,
+      300,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch (error) {
+    return `not valid JSON: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  if (typeof parsed !== "object" || parsed === null) return "issue view returned a non-object";
+  const labels = (parsed as Record<string, unknown>).labels;
+  if (!Array.isArray(labels)) return "issue view returned no label array";
+  return labels.some(
+    (label) =>
+      typeof label === "object" &&
+      label !== null &&
+      (label as Record<string, unknown>).name === "argus:blocked-on-human",
+  );
 }
 
 /** Commits the dead session added, or a reason the question is unanswerable. */

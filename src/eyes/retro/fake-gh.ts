@@ -27,6 +27,25 @@ export interface FakeGhIssue {
   blockedBy: number[];
   /** Comments posted on it, in order — #57 comments every refusal. */
   comments: string[];
+  /** Timeline metadata used by frontier auto-unpause tests. */
+  timeline: FakeGhTimelineEvent[];
+}
+
+export interface FakeGhCommentSeed {
+  body: string;
+  author?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface FakeGhTimelineEvent {
+  event: string;
+  created_at: string;
+  actor?: { login: string };
+  user?: { login: string };
+  label?: { name: string };
+  changes?: { body?: unknown };
+  body?: string;
 }
 
 export interface FakeGhSeed {
@@ -39,6 +58,8 @@ export interface FakeGhSeed {
   blockedBy?: number[];
   /** Seed a sub-issue link without going through the sub_issues API. */
   parent?: number;
+  comments?: FakeGhCommentSeed[];
+  timeline?: FakeGhTimelineEvent[];
 }
 
 export interface FakeGhOptions {
@@ -86,6 +107,7 @@ export function createFakeGh(options: FakeGhOptions = {}): FakeGh {
   const calls: string[][] = [];
   const cwds: string[] = [];
   const issues: FakeGhIssue[] = [];
+  const commentRecords = new WeakMap<FakeGhIssue, FakeGhCommentSeed[]>();
   let nextNumber = 1;
 
   const add = (seed: FakeGhSeed): FakeGhIssue => {
@@ -101,7 +123,25 @@ export function createFakeGh(options: FakeGhOptions = {}): FakeGh {
       assignees: [...(seed.assignees ?? [])],
       blockedBy: [...(seed.blockedBy ?? [])],
       comments: [],
+      timeline: [...(seed.timeline ?? [])],
     };
+    const seededComments = [...(seed.comments ?? [])];
+    commentRecords.set(issue, seededComments);
+    issue.comments.push(...seededComments.map((comment) => comment.body));
+    for (const label of issue.labels) {
+      if (
+        label === "argus:blocked-on-human" &&
+        !issue.timeline.some(
+          (event) => event.event === "labeled" && event.label?.name === label,
+        )
+      ) {
+        issue.timeline.push({
+          created_at: "2026-08-31T10:00:00Z",
+          event: "labeled",
+          label: { name: label },
+        });
+      }
+    }
     issues.push(issue);
     nextNumber = Math.max(nextNumber, seed.number + 1);
     return issue;
@@ -157,6 +197,7 @@ export function createFakeGh(options: FakeGhOptions = {}): FakeGh {
           number: Number(issue.number),
           title: issue.title,
           body: issue.body,
+          labels: issue.labels.map((name) => ({ name })),
           state: issue.state.toUpperCase(),
           assignees: issue.assignees.map((login) => ({ login })),
         }),
@@ -180,6 +221,18 @@ export function createFakeGh(options: FakeGhOptions = {}): FakeGh {
       return ok(`https://github.com/${repo}/issues/${issue.number}\n`);
     }
 
+    if (command === "label" && subcommand === "list") {
+      return ok(
+        JSON.stringify(
+          [...new Set(issues.flatMap((issue) => issue.labels))].map((name) => ({ name })),
+        ),
+      );
+    }
+
+    if (command === "label" && subcommand === "create") {
+      return ok("");
+    }
+
     if (command === "issue" && subcommand === "edit") {
       if (options.failEdit) return err(options.failEdit);
       const issue = issues.find((entry) => entry.number === args[2]);
@@ -193,6 +246,17 @@ export function createFakeGh(options: FakeGhOptions = {}): FakeGh {
         if (args[index] === "--remove-assignee") {
           issue.assignees = issue.assignees.filter((entry) => entry !== value);
         }
+        if (args[index] === "--add-label" && !issue.labels.includes(value)) {
+          issue.labels.push(value);
+          issue.timeline.push({
+            created_at: new Date().toISOString(),
+            event: "labeled",
+            label: { name: value },
+          });
+        }
+        if (args[index] === "--remove-label") {
+          issue.labels = issue.labels.filter((entry) => entry !== value);
+        }
         // The wayfinder map update (#57) rewrites the map issue's body.
         if (args[index] === "--body") issue.body = value;
       }
@@ -203,7 +267,15 @@ export function createFakeGh(options: FakeGhOptions = {}): FakeGh {
       if (options.failComment) return err(options.failComment);
       const issue = issues.find((entry) => entry.number === args[2]);
       if (!issue) return err(`no issue ${args[2]}`);
-      issue.comments.push(flag(args, "--body") ?? "");
+      const body = flag(args, "--body") ?? "";
+      issue.comments.push(body);
+      const now = new Date().toISOString();
+      commentRecords.get(issue)!.push({
+        author: options.login ?? "argus-bot",
+        body,
+        createdAt: now,
+        updatedAt: now,
+      });
       return ok("");
     }
 
@@ -223,6 +295,28 @@ export function createFakeGh(options: FakeGhOptions = {}): FakeGh {
       if (path === "user") {
         if (options.failUser) return err(options.failUser);
         return ok(`${options.login ?? "argus-bot"}\n`);
+      }
+      const timeline = path.match(/^repos\/(.+)\/issues\/(\d+)\/timeline$/);
+      if (timeline) {
+        const issue = issues.find((entry) => entry.number === timeline[2]);
+        if (!issue) return err(`no issue ${timeline[2]}`);
+        return ok(JSON.stringify([issue.timeline]));
+      }
+      const issueComments = path.match(/^repos\/(.+)\/issues\/(\d+)\/comments$/);
+      if (issueComments) {
+        const issue = issues.find((entry) => entry.number === issueComments[2]);
+        if (!issue) return err(`no issue ${issueComments[2]}`);
+        return ok(
+          JSON.stringify(
+            (commentRecords.get(issue) ?? []).map((comment) => ({
+              body: comment.body,
+              created_at: comment.createdAt ?? "2026-08-31T10:00:00Z",
+              updated_at:
+                comment.updatedAt ?? comment.createdAt ?? "2026-08-31T10:00:00Z",
+              user: { login: comment.author ?? "argus-bot" },
+            })),
+          ),
+        );
       }
       const blocked = path.match(/^repos\/(.+)\/issues\/(\d+)\/dependencies\/blocked_by$/);
       if (blocked) {
