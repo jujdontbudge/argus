@@ -14,14 +14,9 @@
  *    the match; keeping it clean means the registry's copy and the terminal's
  *    copy are identical without relying on that.
  *
- * What it SAYS is the other half of the ticket. A grill session is the one
- * deployed session with no ticket (§7.5 exempts planning and grilling), which
- * means none of the ticket-shaped guardrails the dispatch prompt leans on
- * exist here: nothing bounds its scope, nothing owns its closure, and the
- * Retro eye will file a sub-issue against any implementation it does do
- * (§5.5 / §7.5 — a ticketless deployment that leaves commits is rogue by
- * construction). So the prompt says that outright rather than leaving the
- * session to discover it by being reported.
+ * What it SAYS is the other half of the ticket. A grill session is owned by a
+ * ticket, while §7.5 exempts its planning output from implementation-scope
+ * enforcement. Registration, ticketing and lifecycle monitoring still apply.
  */
 import type { GrillInvocation } from "./dispatch.ts";
 import { GRILL_MODES } from "./skills.ts";
@@ -31,6 +26,8 @@ export interface GrillPromptInput {
   invocation: GrillInvocation;
   /** SPEC §7.2's "X": what Johan wants to be grilled about. */
   topic: string;
+  /** The ticket whose planning session is being opened. */
+  ticket: string;
 }
 
 export function grillPrompt(input: GrillPromptInput): string {
@@ -47,10 +44,10 @@ export function grillPrompt(input: GrillPromptInput): string {
     "wait for his answer — do not answer on his behalf and do not summarise your way",
     "past a disagreement.",
     "",
-    "It has no ticket, on purpose: §7.5 exempts planning and grilling. That also",
-    "means nothing here bounds implementation scope, so do not implement anything.",
-    "Read the repo freely, write no code, and commit nothing — a ticketless session",
-    "that leaves commits behind is what the Retro watcher files a sub-issue about.",
+    `Its owning ticket is #${input.ticket}. §7.5 exempts this session from`,
+    "implementation-scope enforcement only; registration, ticketing and lifecycle",
+    "monitoring still apply. Do not implement anything.",
+    "Read the repo freely, write no code, and commit nothing.",
     "The output of this session is decisions: a spec, tickets, or a written answer.",
   ].join("\n");
 }

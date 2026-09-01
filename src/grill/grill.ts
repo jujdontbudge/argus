@@ -20,8 +20,8 @@
  * typing into a cmux workspace rather than forked as a child of this process
  * (`./launch.ts` has the whole argument); it runs in the repo's own checkout
  * rather than a worktree, because a spec stranded on an unmerged branch is not
- * a spec (§7.2's "in R"); and it carries no ticket, because
- * §7.5 exempts planning and grilling.
+ * a spec (§7.2's "in R"); and it carries its owning ticket while remaining
+ * exempt from implementation-scope enforcement under §7.5.
  *
  * NOT different, and deliberately so:
  *
@@ -71,6 +71,8 @@ export interface GrillRequest {
   repo: string;
   /** SPEC §7.2's "X": what Johan wants to be grilled about. */
   topic: string;
+  /** The owning ticket required by the amended SPEC §7.5. */
+  ticket: string;
   /** Which planning skill to route to; SPEC §1's table. Default `grilling`. */
   mode?: GrillMode;
   model?: string;
@@ -147,7 +149,11 @@ export async function startGrill(
     };
   }
   const resolved = dispatch.invocation;
-  const prompt = grillPrompt({ invocation: resolved, topic: request.topic });
+  const prompt = grillPrompt({
+    invocation: resolved,
+    ticket: request.ticket,
+    topic: request.topic,
+  });
   // Minted here rather than inside `deployWorker` so a deployment that fails
   // AFTER the row is durable can name the session it left behind. A row is
   // never retracted (#55), so naming it is the only way the operator can find
@@ -182,6 +188,7 @@ export async function startGrill(
       checkout: "repo",
       dispatchPrompt: prompt,
       repo: request.repo,
+      ticket: request.ticket,
       route: CLAUDE_GRILL_ROUTE,
       inputSurfaceRef: workspace.inputSurface,
       surfaceRef: workspace.surface,

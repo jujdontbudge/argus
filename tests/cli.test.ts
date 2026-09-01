@@ -62,7 +62,13 @@ describe("argus CLI", () => {
     // so it cannot type into a workspace this test did not create (#7) or
     // spend a subscription turn. Everything past that seam is covered in
     // `src/grill/grill.test.ts` against an injected cmux.
-    const result = await runCli(["grill", "the retro eye's scope-drift question", "--dry-run"]);
+    const result = await runCli([
+      "grill",
+      "the retro eye's scope-drift question",
+      "--ticket",
+      "167",
+      "--dry-run",
+    ]);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("pocock-plus:grilling");
@@ -81,7 +87,7 @@ describe("argus CLI", () => {
     // A skill id `claude` does not recognise does not fail — the session
     // carries on and does something adjacent, which is the worst outcome for a
     // planning entry point. So the mode is validated before anything starts.
-    const result = await runCli(["grill", "x", "--mode", "vibes"]);
+    const result = await runCli(["grill", "x", "--ticket", "167", "--mode", "vibes"]);
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("unknown mode 'vibes'");

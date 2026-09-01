@@ -508,6 +508,7 @@ export async function runGrillLive(
         model: "claude-opus-5",
         repo,
         topic: SCRIPTED_TOPIC,
+        ticket: "62",
       },
       // `createSandbox` strips every CMUX_* name; `openWorkerTab` needs this
       // one to know which workspace it is allowed to open a tab in, and

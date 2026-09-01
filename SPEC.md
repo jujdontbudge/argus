@@ -461,7 +461,9 @@ without a ticket triggers the Retro watcher.
 ### 7.5 Every implemented thing is a ticket
 
 Enforced by construction for dispatched work (a session exists because a ticket does)
-and by the Retro watcher for everything else. Planning/grilling sessions are exempt.
+and by the Retro watcher for everything else. Planning/grilling sessions are exempt
+from implementation-scope enforcement only; they are still registered to an owning
+ticket and covered by ticketing and lifecycle monitoring.
 
 ---
 

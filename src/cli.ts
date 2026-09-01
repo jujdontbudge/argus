@@ -24,6 +24,7 @@ Commands:
   install  install argus from this checkout
 
 Flags:
+  --ticket   (grill) owning GitHub ticket number (required)
   --mode     (grill) which planning skill to route to: grilling (default),
              spec, tickets, review, diagnosis. All route to Claude Code.
   --dry-run  (grill) print the routed skill and the exact opening prompt and
@@ -37,6 +38,53 @@ Flags:
 `;
 
 export const MINIMUM_BUN_VERSION = "1.3.12";
+
+export interface GrillArgs {
+  dryRun: boolean;
+  mode: string;
+  model?: string;
+  ticket: string;
+  topic: string;
+}
+
+export type GrillArgsResult = GrillArgs | { error: string };
+
+export function parseGrillArgs(args: readonly string[]): GrillArgsResult {
+  let mode = "grilling";
+  let model: string | undefined;
+  let ticket: string | undefined;
+  let dryRun = false;
+  const topicParts: string[] = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]!;
+    if (argument === "--dry-run") {
+      dryRun = true;
+    } else if (argument === "--mode" || argument === "--model" || argument === "--ticket") {
+      const value = args[index + 1];
+      if (value === undefined || value.startsWith("--")) {
+        return { error: `argus grill: ${argument} needs a value` };
+      }
+      if (argument === "--mode") mode = value;
+      else if (argument === "--model") model = value;
+      else ticket = value;
+      index += 1;
+    } else if (argument.startsWith("--")) {
+      return { error: `argus grill: unknown argument '${argument}'` };
+    } else {
+      topicParts.push(argument);
+    }
+  }
+
+  const topic = topicParts.join(" ").trim();
+  if (topic === "") return { error: "argus grill: a topic is required" };
+  if (ticket === undefined) return { error: "argus grill: --ticket is required" };
+  if (!/^\d+$/.test(ticket)) {
+    return { error: `argus grill: --ticket must be a ticket number, got '${ticket}'` };
+  }
+
+  return { dryRun, mode, topic, ticket, ...(model !== undefined && { model }) };
+}
 
 function isVersionAtLeast(actual: string, minimum: string): boolean {
   const actualParts = actual.split("-", 1)[0]?.split(".").map(Number) ?? [];
@@ -201,42 +249,17 @@ async function complete(): Promise<number> {
  */
 async function grill(args: string[]): Promise<number> {
   const usage =
-    'Usage: argus grill "<topic>" [--mode <grilling|spec|tickets|review|diagnosis>]' +
-    " [--model <model>] [--dry-run]";
+    'Usage: argus grill "<topic>" --ticket <n>' +
+    ' [--mode <grilling|spec|tickets|review|diagnosis>] [--model <model>] [--dry-run]';
   const { isGrillMode, resolveGrillDispatch, grillPrompt, startGrill } = await import(
     "./grill/index.ts"
   );
-
-  let mode = "grilling";
-  let model: string | undefined;
-  let dryRun = false;
-  const topicParts: string[] = [];
-  for (let index = 0; index < args.length; index += 1) {
-    const argument = args[index]!;
-    if (argument === "--dry-run") {
-      dryRun = true;
-    } else if (argument === "--mode" || argument === "--model") {
-      const value = args[index + 1];
-      if (value === undefined || value.startsWith("--")) {
-        console.error(`argus grill: ${argument} needs a value\n${usage}`);
-        return 1;
-      }
-      if (argument === "--mode") mode = value;
-      else model = value;
-      index += 1;
-    } else if (argument.startsWith("--")) {
-      console.error(`argus grill: unknown argument '${argument}'\n${usage}`);
-      return 1;
-    } else {
-      topicParts.push(argument);
-    }
-  }
-
-  const topic = topicParts.join(" ").trim();
-  if (topic === "") {
-    console.error(usage);
+  const parsed = parseGrillArgs(args);
+  if ("error" in parsed) {
+    console.error(`${parsed.error}\n${usage}`);
     return 1;
   }
+  const { dryRun, mode, model, ticket, topic } = parsed;
   if (!isGrillMode(mode)) {
     console.error(`argus grill: unknown mode '${mode}'\n${usage}`);
     return 1;
@@ -264,7 +287,7 @@ async function grill(args: string[]): Promise<number> {
     console.log(`skill: ${invocation.skill} (${invocation.source}, ${invocation.form})`);
     console.log(`from:  ${invocation.path}`);
     console.log("prompt:");
-    console.log(grillPrompt({ invocation, topic }));
+    console.log(grillPrompt({ invocation, ticket, topic }));
     console.log("\nDry run: no cmux workspace, no registry row and no session.");
     return 0;
   }
@@ -273,6 +296,7 @@ async function grill(args: string[]): Promise<number> {
     mode,
     repo,
     topic,
+    ticket,
     ...(model !== undefined && { model }),
   });
 
