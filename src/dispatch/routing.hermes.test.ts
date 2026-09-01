@@ -36,9 +36,14 @@ describe("Hermes dispatch routing (#166)", () => {
     expect(routeAgent([])).toMatchObject({ agent: "codex", status: "routed" });
   });
 
-  test("puts the R2 bail-out clause in the dispatch prompt", () => {
-    expect(defaultDispatchPrompt(ticket, "JohanSardar/recovi-content")).toContain(
-      R2_BAIL_OUT,
-    );
+  test("puts the verbatim R2 bail-out clause in Hermes and Codex prompts", () => {
+    for (const agent of ["hermes", "codex"] as const) {
+      expect(
+        defaultDispatchPrompt(
+          { ...ticket, labels: [`agent:${agent}`] },
+          "JohanSardar/recovi-content",
+        ),
+      ).toContain(R2_BAIL_OUT);
+    }
   });
 });
