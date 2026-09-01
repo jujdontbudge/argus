@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { HERMES_ROUTE, ROUTES } from "../deploy/index.ts";
 import type { FrontierTicket } from "./frontier.ts";
 import { defaultDispatchPrompt } from "./dispatch.ts";
 import { DEFAULT_AGENT, routeAgent } from "./routing.ts";
@@ -18,6 +19,16 @@ const ticket: FrontierTicket = {
 };
 
 describe("Hermes dispatch routing (#166)", () => {
+  test("exposes Hermes as a deployable announced-session route", () => {
+    expect(ROUTES.hermes).toBe(HERMES_ROUTE);
+    expect(HERMES_ROUTE.agent).toBe("hermes");
+    expect(HERMES_ROUTE.sessionIdMode).toBe("announced");
+    expect(HERMES_ROUTE.announce?.("session_id: hermes-session-166")).toBe(
+      "hermes-session-166",
+    );
+    expect(HERMES_ROUTE.announce?.("worker ready")).toBeNull();
+  });
+
   test("accepts the exact Hermes pin", () => {
     expect(routeAgent(["agent:hermes"])).toEqual({
       agent: "hermes",
