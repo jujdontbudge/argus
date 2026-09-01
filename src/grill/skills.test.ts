@@ -45,6 +45,9 @@ describe("GRILL_MODES (#62): SPEC §1's routing table and §7.1's chain", () => 
     const spec = await Bun.file(join(import.meta.dir, "../../SPEC.md")).text();
 
     expect(spec).toContain(
+      "| **Claude Code** | Claude subscription, `claude-fable-5` (Fable) | Grilling, specs, tickets, domain modeling, diagnosis, code review. |",
+    );
+    expect(spec).toContain(
       "- `grilling`, `spec`, `tickets`, `review`, `diagnosis` → Claude Code",
     );
   });

@@ -98,7 +98,7 @@ in this repo.
 | Agent | Runs on | Role |
 | --- | --- | --- |
 | **Hermes** | ChatGPT subscription, `gpt-5.6-sol` via `openai-codex` provider | Orchestrator. Deploys, monitors, routes, nudges. **Never implements.** |
-| **Claude Code** | Claude subscription, `claude-fable-5` (Fable) | Grilling, specs, domain modeling, diagnosis, code review. |
+| **Claude Code** | Claude subscription, `claude-fable-5` (Fable) | Grilling, specs, tickets, domain modeling, diagnosis, code review. |
 | **Codex** | ChatGPT subscription, `gpt-5.6-sol`, high reasoning effort | Default implementer for build tickets. |
 
 Model names above are current defaults, not commitments; they are config knobs in

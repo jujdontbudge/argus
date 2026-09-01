@@ -665,7 +665,7 @@ describe("dispatchFrontier (#56): recovery tells a DEAD session from a SLOW one"
  * Ticket #88 — WHICH agent a ticket reaches, asserted as a table.
  *
  * SPEC §2: "Routing is by ticket label. Hermes reads the label and picks the
- * worker: `grilling`, `spec`, `review`, `diagnosis` → Claude Code;
+ * worker: `grilling`, `spec`, `tickets`, `review`, `diagnosis` → Claude Code;
  * implementation tickets (default) → Codex; exceptions can be pinned
  * per-ticket with an explicit `agent:claude-code` / `agent:codex` label."
  *

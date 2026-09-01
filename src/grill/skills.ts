@@ -51,7 +51,7 @@ export type GrillMode =
   | "diagnosis";
 
 export interface GrillModeRoute {
-  /** SPEC §1: all four planning labels route to Claude Code, never Codex. */
+  /** SPEC §1: all five planning labels route to Claude Code, never Codex. */
   agent: "claude";
   /** The bare skill name, as it appears in a canonical `.argus/skills/`. */
   name: string;
