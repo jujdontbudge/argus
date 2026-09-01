@@ -173,7 +173,6 @@ export function createFakeGh(options: FakeGhOptions = {}): FakeGh {
           labels: issue.labels.map((name) => ({ name })),
           state: issue.state.toUpperCase(),
           assignees: issue.assignees.map((login) => ({ login })),
-          labels: issue.labels.map((name) => ({ name })),
         }),
       );
     }
