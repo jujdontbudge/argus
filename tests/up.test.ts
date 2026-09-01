@@ -151,6 +151,37 @@ describe("argus up", () => {
     });
   });
 
+  test("keeps the poll in the root when another profile is sticky-active", async () => {
+    const { env, repo } = await createScratchRepo("Sticky Hermes Profile");
+    const activeProfile = "interactive";
+    await mkdir(join(env.HERMES_HOME!, "profiles", activeProfile), {
+      recursive: true,
+    });
+    await Bun.write(
+      join(env.HERMES_HOME!, "active_profile"),
+      `${activeProfile}\n`,
+    );
+
+    const result = await runUp(repo, env);
+
+    expect(result.exitCode).toBe(0);
+    const rootJobs = (await Bun.file(
+      join(env.HERMES_HOME!, "cron", "jobs.json"),
+    ).json()) as { jobs: Array<Record<string, unknown>> };
+    expect(rootJobs.jobs.filter((job) => job.name === "argus-signal-poll")).toHaveLength(1);
+    expect(
+      await Bun.file(
+        join(
+          env.HERMES_HOME!,
+          "profiles",
+          activeProfile,
+          "cron",
+          "jobs.json",
+        ),
+      ).exists(),
+    ).toBe(false);
+  });
+
   test("converges configured Honcho and Hermes bindings through the CLI", async () => {
     const requests: Array<{ body: unknown; path: string }> = [];
     const server = Bun.serve({

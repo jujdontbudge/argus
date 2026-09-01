@@ -185,8 +185,21 @@ export type HermesCronRun = (
   env: Readonly<Record<string, string | undefined>>,
 ) => Promise<HermesCronRunResult>;
 
+function hermesHomeIsNamedProfile(home: string): boolean {
+  return basename(dirname(resolve(home))) === "profiles";
+}
+
 export const runHermesCron: HermesCronRun = async (args, env) => {
-  const child = Bun.spawn(["hermes", ...args], {
+  const home = env.HERMES_HOME?.trim();
+  // Hermes follows the sticky active_profile file even when HERMES_HOME points
+  // at the root. Explicitly selecting `default` is the only way to make a
+  // root-home command stay in the ticking store. Named-profile cleanup keeps
+  // its profile-shaped HERMES_HOME and therefore needs no override.
+  const hermesArgs =
+    home !== undefined && home !== "" && !hermesHomeIsNamedProfile(home)
+      ? ["--profile", "default", ...args]
+      : args;
+  const child = Bun.spawn(["hermes", ...hermesArgs], {
     env: { ...Bun.env, ...env },
     stderr: "pipe",
     stdout: "pipe",
