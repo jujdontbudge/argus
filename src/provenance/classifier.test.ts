@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { MessageEvent } from "../tailing";
-import { ProvenanceClassifier } from "./classifier";
+import { ARGUS_AGENT_DISPATCH_MARKER, ProvenanceClassifier } from "./classifier";
 
 // All timestamps ISO-8601 UTC, like transcripts and the registry carry.
 const T0 = "2026-08-24T12:00:00.000Z";
@@ -59,6 +59,84 @@ describe("unregistered sessions (SPEC §5 rule 3a)", () => {
       }),
     );
     expect(stdout.record).toMatchObject({ author: "system", via: "non-candidate" });
+  });
+});
+
+describe("Argus agent dispatch marker (#146)", () => {
+  test("an exact first-line marker is system-authored and audited", () => {
+    const c = new ProvenanceClassifier();
+    const text = ` \t${ARGUS_AGENT_DISPATCH_MARKER} \r\nImplement ticket #146.`;
+
+    const output = c.handle(message({ sessionId: "polly-worker", text }));
+
+    expect(output.record).toMatchObject({
+      author: "system",
+      via: "agent-dispatch-marker",
+      registered: false,
+      johanTouched: false,
+    });
+    expect(output.audits).toEqual([{
+      type: "agent-dispatch-marker",
+      sessionId: "polly-worker",
+      ts: T0,
+      text,
+      classifiedAs: "system",
+    }]);
+    expect(c.sessionState("polly-worker")?.johanTouched).toBe(false);
+  });
+
+  test("mentioning the marker after the first line remains Johan-authored", () => {
+    const c = new ProvenanceClassifier();
+    const text = `Please document this marker:\n${ARGUS_AGENT_DISPATCH_MARKER}`;
+
+    const output = c.handle(message({ sessionId: "johan-session", text }));
+
+    expect(output.record).toMatchObject({
+      author: "johan",
+      via: "unregistered-session",
+    });
+    expect(output.audits).toEqual([{
+      type: "agent-dispatch-marker",
+      sessionId: "johan-session",
+      ts: T0,
+      text,
+      classifiedAs: "johan",
+    }]);
+  });
+
+  test("a first-line marker remains system-authored in a registered mid-session steer", () => {
+    const c = new ProvenanceClassifier();
+    registered(c, "registered-worker");
+    c.handle(message({ sessionId: "registered-worker", text: DISPATCH }));
+    c.handle(message({ sessionId: "registered-worker", role: "assistant", text: "Working." }));
+
+    const output = c.handle(message({
+      sessionId: "registered-worker",
+      text: `${ARGUS_AGENT_DISPATCH_MARKER}\nSwitch to the failing provenance test.`,
+      ts: iso(5_000),
+    }));
+
+    expect(output.record).toMatchObject({
+      author: "system",
+      via: "agent-dispatch-marker",
+      registered: true,
+      johanTouched: false,
+    });
+    expect(output.audits.map(({ type }) => type)).toEqual(["agent-dispatch-marker"]);
+    expect(c.sessionState("registered-worker")?.johanTouched).toBe(false);
+  });
+
+  test("an ordinary user message is unchanged", () => {
+    const c = new ProvenanceClassifier();
+
+    const output = c.handle(message({ sessionId: "ordinary", text: "Please fix the parser." }));
+
+    expect(output.record).toMatchObject({
+      author: "johan",
+      via: "unregistered-session",
+      johanTouched: false,
+    });
+    expect(output.audits).toEqual([]);
   });
 });
 

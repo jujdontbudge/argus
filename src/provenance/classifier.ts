@@ -18,6 +18,9 @@ import type { Registry, RegistryLineAudit, SendRecord, SessionRecord } from "./r
 
 export type Author = "johan" | "hermes" | "agent" | "system";
 
+/** Polly/omnigent's explicit worker-prompt provenance marker (#146). */
+export const ARGUS_AGENT_DISPATCH_MARKER = "<<argus:agent-dispatch>>";
+
 export type Via =
   /** Candidate user message in a session the registry does not know (§5 rule 3a). */
   | "unregistered-session"
@@ -32,6 +35,8 @@ export type Via =
    * own context injection, not a prompt anybody sent (#42).
    */
   | "synthetic-preamble"
+  /** An Argus/Polly worker prompt identified by its exact first-line marker. */
+  | "agent-dispatch-marker"
   /** Assistant-side output: the agent itself. */
   | "assistant"
   /** User-side transcript record that is not a real prompt (tool output, meta). */
@@ -96,6 +101,14 @@ export type ProvenanceAuditEvent =
       sessionId: string;
       ts: string;
       tag: string;
+      text: string;
+      classifiedAs: "system" | "johan";
+    }
+  /** An Argus/Polly worker prompt kept out of Johan-authored memory. */
+  | {
+      type: "agent-dispatch-marker";
+      sessionId: string;
+      ts: string;
       text: string;
       classifiedAs: "system" | "johan";
     }
@@ -169,6 +182,12 @@ interface SessionState {
    * anything was ever sent into it.
    */
   preambleWindow: boolean;
+}
+
+function hasAgentDispatchMarker(text: string): boolean {
+  const newline = text.indexOf("\n");
+  const firstLine = newline === -1 ? text : text.slice(0, newline);
+  return firstLine.trim() === ARGUS_AGENT_DISPATCH_MARKER;
 }
 
 /** Everything provenance surfaces loudly: registry file problems + classifier audits. */
@@ -365,6 +384,26 @@ export class ProvenanceClassifier {
       state.preambleWindow = false; // the agent has spoken: the preamble is behind us
       return { record: { ...base, author: "agent", via: "assistant" }, audits: [] };
     }
+    const hash = hashText(event.text);
+    // #146: Polly/omnigent marks worker prompts explicitly. This rule is not
+    // tied to the opening run or the registry because workers may be steered
+    // mid-session and registration can race transcript ingestion. Only the
+    // complete first line counts, bounding the deaf-to-Johan direction.
+    if (hasAgentDispatchMarker(event.text)) {
+      if (state.dispatchHashes?.has(hash)) state.dispatchHashes = null;
+      state.matcher.classify({ text: event.text, ts: event.ts });
+      state.preambleWindow = false;
+      return {
+        record: { ...base, author: "system", via: "agent-dispatch-marker" },
+        audits: [{
+          type: "agent-dispatch-marker",
+          sessionId: event.sessionId,
+          ts: event.ts,
+          text: event.text,
+          classifiedAs: "system",
+        }],
+      };
+    }
     if (!event.candidate) {
       return {
         record: { ...base, author: "system", via: "non-candidate" },
@@ -379,7 +418,6 @@ export class ProvenanceClassifier {
             : [],
       };
     }
-    const hash = hashText(event.text);
     if (state.dispatchHashes?.has(hash)) {
       state.dispatchHashes = null; // consumed: one deployment, one dispatch landing
       state.preambleWindow = false;
@@ -436,6 +474,15 @@ export class ProvenanceClassifier {
         sessionId: event.sessionId,
         ts: event.ts,
         tag: envelopeTag,
+        text: event.text,
+        classifiedAs: "johan",
+      });
+    }
+    if (event.text.includes(ARGUS_AGENT_DISPATCH_MARKER)) {
+      audits.push({
+        type: "agent-dispatch-marker",
+        sessionId: event.sessionId,
+        ts: event.ts,
         text: event.text,
         classifiedAs: "johan",
       });
