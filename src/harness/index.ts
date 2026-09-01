@@ -20,6 +20,7 @@ import {
   type HonchoPeerInput,
   type HonchoWorkspaceInput,
 } from "../up/bindings.ts";
+import { loadScaledMs } from "../eyes/test-budget.ts";
 import { createWatcherSpawner } from "../supervisor/daemon.ts";
 import { readEyeHealth, type EyeHealth } from "../supervisor/health.ts";
 import {
@@ -35,6 +36,7 @@ import {
   isWithin,
   SandboxScope,
 } from "./sandbox-scope.ts";
+import { waitForCondition } from "./poll.ts";
 
 export interface CommandResult {
   exitCode: number;
@@ -70,6 +72,17 @@ export const LIVE_WATCHER_FLEET_LOCK_PATH = join(
   tmpdir(),
   "argus-live-watcher-fleet.lock",
 );
+
+// These are liveness budgets, not performance claims. A scenario starts real
+// watcher processes while other scenario files may be queued on the shared
+// fleet lease, so a fixed number of short sleeps can turn scheduler contention
+// into a false assertion failure. The ceiling still bounds a genuinely stuck
+// watcher; see the load-scaled budget pattern in eyes/test-budget.ts.
+const WATCHER_READY_BUDGET_MS = loadScaledMs(10_000, 120_000);
+const WATCHER_RESTART_BUDGET_MS = loadScaledMs(5_000, 60_000);
+const WATCHER_ARCHIVE_BUDGET_MS = loadScaledMs(10_000, 120_000);
+const WATCHER_STOP_BUDGET_MS = loadScaledMs(30_000, 120_000);
+const HEARTBEAT_BUDGET_MS = loadScaledMs(15_000, 120_000);
 
 /**
  * The watcher spawner for throwaway harness state.
@@ -526,9 +539,10 @@ export const watcherDeathScenario: ScenarioHandler = async ({ assert, sandbox })
         eye === "archiver"
           ? join(repo, ".argus", "archive.db")
           : join(repo, ".argus", "eyes", eye, "cursors.json");
-      for (let attempt = 0; !(await Bun.file(readyPath).exists()) && attempt < 500; attempt += 1) {
-        await Bun.sleep(20);
-      }
+        await waitForCondition(() => Bun.file(readyPath).exists(), {
+          intervalMs: 20,
+          timeoutMs: WATCHER_READY_BUDGET_MS,
+        });
     }
     const initial = await snapshot();
     for (const watcher of initial.watchers) observedPids.add(watcher.pid);
@@ -547,17 +561,22 @@ export const watcherDeathScenario: ScenarioHandler = async ({ assert, sandbox })
       sandbox.scope.kill(before.pid, "SIGKILL");
 
       let replacement: SupervisorStatus["watchers"][number] | undefined;
-      for (let attempt = 0; attempt < 200; attempt += 1) {
-        await Bun.sleep(5);
-        replacement = (await snapshot()).watchers.find(
-          (watcher) =>
-            watcher.eye === eye &&
-            watcher.repo === repo &&
-            watcher.pid !== before.pid &&
-            processIsAlive(watcher.pid),
-        );
-        if (replacement) break;
-      }
+      await waitForCondition(
+        async () => {
+          replacement = (await snapshot()).watchers.find(
+            (watcher) =>
+              watcher.eye === eye &&
+              watcher.repo === repo &&
+              watcher.pid !== before.pid &&
+              processIsAlive(watcher.pid),
+          );
+          return replacement !== undefined;
+        },
+        {
+          intervalMs: 5,
+          timeoutMs: WATCHER_RESTART_BUDGET_MS,
+        },
+      );
       assert(replacement !== undefined, `${eye} restarted after death`);
       if (replacement !== undefined) observedPids.add(replacement.pid);
       if (eye === "archiver") replacementArchiver = replacement;
@@ -594,33 +613,38 @@ export const watcherDeathScenario: ScenarioHandler = async ({ assert, sandbox })
       })}\n`,
     );
     let archived = 0;
-    for (let attempt = 0; attempt < 500; attempt += 1) {
-      await Bun.sleep(20);
-      try {
-        const database = new Database(join(repo, ".argus", "archive.db"), {
-          readonly: true,
-        });
-        archived = database
-          .query<{ count: number }, [string]>(
-            "SELECT count(*) AS count FROM archive_messages WHERE content = ?",
-          )
-          .get(text)!.count;
-        database.close();
-      } catch {
-        // The replacement may be opening the archive or committing its batch.
-      }
-      if (archived === 1) break;
-    }
+    await waitForCondition(
+      async () => {
+        try {
+          const database = new Database(join(repo, ".argus", "archive.db"), {
+            readonly: true,
+          });
+          archived = database
+            .query<{ count: number }, [string]>(
+              "SELECT count(*) AS count FROM archive_messages WHERE content = ?",
+            )
+            .get(text)!.count;
+          database.close();
+        } catch {
+          // The replacement may be opening the archive or committing its batch.
+        }
+        return archived === 1;
+      },
+      {
+        intervalMs: 20,
+        timeoutMs: WATCHER_ARCHIVE_BUDGET_MS,
+      },
+    );
     assert(
       archived === 1 && processIsAlive(replacementArchiver.pid),
       "the replacement archiver observed a transcript written after restart",
     );
   } finally {
     await supervisor.stop();
-    for (let attempt = 0; attempt < 1_500; attempt += 1) {
-      if ([...observedPids].every((pid) => !processIsAlive(pid))) break;
-      await Bun.sleep(20);
-    }
+    await waitForCondition(
+      () => [...observedPids].every((pid) => !processIsAlive(pid)),
+      { intervalMs: 20, timeoutMs: WATCHER_STOP_BUDGET_MS },
+    );
   }
 
   assert(
@@ -963,13 +987,10 @@ export const blastRadiusZeroScenario: ScenarioHandler = async ({
           eye === "archiver"
             ? join(peerArgus, "archive.db")
             : join(peerArgus, "eyes", eye, "cursors.json");
-        for (
-          let attempt = 0;
-          !(await Bun.file(readyPath).exists()) && attempt < 500;
-          attempt += 1
-        ) {
-          await Bun.sleep(20);
-        }
+        await waitForCondition(() => Bun.file(readyPath).exists(), {
+          intervalMs: 20,
+          timeoutMs: WATCHER_READY_BUDGET_MS,
+        });
       }
       const running = await snapshot();
       for (const watcher of running.watchers) observedPids.add(watcher.pid);
@@ -1043,10 +1064,10 @@ export const blastRadiusZeroScenario: ScenarioHandler = async ({
       );
     } finally {
       await supervisor.stop();
-      for (let attempt = 0; attempt < 1_500; attempt += 1) {
-        if ([...observedPids].every((pid) => !processIsAlive(pid))) break;
-        await Bun.sleep(20);
-      }
+      await waitForCondition(
+        () => [...observedPids].every((pid) => !processIsAlive(pid)),
+        { intervalMs: 20, timeoutMs: WATCHER_STOP_BUDGET_MS },
+      );
     }
 
     assert(
@@ -1083,19 +1104,20 @@ async function waitForHeartbeats(
   repo: string,
   before: Partial<Record<EyeName, EyeHealth>>,
 ): Promise<boolean> {
-  for (let attempt = 0; attempt < 750; attempt += 1) {
-    const now = await eyeHealth(repo);
-    const advanced = EYE_NAMES.every((eye) => {
-      const previous = before[eye]?.updatedAt;
-      const current = now[eye]?.updatedAt;
-      return (
-        current !== undefined && (previous === undefined || current > previous)
-      );
-    });
-    if (advanced) return true;
-    await Bun.sleep(20);
-  }
-  return false;
+  return waitForCondition(
+    async () => {
+      const now = await eyeHealth(repo);
+      const advanced = EYE_NAMES.every((eye) => {
+        const previous = before[eye]?.updatedAt;
+        const current = now[eye]?.updatedAt;
+        return (
+          current !== undefined && (previous === undefined || current > previous)
+        );
+      });
+      return advanced;
+    },
+    { intervalMs: 20, timeoutMs: HEARTBEAT_BUDGET_MS },
+  );
 }
 
 function archivedRowCount(repo: string): number {
@@ -1151,27 +1173,29 @@ async function peerArchivedAfterWipe(
       version: "test",
     })}\n`,
   );
-  for (let attempt = 0; attempt < 500; attempt += 1) {
-    await Bun.sleep(20);
-    try {
-      const database = new Database(join(peerRepo, ".argus", "archive.db"), {
-        readonly: true,
-      });
+  return waitForCondition(
+    async () => {
       try {
-        const archived = database
-          .query<{ count: number }, [string]>(
-            "SELECT count(*) AS count FROM archive_messages WHERE content = ?",
-          )
-          .get(text)!.count;
-        if (archived === 1) return true;
-      } finally {
-        database.close();
+        const database = new Database(join(peerRepo, ".argus", "archive.db"), {
+          readonly: true,
+        });
+        try {
+          const archived = database
+            .query<{ count: number }, [string]>(
+              "SELECT count(*) AS count FROM archive_messages WHERE content = ?",
+            )
+            .get(text)!.count;
+          return archived === 1;
+        } finally {
+          database.close();
+        }
+      } catch {
+        // The archiver may be mid-batch; retry until the budget runs out.
+        return false;
       }
-    } catch {
-      // The archiver may be mid-batch; retry until the budget runs out.
-    }
-  }
-  return false;
+    },
+    { intervalMs: 20, timeoutMs: WATCHER_ARCHIVE_BUDGET_MS },
+  );
 }
 
 export const mechanicsScenario: ScenarioHandler = ({
