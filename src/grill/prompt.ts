@@ -50,7 +50,7 @@ export function grillPrompt(input: GrillPromptInput): string {
     "Before planning, load the repository Wayfinder contract from",
     "docs/agents/WAYFINDER.md and follow it. When the decisions identify concrete",
     "work, file executable tickets rather than leaving implementation in prose;",
-    "each ticket must carry verification commands fixed at creation time (D4).",
+    "each ticket must carry verification commands fixed at creation time (R5; D4).",
     "",
     "It has no ticket, on purpose: §7.5 exempts planning and grilling. That also",
     "means nothing here bounds implementation scope, so do not implement anything.",

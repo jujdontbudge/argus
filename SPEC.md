@@ -105,7 +105,7 @@ Model names above are current defaults, not commitments; they are config knobs i
 `.argus/config.yaml`. Argus' `grill.model` defaults to `claude-fable-5`, and an
 individual launch may override it with `--model`.
 
-**Fable planning exception (R3–R4, superseding the 2026-08-25 "no fable"
+**Fable planning exception (R3–R5, superseding the 2026-08-25 "no fable"
 directive).** The `GRILL_MODES` routes — `grilling`, `spec`, `tickets`, `review`,
 and `diagnosis` — use Fable by default. If Fable quota is exhausted, that work
 queues and waits for reset. Only work Johan explicitly flags as time-critical may

@@ -51,6 +51,7 @@ describe("resolveGrillDispatch (#97): the form, not the existence", () => {
     expect(prompt).toContain("load the repository Wayfinder contract");
     expect(prompt).toContain("file executable tickets");
     expect(prompt).toContain("verification commands fixed at creation time");
+    expect(prompt).toContain("R5");
   });
 
   /**

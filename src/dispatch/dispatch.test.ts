@@ -43,6 +43,7 @@ describe("defaultDispatchPrompt (#165): planning routes carry R5 execution guida
     expect(prompt).toContain("load the repository Wayfinder contract");
     expect(prompt).toContain("file executable tickets");
     expect(prompt).toContain("verification commands fixed at creation time");
+    expect(prompt).toContain("R5");
   });
 
   test("carries the mandatory R2 bail-out for unfiled consequential choices", () => {

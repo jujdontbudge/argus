@@ -131,7 +131,7 @@ export function defaultDispatchPrompt(
         "Before planning, load the repository Wayfinder contract from",
         "docs/agents/WAYFINDER.md and follow it. When the decisions identify concrete",
         "work, file executable tickets rather than leaving implementation in prose;",
-        "each ticket must carry verification commands fixed at creation time (D4).",
+        "each ticket must carry verification commands fixed at creation time (R5; D4).",
       ]
     : [];
 
