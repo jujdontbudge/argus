@@ -30,11 +30,15 @@ describe("Hermes dispatch routing (#166)", () => {
   });
 
   test("accepts the exact Hermes pin", () => {
-    expect(routeAgent(["agent:hermes"])).toEqual({
+    const routing = routeAgent(["agent:hermes"]);
+    expect(routing).toEqual({
       agent: "hermes",
       reason: "pinned by 'agent:hermes'",
       status: "routed",
     });
+    expect(routing.status === "routed" ? ROUTES[routing.agent] : null).toBe(
+      HERMES_ROUTE,
+    );
   });
 
   test("keeps unknown and conflicting pins refused", () => {
