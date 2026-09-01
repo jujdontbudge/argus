@@ -28,6 +28,8 @@ Flags:
              spec, tickets, review, diagnosis. All route to Claude Code.
   --dry-run  (grill) print the routed skill and the exact opening prompt and
              stop; no workspace, no registry row, no session.
+  --print-prompt (dispatch) print one fully assembled ticket prompt and stop;
+                no claim, deployment or writes.
   --commit   (init, up) commit the integration files Argus wrote —
              .gitignore, AGENTS.md and docs/agents — as they stand in the
              working tree, in one "chore: adopt Argus" commit. Without it
@@ -106,10 +108,52 @@ async function install(): Promise<number> {
  * be supervised, and would make the cap depend on that process staying alive.
  */
 async function dispatch(args: string[]): Promise<number> {
-  const usage = "Usage: argus dispatch";
+  const usage = "Usage: argus dispatch [--print-prompt <ticket>]";
   if (args.length === 1 && (args[0] === "--help" || args[0] === "-h")) {
     console.log(usage);
     return 0;
+  }
+  if (args[0] === "--print-prompt") {
+    const ticketNumber = args[1];
+    if (args.length !== 2 || ticketNumber === undefined || !/^\d+$/.test(ticketNumber)) {
+      console.error(`argus dispatch: expected --print-prompt <ticket>\n${usage}`);
+      return 1;
+    }
+
+    const { gitRoot } = await import("./up/git.ts");
+    const repo = await gitRoot(process.cwd());
+    if (repo === null) {
+      console.error("argus dispatch: current directory is not inside a git repository");
+      return 1;
+    }
+
+    const { runGh, trackerRepoName } = await import("./eyes/retro/gh.ts");
+    const { buildDispatchPrompt, readDispatchTicket } = await import(
+      "./dispatch/dispatch.ts"
+    );
+    try {
+      const tracker = await trackerRepoName(repo, runGh);
+      if (tracker === null) {
+        console.error("argus dispatch: no GitHub tracker for this repository");
+        return 1;
+      }
+      const ticket = await readDispatchTicket(ticketNumber, tracker, {
+        cwd: repo,
+        gh: runGh,
+      });
+      const { routeAgent } = await import("./dispatch/routing.ts");
+      const routing = routeAgent(ticket.labels);
+      const prompt = await buildDispatchPrompt(ticket, tracker, {
+        gh: runGh,
+        repo,
+        ...(routing.status === "routed" && { agent: routing.agent }),
+      });
+      console.log(prompt);
+      return 0;
+    } catch (error) {
+      console.error(`argus dispatch: ${error instanceof Error ? error.message : String(error)}`);
+      return 1;
+    }
   }
   if (args.length > 0) {
     console.error(`argus dispatch: unknown argument '${args[0]}'\n${usage}`);
