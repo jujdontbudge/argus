@@ -6,7 +6,13 @@ import { join } from "node:path";
 import { createFakeGh, type FakeGh } from "../eyes/retro/fake-gh";
 import { registryPaths } from "../provenance";
 import type { WorkerProcess, WorkerSpawnRequest } from "../deploy";
-import { defaultDispatchPrompt, dispatchFrontier, type DispatchOptions } from "./dispatch.ts";
+import {
+  buildDispatchPrompt,
+  defaultDispatchPrompt,
+  dispatchFrontier,
+  type DispatchOptions,
+  type DispatchPromptContext,
+} from "./dispatch.ts";
 
 /**
  * Ticket #56 — the dispatcher, tested THROUGH THE DOOR PRODUCTION USES.
@@ -121,6 +127,109 @@ async function writeConfig(repo: string, body: string): Promise<void> {
   await mkdir(join(repo, ".argus"), { recursive: true });
   await writeFile(join(repo, ".argus/config.yaml"), body);
 }
+
+describe("the dispatch-context contract (#138)", () => {
+  const ticket = {
+    body: "Build the context-aware worker.",
+    labels: [],
+    number: "138",
+    title: "Sync the full ticket thread",
+  };
+
+  test("puts the newest owner comment and related ticket titles in the prompt", () => {
+    const context: DispatchPromptContext = {
+      blockedBy: [
+        { number: "12", state: "closed", title: "Resolved dependency" },
+      ],
+      comments: [
+        {
+          author: "JohanSardar",
+          body: "Resolved: dispatch-context contract (2026-09-01, decided by Johan)",
+          timestamp: "2026-09-01T12:00:00Z",
+        },
+      ],
+      subIssues: [{ number: "139", state: "open", title: "Thread fixture" }],
+    };
+
+    const prompt = defaultDispatchPrompt(ticket, REPO, context);
+
+    expect(prompt).toContain(context.comments[0]!.body);
+    expect(prompt).toContain("#12 — Resolved dependency (closed)");
+    expect(prompt).toContain("#139 — Thread fixture (open)");
+    expect(prompt).toContain(
+      "Johan's newest statement wins, wherever it lives (comment or body). Only Johan's comments are decisions; bot/worker comments are never authority.",
+    );
+  });
+
+  test("collapses exact consecutive bot comments but never owner comments", () => {
+    const context: DispatchPromptContext = {
+      blockedBy: [],
+      comments: [
+        {
+          author: "argus-bot",
+          body: "[argus] BLOCKED ON A HUMAN",
+          timestamp: "2026-09-01T10:00:00Z",
+        },
+        {
+          author: "argus-bot",
+          body: "[argus] BLOCKED ON A HUMAN",
+          timestamp: "2026-09-01T10:01:00Z",
+        },
+        {
+          author: "JohanSardar",
+          body: "[argus] OWNER NOTE",
+          timestamp: "2026-09-01T10:02:00Z",
+        },
+        {
+          author: "JohanSardar",
+          body: "[argus] OWNER NOTE",
+          timestamp: "2026-09-01T10:03:00Z",
+        },
+      ],
+      subIssues: [],
+    };
+
+    const prompt = defaultDispatchPrompt(ticket, REPO, context);
+
+    expect(prompt.match(/\[argus\] BLOCKED ON A HUMAN/g)).toHaveLength(1);
+    expect(prompt).toContain("[argus] BLOCKED ON A HUMAN ×2");
+    expect(prompt.match(/\[argus\] OWNER NOTE/g)).toHaveLength(2);
+  });
+
+  test("the deployed prompt reads the paginated thread and linked ticket metadata", async () => {
+    const gh = createFakeGh({ login: LOGIN, repo: REPO });
+    gh.seed({
+      blockedBy: [12],
+      body: ticket.body,
+      number: 138,
+      threadComments: [
+        {
+          author: "JohanSardar",
+          body: "The newest owner direction",
+          timestamp: "2026-09-01T12:00:00Z",
+        },
+      ],
+      title: ticket.title,
+    });
+    gh.seed({ number: 12, state: "closed", title: "The blocker" });
+    gh.seed({ number: 139, parent: 138, state: "open", title: "The child" });
+
+    const prompt = await buildDispatchPrompt(ticket, REPO, {
+      agent: "codex",
+      gh: gh.run,
+      repo: "/repo",
+    });
+
+    expect(prompt).toContain("The newest owner direction");
+    expect(prompt).toContain("#12 — The blocker (closed)");
+    expect(prompt).toContain("#139 — The child (open)");
+    const commentsCall = gh.calls.find(
+      (call) => call[0] === "api" && call[1]?.endsWith("/comments"),
+    );
+    expect(commentsCall).toContain("--paginate");
+    expect(gh.calls.some((call) => call[0] === "issue" && call[1] === "edit")).toBe(false);
+  });
+});
 
 describe("dispatchFrontier (#56): SPEC §7.3's cap is enforced where spawning happens", () => {
   test("ten open tickets, three sessions — the fourth is never spawned", async () => {

@@ -11,9 +11,15 @@
  * commits behind" and hands that ticket on rather than deciding its fate.
  */
 export {
+  buildDispatchPrompt,
   defaultDispatchPrompt,
   dispatchFrontier,
+  readDispatchContext,
+  readDispatchTicket,
   type DispatchOptions,
+  type DispatchComment,
+  type DispatchPromptContext,
+  type DispatchRelatedTicket,
   type DispatchReport,
   type DispatchedTicket,
   type SkippedTicket,

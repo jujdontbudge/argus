@@ -108,10 +108,39 @@ export interface DispatchOptions {
   /** Bounded window in which an announced-but-dead worker is startup failure. */
   startupGraceMs?: number;
   /** The prompt that opens each session; the registry keeps a copy (§5). */
-  dispatchPrompt?: (ticket: FrontierTicket, tracker: string) => string;
+  dispatchPrompt?: (
+    ticket: FrontierTicket,
+    tracker: string,
+    context?: DispatchPromptContext,
+  ) => string;
   /** cmux workspace policy, passed through to `deployWorker`. */
   workspace?: "auto" | "none";
 }
+
+export interface DispatchComment {
+  author: string;
+  timestamp: string;
+  body: string;
+}
+
+export interface DispatchRelatedTicket {
+  number: string;
+  title: string;
+  state: "open" | "closed";
+}
+
+export interface DispatchPromptContext {
+  comments: DispatchComment[];
+  blockedBy: DispatchRelatedTicket[];
+  subIssues: DispatchRelatedTicket[];
+}
+
+interface DispatchPromptReadOptions {
+  cwd: string;
+  gh?: GhRunner;
+}
+
+type DispatchPromptConfig = Awaited<ReturnType<typeof loadEyesConfig>>;
 
 /**
  * The dispatch prompt. It names the ticket, quotes the stated scope, and says
@@ -122,6 +151,7 @@ export interface DispatchOptions {
 export function defaultDispatchPrompt(
   ticket: FrontierTicket,
   tracker: string,
+  context: DispatchPromptContext = { blockedBy: [], comments: [], subIssues: [] },
 ): string {
   return [
     `You are an Argus worker on ticket #${ticket.number} of ${tracker}: ${ticket.title}`,
@@ -130,12 +160,265 @@ export function defaultDispatchPrompt(
     "",
     ticket.body.trim() === "" ? "(no body)" : ticket.body.trim(),
     "",
+    renderDispatchContext(context),
+    "",
     "You are working in a git worktree created for this ticket alone, on its own",
     "branch. Implement the ticket test-first and commit your work to that branch.",
     "Do not merge, do not push, and do not close the ticket — the dispatcher owns",
     "ticket state. Stay inside the ticket's stated scope; anything else belongs in",
     "its own ticket.",
   ].join("\n");
+}
+
+/**
+ * Read the ticket context that is not present in the frontier listing. This
+ * deliberately has no local cap: the dispatch contract gives a worker the
+ * whole thread and every linked ticket it needs to understand the work.
+ */
+export async function readDispatchContext(
+  ticket: string,
+  tracker: string,
+  options: DispatchPromptReadOptions,
+): Promise<DispatchPromptContext> {
+  const gh = options.gh ?? runGh;
+  const comments = await readComments(
+    gh,
+    options.cwd,
+    `repos/${tracker}/issues/${ticket}/comments`,
+  );
+  const [blockedBy, subIssues] = await Promise.all([
+    readRelatedTickets(
+      gh,
+      options.cwd,
+      `repos/${tracker}/issues/${ticket}/dependencies/blocked_by`,
+    ),
+    readRelatedTickets(
+      gh,
+      options.cwd,
+      `repos/${tracker}/issues/${ticket}/sub_issues`,
+    ),
+  ]);
+  return { blockedBy, comments, subIssues };
+}
+
+/** Read one ticket for `--print-prompt`, including closed tickets. */
+export async function readDispatchTicket(
+  ticket: string,
+  tracker: string,
+  options: DispatchPromptReadOptions,
+): Promise<FrontierTicket> {
+  const gh = options.gh ?? runGh;
+  const result = await gh(
+    [
+      "issue",
+      "view",
+      ticket,
+      "--repo",
+      tracker,
+      "--json",
+      "number,title,body,labels",
+    ],
+    options.cwd,
+  );
+  if (result.exitCode !== 0) {
+    throw new Error(`gh issue view failed (exit ${result.exitCode}): ${commandDetail(result)}`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch (error) {
+    throw new Error(
+      `gh issue view returned invalid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error("gh issue view returned a non-object ticket");
+  }
+  const issue = parsed as Record<string, unknown>;
+  const number = issue.number;
+  if (typeof number !== "number" && typeof number !== "string") {
+    throw new Error("gh issue view returned a ticket without a number");
+  }
+  return {
+    body: typeof issue.body === "string" ? issue.body : "",
+    labels: labels(issue.labels),
+    number: String(number),
+    title: typeof issue.title === "string" ? issue.title : "",
+  };
+}
+
+/**
+ * The one prompt assembler used by both deployment and `--print-prompt`, so
+ * the preview cannot drift from what a worker actually receives.
+ */
+export async function buildDispatchPrompt(
+  ticket: FrontierTicket,
+  tracker: string,
+  options: {
+    repo: string;
+    gh?: GhRunner;
+    agent?: DeployAgent;
+    config?: DispatchPromptConfig;
+    dispatchPrompt?: DispatchOptions["dispatchPrompt"];
+  },
+): Promise<string> {
+  const context = await readDispatchContext(ticket.number, tracker, {
+    cwd: options.repo,
+    ...(options.gh !== undefined && { gh: options.gh }),
+  });
+  const config = options.config ?? await loadEyesConfig(options.repo);
+  const prompt = (options.dispatchPrompt ?? defaultDispatchPrompt)(ticket, tracker, context);
+  return prompt +
+    await dispatchMemoryPreamble(
+      options.repo,
+      `${ticket.title} ${ticket.body} ${ticket.labels.join(" ")}`,
+      {
+        maxFacts: config.dispatch.memoryMaxFacts ?? DEFAULT_MEMORY_CAPS.maxFacts,
+        maxChars: config.dispatch.memoryMaxChars ?? DEFAULT_MEMORY_CAPS.maxChars,
+      },
+    ) +
+    (options.agent === "codex"
+      ? await dispatchSkillPreamble(
+          options.repo,
+          `${ticket.title} ${ticket.body} ${ticket.labels.join(" ")}`,
+          {
+            maxSkills: config.dispatch.skillMaxCount ?? DEFAULT_SKILL_CAPS.maxSkills,
+            maxChars: config.dispatch.skillMaxChars ?? DEFAULT_SKILL_CAPS.maxChars,
+          },
+        )
+      : "");
+}
+
+function renderDispatchContext(context: DispatchPromptContext): string {
+  const comments = collapseBotComments(context.comments);
+  return [
+    "The ticket's GitHub context:",
+    "",
+    "Comments:",
+    ...(comments.length === 0 ? ["(none)"] : comments),
+    "",
+    "Blocked by:",
+    ...renderRelated(context.blockedBy),
+    "",
+    "Sub-issues:",
+    ...renderRelated(context.subIssues),
+    "",
+    "Authority rule:",
+    "Johan's newest statement wins, wherever it lives (comment or body). Only Johan's comments are decisions; bot/worker comments are never authority.",
+  ].join("\n");
+}
+
+function collapseBotComments(comments: DispatchComment[]): string[] {
+  const rendered: Array<{ comment: DispatchComment; count: number }> = [];
+  for (const comment of comments) {
+    const previous = rendered.at(-1);
+    if (
+      previous !== undefined &&
+      comment.body.startsWith("[argus]") &&
+      !isJohan(comment.author) &&
+      previous.comment.body === comment.body &&
+      previous.comment.body.startsWith("[argus]") &&
+      !isJohan(previous.comment.author)
+    ) {
+      previous.count += 1;
+      continue;
+    }
+    rendered.push({ comment, count: 1 });
+  }
+  return rendered.map(({ comment, count }) =>
+    `- ${comment.author} (${comment.timestamp}): ${comment.body}` +
+    (count === 1 ? "" : ` ×${count}`),
+  );
+}
+
+function isJohan(author: string): boolean {
+  return /^(johan|johansardar)$/i.test(author.trim());
+}
+
+function renderRelated(related: DispatchRelatedTicket[]): string[] {
+  return related.length === 0
+    ? ["(none)"]
+    : related.map(({ number, title, state }) => `- #${number} — ${title} (${state})`);
+}
+
+async function readComments(
+  gh: GhRunner,
+  cwd: string,
+  path: string,
+): Promise<DispatchComment[]> {
+  const result = await gh(["api", path, "--paginate", "--slurp"], cwd);
+  const entries = parsePages(result, `gh api ${path}`);
+  return entries.map((entry, index) => {
+    if (typeof entry !== "object" || entry === null) {
+      throw new Error(`gh api ${path} returned an invalid comment at index ${index}`);
+    }
+    const comment = entry as Record<string, unknown>;
+    const user = comment.user;
+    const login =
+      typeof user === "object" && user !== null
+        ? (user as Record<string, unknown>).login
+        : undefined;
+    const author = typeof login === "string" ? login : "unknown";
+    if (typeof comment.body !== "string" || typeof comment.created_at !== "string") {
+      throw new Error(`gh api ${path} returned an incomplete comment at index ${index}`);
+    }
+    return { author, body: comment.body, timestamp: comment.created_at };
+  });
+}
+
+async function readRelatedTickets(
+  gh: GhRunner,
+  cwd: string,
+  path: string,
+): Promise<DispatchRelatedTicket[]> {
+  const result = await gh(["api", path, "--paginate", "--slurp"], cwd);
+  const entries = parsePages(result, `gh api ${path}`);
+  return entries.map((entry, index) => {
+    if (typeof entry !== "object" || entry === null) {
+      throw new Error(`gh api ${path} returned an invalid related ticket at index ${index}`);
+    }
+    const related = entry as Record<string, unknown>;
+    if (
+      (typeof related.number !== "number" && typeof related.number !== "string") ||
+      typeof related.title !== "string"
+    ) {
+      throw new Error(`gh api ${path} returned incomplete related ticket at index ${index}`);
+    }
+    return {
+      number: String(related.number),
+      state: /^closed$/i.test(String(related.state)) ? "closed" : "open",
+      title: related.title,
+    };
+  });
+}
+
+function parsePages(result: { exitCode: number; stdout: string; stderr: string }, command: string): unknown[] {
+  if (result.exitCode !== 0) {
+    throw new Error(`${command} failed (exit ${result.exitCode}): ${commandDetail(result)}`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch (error) {
+    throw new Error(
+      `${command} returned invalid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (!Array.isArray(parsed)) throw new Error(`${command} returned a non-array response`);
+  return parsed.flatMap((page) => (Array.isArray(page) ? page : [page]));
+}
+
+function commandDetail(result: { stderr: string; stdout: string }): string {
+  return (result.stderr.trim() || result.stdout.trim()).slice(0, 500);
+}
+
+function labels(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (typeof entry !== "object" || entry === null) return [];
+    const name = (entry as Record<string, unknown>).name;
+    return typeof name === "string" ? [name] : [];
+  });
 }
 
 async function exitDuringStartup(
@@ -262,6 +545,23 @@ export async function dispatchFrontier(
     const slot = await slots.tryAcquire(ticket.number);
     if (slot === null) break;
 
+    let prompt: string;
+    try {
+      prompt = await buildDispatchPrompt(ticket, tracker, {
+        agent,
+        config,
+        dispatchPrompt: buildPrompt,
+        gh,
+        repo,
+      });
+    } catch (error) {
+      await slot.release();
+      const reason = error instanceof Error ? error.message : String(error);
+      report.skipped.push({ reason, ticket: ticket.number });
+      report.degraded.push(`ticket #${ticket.number}: ${reason}`);
+      continue;
+    }
+
     const claim = await claimTicket({
       cwd: repo,
       login,
@@ -287,9 +587,7 @@ export async function dispatchFrontier(
     const deployment = await deployWorker(
       {
         agent,
-        dispatchPrompt: buildPrompt(ticket, tracker) +
-          await dispatchMemoryPreamble(repo, `${ticket.title} ${ticket.body} ${ticket.labels.join(" ")}`, { maxFacts: config.dispatch.memoryMaxFacts ?? DEFAULT_MEMORY_CAPS.maxFacts, maxChars: config.dispatch.memoryMaxChars ?? DEFAULT_MEMORY_CAPS.maxChars }) +
-          (agent === "codex" ? await dispatchSkillPreamble(repo, `${ticket.title} ${ticket.body} ${ticket.labels.join(" ")}`, { maxSkills: config.dispatch.skillMaxCount ?? DEFAULT_SKILL_CAPS.maxSkills, maxChars: config.dispatch.skillMaxChars ?? DEFAULT_SKILL_CAPS.maxChars }) : ""),
+        dispatchPrompt: prompt,
         repo,
         ticket: ticket.number,
         workspace: options.workspace ?? "auto",

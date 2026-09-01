@@ -27,6 +27,14 @@ export interface FakeGhIssue {
   blockedBy: number[];
   /** Comments posted on it, in order — #57 comments every refusal. */
   comments: string[];
+  /** Comments returned by the read-only issue comments API. */
+  threadComments: FakeGhComment[];
+}
+
+export interface FakeGhComment {
+  author: string;
+  timestamp: string;
+  body: string;
 }
 
 export interface FakeGhSeed {
@@ -39,6 +47,10 @@ export interface FakeGhSeed {
   blockedBy?: number[];
   /** Seed a sub-issue link without going through the sub_issues API. */
   parent?: number;
+  /** Seed comments returned by `gh api .../comments --paginate`. */
+  threadComments?: FakeGhComment[];
+  /** Alias for threadComments, kept natural for issue fixtures. */
+  comments?: FakeGhComment[];
 }
 
 export interface FakeGhOptions {
@@ -101,6 +113,7 @@ export function createFakeGh(options: FakeGhOptions = {}): FakeGh {
       assignees: [...(seed.assignees ?? [])],
       blockedBy: [...(seed.blockedBy ?? [])],
       comments: [],
+      threadComments: [...(seed.threadComments ?? seed.comments ?? [])],
     };
     issues.push(issue);
     nextNumber = Math.max(nextNumber, seed.number + 1);
@@ -157,6 +170,7 @@ export function createFakeGh(options: FakeGhOptions = {}): FakeGh {
           number: Number(issue.number),
           title: issue.title,
           body: issue.body,
+          labels: issue.labels.map((name) => ({ name })),
           state: issue.state.toUpperCase(),
           assignees: issue.assignees.map((login) => ({ login })),
         }),
@@ -224,6 +238,20 @@ export function createFakeGh(options: FakeGhOptions = {}): FakeGh {
         if (options.failUser) return err(options.failUser);
         return ok(`${options.login ?? "argus-bot"}\n`);
       }
+      const comments = path.match(/^repos\/(.+)\/issues\/(\d+)\/comments$/);
+      if (comments) {
+        const issue = issues.find((entry) => entry.number === comments[2]);
+        if (!issue) return err(`no issue ${comments[2]}`);
+        return ok(
+          JSON.stringify(
+            issue.threadComments.map((comment) => ({
+              body: comment.body,
+              created_at: comment.timestamp,
+              user: { login: comment.author },
+            })),
+          ),
+        );
+      }
       const blocked = path.match(/^repos\/(.+)\/issues\/(\d+)\/dependencies\/blocked_by$/);
       if (blocked) {
         if (options.failDependencies) return err(options.failDependencies);
@@ -236,8 +264,8 @@ export function createFakeGh(options: FakeGhOptions = {}): FakeGh {
                 (entry) => entry.number === String(number),
               );
               return dependency
-                ? [{ number, state: dependency.state }]
-                : [{ number, state: "open" }];
+                ? [{ number, state: dependency.state, title: dependency.title }]
+                : [{ number, state: "open", title: `Issue #${number}` }];
             }),
           ),
         );
@@ -251,7 +279,11 @@ export function createFakeGh(options: FakeGhOptions = {}): FakeGh {
           JSON.stringify(
             issues
               .filter((entry) => entry.parent === Number(issue.number))
-              .map((entry) => ({ number: Number(entry.number), state: entry.state })),
+              .map((entry) => ({
+                number: Number(entry.number),
+                state: entry.state,
+                title: entry.title,
+              })),
           ),
         );
       }
