@@ -96,6 +96,15 @@ function ticketNumber(value: unknown): string | null {
   return /^\d+$/.test(ticket) ? ticket : null;
 }
 
+function isSafeSessionId(value: string): boolean {
+  return value.length > 0 &&
+    value.length <= 200 &&
+    value === value.trim() &&
+    value !== "." &&
+    value !== ".." &&
+    !/[\u0000-\u001f\u007f/\\]/.test(value);
+}
+
 function isCause(value: unknown): value is EscalationCause {
   return Object.values(ESCALATION_CAUSES).includes(value as EscalationCause);
 }
@@ -110,7 +119,7 @@ function escalationFields(value: unknown): EscalationFields | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const row = value as Record<string, unknown>;
   const ticket = ticketNumber(row.ticket);
-  if (ticket === null || typeof row.sessionId !== "string" || row.sessionId.trim() === "") {
+  if (ticket === null || typeof row.sessionId !== "string" || !isSafeSessionId(row.sessionId)) {
     return null;
   }
   return {
@@ -264,6 +273,9 @@ export async function escalateNeedsJohan(
     // produce a second escalation for the same cause.
     const registry = await loadRegistry(registryPaths(repo));
     const root = chainRootOf(registry.sessions, sessionId);
+    // `continues` is registry data, so validate the resolved root as well as
+    // the trigger id before using it in the digest filename.
+    if (!isSafeSessionId(root)) return { status: "ignored", reason: "not-trigger" };
     const existing = await readLifecycleRecords(repo);
     if (
       existing.some(

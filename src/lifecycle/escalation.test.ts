@@ -311,6 +311,19 @@ describe("needs-Johan escalation routing", () => {
     expect(await Bun.file(join(repo, ".argus/registry/lifecycle.jsonl")).exists()).toBe(false);
   });
 
+  test("fails closed for a session id that could escape the digest directory", async () => {
+    const repo = await repoFixture();
+    const result = await escalateNeedsJohan(
+      repo,
+      trigger("r2-bailout", { sessionId: "/../../outside" }),
+      { notify: async () => {} },
+    );
+
+    expect(result).toEqual({ status: "ignored", reason: "not-trigger" });
+    expect(await Bun.file(join(repo, "outside.md")).exists()).toBe(false);
+    expect(await Bun.file(join(repo, ".argus/registry/lifecycle.jsonl")).exists()).toBe(false);
+  });
+
   test.each([undefined, null, "not-an-object", 42])(
     "fails closed for malformed non-object trigger data: %o",
     async (candidate) => {
