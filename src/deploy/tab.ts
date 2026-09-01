@@ -90,7 +90,7 @@ import {
 import { loadRegistry, registryPaths } from "../provenance";
 
 export type TabResult =
-  | { status: "opened"; surface: string; workspace: string }
+  | { status: "opened"; inputSurface: string; surface: string; workspace: string }
   | { status: "degraded"; reason: string };
 
 export type TabCloseResult =
@@ -194,7 +194,12 @@ export async function openWorkerTab(
   // hands to `close-surface`. A ref recorded here would be a ref persisted
   // across a cmux restart — after which it means nothing, and a handle that
   // means nothing is #98's redirect.
-  return { status: "opened", surface: surface.id, workspace: resolved };
+  return {
+    status: "opened",
+    inputSurface: surface.ref,
+    surface: surface.id,
+    workspace: resolved,
+  };
 }
 
 /**

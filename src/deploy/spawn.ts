@@ -15,6 +15,9 @@
  *    streams, not read at exit — waiting for exit would mean registering a
  *    deployment after the whole session had already happened.
  */
+import { appendFile, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
+
 import type { DeployAgent } from "./routes.ts";
 
 export interface WorkerExit {
@@ -30,6 +33,8 @@ export interface WorkerSpawnRequest {
   cwd: string;
   env: Record<string, string>;
   executable: string;
+  /** Optional durable mirror of worker output and its terminal exit status. */
+  logFile?: string;
   /** Route hook: returns the session id when a stdout line announces one. */
   announce?: (line: string) => string | null;
 }
@@ -79,6 +84,20 @@ function drainLines(buffer: string): { lines: string[]; rest: string } {
 }
 
 export const spawnWorker: WorkerSpawn = async (request) => {
+  let logWrites = Promise.resolve();
+  const mirror = (text: string): Promise<void> => {
+    if (request.logFile === undefined || text === "") return Promise.resolve();
+    logWrites = logWrites.then(() => appendFile(request.logFile!, text, "utf8"));
+    return logWrites;
+  };
+  if (request.logFile !== undefined) {
+    await mkdir(dirname(request.logFile), { recursive: true });
+    await mirror(
+      `[argus] starting ${request.agent} worker in ${request.cwd}\n` +
+        `[argus] executable: ${request.executable}\n`,
+    );
+  }
+
   const child = Bun.spawn([request.executable, ...request.command.slice(1)], {
     cwd: request.cwd,
     env: request.env,
@@ -104,6 +123,7 @@ export const spawnWorker: WorkerSpawn = async (request) => {
     for await (const chunk of stream) {
       const decoded = decoder.decode(chunk, { stream: true });
       text += decoded;
+      await mirror(decoded);
       if (!scan || announce === undefined) continue;
       buffer += decoded;
       const { lines, rest } = drainLines(buffer);
@@ -125,6 +145,8 @@ export const spawnWorker: WorkerSpawn = async (request) => {
     // A process that ended without announcing never will: unblock the waiter
     // with the honest answer rather than hanging the dispatcher forever.
     announceResolve(null);
+    await mirror(`[argus] worker exited with code ${exitCode}\n`);
+    await logWrites;
     return { exitCode, stderr, stdout };
   })();
 

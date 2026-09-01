@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { VERIFIED_HERMES_CLI_VERSION } from "../tailing/hermes-compat.ts";
 import { agentsPointers, verifyWiring } from "./verify.ts";
 
 /**
@@ -44,6 +45,27 @@ afterEach(async () => {
 });
 
 describe("wiring verification", () => {
+  test("warns when the installed Hermes differs from the verified pin", async () => {
+    const repo = await scratchRepo();
+    const cli = join(repo, "hermes");
+    await Bun.write(cli, '#!/bin/sh\nprintf "Hermes Agent v2026.8.27\\n"\n');
+    await chmod(cli, 0o755);
+    const checks = await verifyWiring(repo, { hermes: { profile: "unused", root: repo, cli } });
+    expect(checks.at(-1)).toMatchObject({ name: "Hermes compatibility", ok: true, warning: true });
+    expect(checks.at(-1)!.detail).toContain("verified against");
+  });
+
+  test("is silent for a matching Hermes and reports an absent pin/install as never verified", async () => {
+    const repo = await scratchRepo();
+    const cli = join(repo, "hermes");
+    await Bun.write(cli, `#!/bin/sh\nprintf "${VERIFIED_HERMES_CLI_VERSION} · upstream deadbeef\\n"\n`);
+    await chmod(cli, 0o755);
+    const matching = await verifyWiring(repo, { hermes: { profile: "unused", root: repo, cli } });
+    expect(matching.at(-1)).toMatchObject({ name: "Hermes compatibility", ok: true });
+    expect(matching.at(-1)).not.toHaveProperty("warning");
+    const missing = await verifyWiring(repo, { hermes: { profile: "unused", root: repo, cli: join(repo, "missing") } });
+    expect(missing.at(-1)!.detail).toContain("never verified");
+  });
   test("reads pointers out of the managed blocks and ignores prose commands", () => {
     expect(agentsPointers(BLOCKS).sort()).toEqual([
       ".argus/memory/USER.md",

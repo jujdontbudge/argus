@@ -304,7 +304,7 @@ describe("argus up", () => {
     expect(result.stdout).toContain(
       "wiring: claude skills adapter OK (2 canonical skills readable through .claude/skills)",
     );
-    expect(result.stdout).toContain("wiring: AGENTS.md pointers OK (6/6 resolve)");
+    expect(result.stdout).toContain("wiring: AGENTS.md pointers OK (8/8 resolve)");
     expect(result.stdout).toContain(
       "wiring: Hermes memory binding OK (profile memories -> .argus/memory)",
     );

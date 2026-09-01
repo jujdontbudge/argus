@@ -136,7 +136,13 @@ describe("eyes config (ADR-0002 values, defaults in code)", () => {
           staleAfterDays: 30,
           archiveAfterDays: 90,
         },
-        dispatch: { maxConcurrency: 3 },
+        dispatch: {
+          maxConcurrency: 3,
+          memoryMaxFacts: 5,
+          memoryMaxChars: 12000,
+          skillMaxCount: 3,
+          skillMaxChars: 20000,
+        },
       });
     });
   });
@@ -149,7 +155,14 @@ describe("eyes config (ADR-0002 values, defaults in code)", () => {
         "# Argus per-repo overrides.\n# reviewer:\n#   quiet_window_seconds: 5\n",
       );
       const config = await loadEyesConfig(repo);
-      expect(config.reviewer.quietWindowSeconds).toBe(30);
+      expect(config).toEqual({
+        brain: { model: "gpt-5.6-luna", reasoningEffort: "low", maxConcurrency: 2 },
+        reviewer: { brain: { model: "gpt-5.6-luna", reasoningEffort: "low" }, quietWindowSeconds: 30, maxWaitSeconds: 300 },
+        digest: { brain: { model: "gpt-5.6-luna", reasoningEffort: "low" }, quietWindowSeconds: 30, maxWaitSeconds: 120 },
+        retro: { brain: { model: "gpt-5.6-luna", reasoningEffort: "low" }, quietWindowSeconds: 60, maxWaitSeconds: 600 },
+        curator: { enabled: true, intervalHours: 168, staleAfterDays: 30, archiveAfterDays: 90 },
+        dispatch: { maxConcurrency: 3, memoryMaxFacts: 5, memoryMaxChars: 12000, skillMaxCount: 3, skillMaxChars: 20000 },
+      });
     });
   });
 

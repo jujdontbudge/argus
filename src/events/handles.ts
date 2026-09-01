@@ -79,10 +79,10 @@ export const isCmuxUuid = (handle: string): boolean => UUID.test(handle);
  * Everything here changes state that belongs to Johan if the handle redirects:
  * the three `close-*` verbs destroy a surface, workspace or window; the rest
  * create tabs in, rename, reorder, move or steal focus to whatever is in front
- * of him. Argus itself drives only `new-surface`, `close-surface` and
- * `rename-tab` today. The others are listed anyway, because the cost of
- * listing a verb we never call is zero and the cost of omitting one we later
- * start calling is a tab of Johan's.
+ * of him. Argus currently drives `new-surface`, `close-surface`, and
+ * `rename-tab`. The others are listed anyway, because the cost of listing a
+ * verb we never call is zero and the cost of omitting one we later start
+ * calling is a tab of Johan's.
  */
 export const CMUX_UUID_ONLY_VERBS: ReadonlySet<string> = new Set([
   "close-surface",

@@ -29,6 +29,7 @@ export interface RetroSignalSession {
   /** The digest narrative — what the session says it did. */
   narrative?: string;
   johanTouched?: boolean;
+  knownPitfallRepeat?: string;
 }
 
 export interface RetroSignal {
@@ -84,6 +85,9 @@ function sessionOf(digest: StoredDigest): RetroSignalSession {
     digestFile: digest.fileName,
     narrative: digest.body,
     johanTouched: digest.frontmatter.johanTouched,
+    ...(digest.frontmatter.knownPitfallRepeat !== undefined && {
+      knownPitfallRepeat: digest.frontmatter.knownPitfallRepeat,
+    }),
   };
 }
 

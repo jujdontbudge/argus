@@ -67,6 +67,10 @@ export interface CuratorConfig {
 export interface DispatchConfig {
   /** Concurrent dispatched ticket sessions per repo (SPEC §7.3.3: 3). */
   maxConcurrency: number;
+  memoryMaxFacts?: number;
+  memoryMaxChars?: number;
+  skillMaxCount?: number;
+  skillMaxChars?: number;
 }
 
 export interface EyesConfig {
@@ -108,7 +112,7 @@ export const DEFAULT_EYES_CONFIG: EyesConfig = {
     staleAfterDays: 30,
     archiveAfterDays: 90,
   },
-  dispatch: { maxConcurrency: 3 },
+  dispatch: { maxConcurrency: 3, memoryMaxFacts: 5, memoryMaxChars: 12000, skillMaxCount: 3, skillMaxChars: 20000 },
 };
 
 /**
@@ -295,6 +299,10 @@ export async function loadEyesConfig(repo: string): Promise<EyesConfig> {
         sections.get("dispatch")?.get("max_concurrency"),
         defaults.dispatch.maxConcurrency,
       ),
+      memoryMaxFacts: positiveInteger(sections.get("dispatch")?.get("memory_max_facts"), defaults.dispatch.memoryMaxFacts ?? 5),
+      memoryMaxChars: positiveInteger(sections.get("dispatch")?.get("memory_max_chars"), defaults.dispatch.memoryMaxChars ?? 12000),
+      skillMaxCount: positiveInteger(sections.get("dispatch")?.get("skill_max_count"), defaults.dispatch.skillMaxCount ?? 3),
+      skillMaxChars: positiveInteger(sections.get("dispatch")?.get("skill_max_chars"), defaults.dispatch.skillMaxChars ?? 20000),
     },
   };
 }

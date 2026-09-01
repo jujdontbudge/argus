@@ -19,6 +19,7 @@ Commands:
   complete verify, merge, close and map finished tickets (SPEC §7.3.4)
   signals  consume push events and run one slow-poll fallback sweep
   search   search the transcript archive
+  dash     serve the read-only local dashboard
   memory   one-time memory-store migrations
   install  install argus from this checkout
 
@@ -104,7 +105,17 @@ async function install(): Promise<number> {
  * whole batch behaviour. A resident loop would add a process that must itself
  * be supervised, and would make the cap depend on that process staying alive.
  */
-async function dispatch(): Promise<number> {
+async function dispatch(args: string[]): Promise<number> {
+  const usage = "Usage: argus dispatch";
+  if (args.length === 1 && (args[0] === "--help" || args[0] === "-h")) {
+    console.log(usage);
+    return 0;
+  }
+  if (args.length > 0) {
+    console.error(`argus dispatch: unknown argument '${args[0]}'\n${usage}`);
+    return 1;
+  }
+
   const { gitRoot } = await import("./up/git.ts");
   const repo = await gitRoot(process.cwd());
   if (repo === null) {
@@ -335,6 +346,29 @@ async function search(args: string[]): Promise<number> {
   }
 }
 
+/** `argus dash` is an on-demand reader (#128), never a supervised eye. */
+async function dash(args: string[]): Promise<number> {
+  let requestedRepo = process.cwd();
+  let port: number | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const flag = args[index];
+    if (flag === "--repo" || flag === "--port") {
+      const value = args[++index];
+      if (!value || value.startsWith("--")) { console.error("Usage: argus dash [--repo <path>] [--port <n>]"); return 1; }
+      if (flag === "--repo") requestedRepo = value;
+      else { port = Number(value); if (!Number.isInteger(port) || port < 1 || port > 65535) { console.error("argus dash: invalid port"); return 1; } }
+    } else { console.error(`argus dash: unknown argument '${flag}'`); return 1; }
+  }
+  const { gitRoot } = await import("./up/git.ts");
+  const repo = await gitRoot(requestedRepo);
+  if (repo === null) { console.error(`argus dash: no git repository contains ${requestedRepo}`); return 1; }
+  const { createDashServer } = await import("./dash/index.ts");
+  const server = createDashServer({ repo, ...(port !== undefined && { port }) });
+  console.log(`Argus dashboard: http://${server.hostname}:${server.port}/`);
+  await new Promise<void>(() => {});
+  return 0;
+}
+
 async function signals(args: string[]): Promise<number> {
   const repoFlag = args.indexOf("--repo");
   if (repoFlag !== -1 && !args[repoFlag + 1]) {
@@ -420,7 +454,7 @@ export async function main(args: string[]): Promise<number> {
   }
 
   if (args[0] === "dispatch") {
-    return dispatch();
+    return dispatch(args.slice(1));
   }
 
   if (args[0] === "complete") {
@@ -434,6 +468,8 @@ export async function main(args: string[]): Promise<number> {
   if (args[0] === "search") {
     return search(args.slice(1));
   }
+
+  if (args[0] === "dash") return dash(args.slice(1));
 
   if (args[0] === "signals") {
     return signals(args.slice(1));

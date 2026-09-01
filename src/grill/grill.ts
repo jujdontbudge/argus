@@ -183,6 +183,7 @@ export async function startGrill(
       dispatchPrompt: prompt,
       repo: request.repo,
       route: CLAUDE_GRILL_ROUTE,
+      inputSurfaceRef: workspace.inputSurface,
       surfaceRef: workspace.surface,
       workspaceRef: workspace.workspace,
       ...(request.executable !== undefined && { executable: request.executable }),
@@ -192,6 +193,7 @@ export async function startGrill(
       cmux,
       spawn: createCmuxLaunch({
         cmux,
+        inputSurface: workspace.inputSurface,
         surface: workspace.surface,
         workspace: workspace.workspace,
       }),

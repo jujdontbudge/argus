@@ -112,7 +112,12 @@ describe("openWorkerTab (#95): a tab in the workspace Argus already has", () => 
 
     const result = await openWorkerTab({ env: { CMUX_WORKSPACE_ID: ARGUS } }, run);
 
-    expect(result).toEqual({ status: "opened", surface: WORKER, workspace: ARGUS });
+    expect(result).toEqual({
+      status: "opened",
+      inputSurface: "surface:2",
+      surface: WORKER,
+      workspace: ARGUS,
+    });
     expect(calls).toContainEqual([
       "new-surface",
       "--type",
@@ -139,7 +144,12 @@ describe("openWorkerTab (#95): a tab in the workspace Argus already has", () => 
       run,
     );
 
-    expect(result).toEqual({ status: "opened", surface: WORKER, workspace: ARGUS });
+    expect(result).toEqual({
+      status: "opened",
+      inputSurface: "surface:2",
+      surface: WORKER,
+      workspace: ARGUS,
+    });
     const changing = calls.filter((call) => call[0] === "new-surface" || call[0] === "rename-tab");
     expect(changing).toHaveLength(2);
     for (const call of changing) {

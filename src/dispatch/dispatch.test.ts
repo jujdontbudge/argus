@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { createFakeGh, type FakeGh } from "../eyes/retro/fake-gh";
 import { registryPaths } from "../provenance";
 import type { WorkerProcess, WorkerSpawnRequest } from "../deploy";
-import { dispatchFrontier, type DispatchOptions } from "./dispatch.ts";
+import { defaultDispatchPrompt, dispatchFrontier, type DispatchOptions } from "./dispatch.ts";
 
 /**
  * Ticket #56 — the dispatcher, tested THROUGH THE DOOR PRODUCTION USES.
@@ -83,7 +83,9 @@ function witnessSpawn(
       // which would look exactly like a routing bug and hide the real one.
       announcedSessionId: async () =>
         request.agent === "codex" ? `01a03c64-8acb-7c40-9cf5-000000000${witness.calls.length}` : null,
-      exited: Promise.resolve({ exitCode: 0, stderr: "", stdout: "" }),
+      // A normal witness represents a worker that remains alive after startup.
+      // Immediate exit is a distinct production failure exercised below.
+      exited: new Promise(() => {}),
       kill: () => {
         throw new Error("the dispatcher must never kill a worker");
       },
@@ -106,7 +108,7 @@ function options(
   spawn: NonNullable<DispatchOptions["spawn"]>,
   extra: Partial<DispatchOptions> = {},
 ): DispatchOptions {
-  return { cmux: noCmux, gh: gh.run, repo, spawn, ...extra };
+  return { cmux: noCmux, gh: gh.run, repo, spawn, startupGraceMs: 0, ...extra };
 }
 
 async function deadPid(): Promise<number> {
@@ -304,6 +306,42 @@ describe("dispatchFrontier (#56): losing a claim never becomes a spawn", () => {
       // Back on the frontier: unassigned, and no slot is held.
       expect(gh.find("1")!.assignees).toEqual([]);
       expect(report.inFlight).toBe(0);
+    } finally {
+      await cleanup(repo);
+    }
+  }, GIT_BUDGET_MS);
+
+  test("a worker that announces then exits immediately is recovered in the same pass", async () => {
+    const repo = await scratchRepo();
+    try {
+      const gh = createFakeGh({ login: LOGIN, repo: REPO });
+      gh.seed({ number: 1, title: "announces then dies" });
+      const dead = await deadPid();
+      const spawn: NonNullable<DispatchOptions["spawn"]> = async () => ({
+        announcedSessionId: async () => "01a03c64-8acb-7c40-9cf5-dead00000001",
+        exited: Promise.resolve({
+          exitCode: 1,
+          stderr: "worker rejected its startup arguments",
+          stdout: "",
+        }),
+        kill: () => {},
+        pid: dead,
+      });
+
+      const report = await dispatchFrontier(
+        options(repo, gh, spawn, { maxConcurrency: 1, startupGraceMs: 10 }),
+      );
+
+      expect(report.dispatched).toEqual([]);
+      expect(report.inFlight).toBe(0);
+      expect(report.recovered).toContainEqual(
+        expect.objectContaining({ outcome: "returned-to-frontier", ticket: "1" }),
+      );
+      expect(report.skipped).toContainEqual(
+        expect.objectContaining({ reason: expect.stringContaining("exited 1"), ticket: "1" }),
+      );
+      expect(report.degraded.join("\n")).toContain("worker rejected its startup arguments");
+      expect(gh.find("1")!.assignees).toEqual([]);
     } finally {
       await cleanup(repo);
     }
@@ -733,5 +771,45 @@ describe("dispatchFrontier (#88): SPEC §2's routing table, per ticket", () => {
     } finally {
       await cleanup(repo);
     }
+  }, GIT_BUDGET_MS);
+});
+
+describe("dispatch prompt retrieval audit copies (#132, #133)", () => {
+  test("stores matched memory and Codex skill in the registry prompt", async () => {
+    const repo = await scratchRepo();
+    try {
+      await mkdir(join(repo, ".argus/memory"), { recursive: true });
+      await mkdir(join(repo, ".argus/skills/deploy"), { recursive: true });
+      await writeFile(join(repo, ".argus/memory/MEMORY.md"), "- [Port fact](port.md) — Metro port\n");
+      await writeFile(join(repo, ".argus/memory/port.md"), "Metro uses port 8082.\n");
+      await writeFile(join(repo, ".argus/skills/deploy/SKILL.md"), "---\nname: deploy\ndescription: deploy implementation tickets\n---\nDeploy body verbatim.\n");
+      const gh = createFakeGh({ login: LOGIN, repo: REPO });
+      gh.seed({ number: 132, title: "Metro port dispatch", body: "implementation" });
+      gh.seed({ number: 133, title: "Deploy implementation", body: "skill match", labels: ["ready-for-agent"] });
+      const { spawn, witness } = witnessSpawn(repo, gh);
+      await dispatchFrontier(options(repo, gh, spawn, { maxConcurrency: 2 }));
+      const prompts = (await Bun.file(registryPaths(repo).sessionsFile).text()).split(/\r?\n/).filter(Boolean).map((text) => String(JSON.parse(text).dispatchPrompt));
+      expect(prompts.join("\n")).toContain("RECORDED PROJECT FACTS");
+      expect(prompts.join("\n")).toContain("Metro uses port 8082.\n");
+      expect(prompts.join("\n")).toContain("MATCHED CODEX SKILLS");
+      expect(prompts.join("\n")).toContain("Deploy body verbatim.\n");
+    } finally { await cleanup(repo); }
+  }, GIT_BUDGET_MS);
+
+  test("missing or entry-less memory preserves the default prompt bytes", async () => {
+    const first = await scratchRepo(); const second = await scratchRepo();
+    try {
+      await mkdir(join(second, ".argus/memory"), { recursive: true });
+      await writeFile(join(second, ".argus/memory/MEMORY.md"), "# Memory index\n");
+      const ticket = { number: "1", title: "plain", body: "body", labels: [] };
+      const expected = defaultDispatchPrompt(ticket, REPO);
+      for (const repo of [first, second]) {
+        const gh = createFakeGh({ login: LOGIN, repo: REPO }); gh.seed({ number: 1, title: ticket.title, body: ticket.body });
+        const { spawn, witness } = witnessSpawn(repo, gh);
+        await dispatchFrontier(options(repo, gh, spawn));
+        const stored = await Bun.file(registryPaths(repo).sessionsFile).text();
+        expect(String(JSON.parse(stored.split(/\r?\n/).filter(Boolean).at(-1)!).dispatchPrompt)).toBe(expected);
+      }
+    } finally { await cleanup(first); await cleanup(second); }
   }, GIT_BUDGET_MS);
 });

@@ -67,7 +67,20 @@ export const DEFAULT_CONFIG = `# Argus per-repo overrides. Uncomment only values
 
 export type SkillsLayout = "adapter" | "preserved";
 
-function agentsPointerBlock(layout: SkillsLayout): string {
+async function skillIndex(repo: string): Promise<string> {
+  // Shared generator: `argus up` writes the index; the weekly curator pass
+  // (src/eyes/curator) is the other intended caller so archived skills leave it.
+  const dir = join(repo, ".argus", "skills"); let lines: string[] = [];
+  try {
+    for (const entry of (await readdir(dir, { withFileTypes: true })).filter((e) => e.isDirectory()).sort((a,b) => a.name.localeCompare(b.name))) {
+      const path = join(dir, entry.name, "SKILL.md"); const text = await Bun.file(path).text();
+      const description = text.match(/^---\s*\n([\s\S]*?)\n---/m)?.[1]?.match(/^description:\s*(.+)$/m)?.[1]?.trim() ?? "(no trigger description)";
+      lines.push(`- ${entry.name} — ${description} — \`.argus/skills/${entry.name}/SKILL.md\``);
+    }
+  } catch { /* the scaffold creates the directory before this runs */ }
+  return lines.length ? `\n\n### Skill trigger index\n${lines.join("\n")}` : "";
+}
+async function agentsPointerBlock(repo: string, layout: SkillsLayout): Promise<string> {
   const skills =
     layout === "preserved"
       ? "- Use existing project skills from `.claude/skills/` and Argus-owned skills from `.argus/skills/`."
@@ -79,6 +92,7 @@ function agentsPointerBlock(layout: SkillsLayout): string {
 - Read durable project facts from \`.argus/memory/MEMORY.md\` and neighboring fact files.
 ${skills}
 - Search archived transcripts with \`argus search "<query>"\`.
+${await skillIndex(repo)}
 <!-- argus:end -->`;
 }
 
@@ -302,16 +316,17 @@ async function ensureAgentsPointer(
   const agentsPath = join(repo, "AGENTS.md");
   const file = Bun.file(agentsPath);
   const existing = (await file.exists()) ? await file.text() : "";
+  const block = await agentsPointerBlock(repo, skillsLayout);
   const managedBlock = /<!-- argus:begin -->[\s\S]*?<!-- argus:end -->/g;
   let inserted = false;
   const refreshed = existing.replace(managedBlock, () => {
     if (inserted) return "";
     inserted = true;
-    return agentsPointerBlock(skillsLayout);
+    return block;
   });
   const next = inserted
     ? refreshed
-    : `${existing.trimEnd()}${existing.trim().length > 0 ? "\n\n" : ""}${agentsPointerBlock(skillsLayout)}\n`;
+    : `${existing.trimEnd()}${existing.trim().length > 0 ? "\n\n" : ""}${block}\n`;
   if (next !== existing) await Bun.write(agentsPath, next);
 }
 

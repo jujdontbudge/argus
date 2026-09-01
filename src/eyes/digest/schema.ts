@@ -21,10 +21,21 @@ export interface SessionDigest {
   /** The one-line INDEX.md summary for this session, current as of the batch. */
   summary: string;
   status: BrainStatus;
+  knownPitfallRepeat?: string | null;
 }
 
 export interface DigestVerdict {
   sessions: SessionDigest[];
+}
+
+/** Schema-bound tripwire: zero or one pre-dispatch entry, never a guess. */
+export function resolveKnownPitfallRepeat(
+  candidate: string | null | undefined,
+  dispatchEntries: readonly string[],
+  endedBadly: boolean,
+): string | null {
+  if (!endedBadly || candidate === null || candidate === undefined) return null;
+  return dispatchEntries.includes(candidate) ? candidate : null;
 }
 
 export const DIGEST_OUTPUT_SCHEMA = {
@@ -37,7 +48,7 @@ export const DIGEST_OUTPUT_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["sessionId", "narrative", "summary", "status"],
+        required: ["sessionId", "narrative", "summary", "status", "knownPitfallRepeat"],
         properties: {
           sessionId: {
             type: "string",
@@ -55,6 +66,7 @@ export const DIGEST_OUTPUT_SCHEMA = {
             type: "string",
             enum: ["running", "blocked", "done"],
           },
+          knownPitfallRepeat: { type: ["string", "null"] },
         },
       },
     },
@@ -72,7 +84,8 @@ function parseSessionDigest(raw: unknown): SessionDigest | null {
     typeof digest.narrative !== "string" ||
     typeof digest.summary !== "string" ||
     typeof digest.status !== "string" ||
-    !BRAIN_STATUSES.includes(digest.status)
+    !BRAIN_STATUSES.includes(digest.status) ||
+    !(digest.knownPitfallRepeat === undefined || digest.knownPitfallRepeat === null || typeof digest.knownPitfallRepeat === "string")
   ) {
     return null;
   }
@@ -81,6 +94,7 @@ function parseSessionDigest(raw: unknown): SessionDigest | null {
     narrative: digest.narrative,
     summary: digest.summary,
     status: digest.status as BrainStatus,
+    ...(digest.knownPitfallRepeat !== undefined && { knownPitfallRepeat: digest.knownPitfallRepeat }),
   };
 }
 

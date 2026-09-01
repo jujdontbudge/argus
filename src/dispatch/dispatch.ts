@@ -38,6 +38,7 @@ import {
   runGit,
   type DeployAgent,
   type GitRun,
+  type WorkerExit,
   type WorkerSpawn,
 } from "../deploy";
 import type { CmuxRun } from "../events";
@@ -49,6 +50,10 @@ import { readFrontier, type ExcludedTicket, type FrontierTicket } from "./fronti
 import { recoverDeadSlots, type RecoveredSlot } from "./recover.ts";
 import { routeAgent } from "./routing.ts";
 import { createDispatchSlots, dispatchSlotsDirectory } from "./slots.ts";
+import { dispatchMemoryPreamble } from "./preamble.ts";
+import { dispatchSkillPreamble } from "./skill-match.ts";
+import { DEFAULT_MEMORY_CAPS } from "./preamble.ts";
+import { DEFAULT_SKILL_CAPS } from "./skill-match.ts";
 
 export interface DispatchedTicket {
   ticket: string;
@@ -100,6 +105,8 @@ export interface DispatchOptions {
   newSessionId?: () => string;
   now?: () => Date;
   spawn?: WorkerSpawn;
+  /** Bounded window in which an announced-but-dead worker is startup failure. */
+  startupGraceMs?: number;
   /** The prompt that opens each session; the registry keeps a copy (§5). */
   dispatchPrompt?: (ticket: FrontierTicket, tracker: string) => string;
   /** cmux workspace policy, passed through to `deployWorker`. */
@@ -129,6 +136,16 @@ export function defaultDispatchPrompt(
     "ticket state. Stay inside the ticket's stated scope; anything else belongs in",
     "its own ticket.",
   ].join("\n");
+}
+
+async function exitDuringStartup(
+  exited: Promise<WorkerExit>,
+  graceMs: number,
+): Promise<WorkerExit | null> {
+  return Promise.race([
+    exited,
+    Bun.sleep(Math.max(0, graceMs)).then(() => null),
+  ]);
 }
 
 export async function dispatchFrontier(
@@ -270,7 +287,9 @@ export async function dispatchFrontier(
     const deployment = await deployWorker(
       {
         agent,
-        dispatchPrompt: buildPrompt(ticket, tracker),
+        dispatchPrompt: buildPrompt(ticket, tracker) +
+          await dispatchMemoryPreamble(repo, `${ticket.title} ${ticket.body} ${ticket.labels.join(" ")}`, { maxFacts: config.dispatch.memoryMaxFacts ?? DEFAULT_MEMORY_CAPS.maxFacts, maxChars: config.dispatch.memoryMaxChars ?? DEFAULT_MEMORY_CAPS.maxChars }) +
+          (agent === "codex" ? await dispatchSkillPreamble(repo, `${ticket.title} ${ticket.body} ${ticket.labels.join(" ")}`, { maxSkills: config.dispatch.skillMaxCount ?? DEFAULT_SKILL_CAPS.maxSkills, maxChars: config.dispatch.skillMaxChars ?? DEFAULT_SKILL_CAPS.maxChars }) : ""),
         repo,
         ticket: ticket.number,
         workspace: options.workspace ?? "auto",
@@ -308,6 +327,10 @@ export async function dispatchFrontier(
     }
 
     const worker = deployment.deployment;
+    const startupExit = await exitDuringStartup(
+      worker.process.exited,
+      options.startupGraceMs ?? 250,
+    );
     await slot.fill({
       agent: worker.agent,
       branch: worker.branch,
@@ -316,8 +339,41 @@ export async function dispatchFrontier(
       ...(baseSha !== undefined && { baseSha }),
       // The slot now tracks the WORKER, not the dispatcher: this process may
       // exit while the session runs, and the cap must survive that.
-      ...(worker.process.pid !== undefined && { pid: worker.process.pid }),
+      ...(startupExit !== null
+        ? { pid: worker.process.pid ?? Number.MAX_SAFE_INTEGER }
+        : worker.process.pid !== undefined
+          ? { pid: worker.process.pid }
+          : {}),
     });
+    if (startupExit !== null) {
+      const immediateRecovery = await recoverDeadSlots({
+        cwd: repo,
+        gh,
+        git,
+        ...(options.cmux !== undefined && { cmux: options.cmux }),
+        login,
+        repo,
+        slots,
+        tracker,
+      });
+      report.recovered.push(...immediateRecovery.recovered);
+      report.degraded.push(...immediateRecovery.degraded);
+      for (const recovered of immediateRecovery.recovered) {
+        if (recovered.outcome !== "awaiting-verification") continue;
+        await enqueueVerification(repo, {
+          source: "recovery",
+          ticket: recovered.ticket,
+          ...(options.now !== undefined && { now: options.now }),
+        });
+      }
+      const diagnostic = (startupExit.stderr.trim() || startupExit.stdout.trim()).slice(0, 300);
+      const reason =
+        `worker exited ${startupExit.exitCode} during startup` +
+        (diagnostic === "" ? "" : `: ${diagnostic}`);
+      report.skipped.push({ reason, ticket: ticket.number });
+      report.degraded.push(`ticket #${ticket.number}: ${reason}`);
+      continue;
+    }
     if (worker.process.pid === undefined) {
       report.degraded.push(
         `ticket #${ticket.number}: the spawned worker reported no pid, so its slot ` +

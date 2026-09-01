@@ -639,18 +639,19 @@ describe("completeReadyTickets (#57): finished is not the same as died", () => {
       try {
         const gh = createFakeGh({ login: LOGIN, repo: REPO });
         gh.seed({ number: 73, title: "Dead worker, real commits" });
-        const spawnDead = async (): Promise<WorkerProcess> => {
-          const child = Bun.spawn(["true"]);
-          await child.exited;
-          return { ...deadWorker(), pid: child.pid };
-        };
+        const child = Bun.spawn(["sleep", "60"]);
+        const spawnAlive = async (): Promise<WorkerProcess> => ({
+          ...deadWorker(),
+          exited: child.exited.then((exitCode) => ({ exitCode, stderr: "", stdout: "" })),
+          pid: child.pid,
+        });
 
-        // A real dispatch pass, then the worker dies having committed.
+        // A real dispatch pass while the worker is alive.
         await dispatchFrontier({
           agent: "claude",
           gh: gh.run,
           repo,
-          spawn: spawnDead,
+          spawn: spawnAlive,
           workspace: "none",
         });
         await commitInWorktree(
@@ -659,6 +660,8 @@ describe("completeReadyTickets (#57): finished is not the same as died", () => {
           "work from a session that then died\n",
           "feat: ticket 73",
         );
+        child.kill();
+        await child.exited;
 
         // The next dispatch pass runs recovery, which is where dead-with-work
         // is distinguished from dead-with-nothing — and hands it to us.
@@ -666,7 +669,7 @@ describe("completeReadyTickets (#57): finished is not the same as died", () => {
           agent: "claude",
           gh: gh.run,
           repo,
-          spawn: spawnDead,
+          spawn: spawnAlive,
           workspace: "none",
         });
         expect(

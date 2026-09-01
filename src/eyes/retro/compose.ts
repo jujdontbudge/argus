@@ -275,6 +275,11 @@ export function composeRetro(input: ComposeRetroInput): RetroComposition {
     `- signal id: \`${signal.id}\``,
     "",
     promptSection,
+    ...signal.sessions.flatMap((session) =>
+      session.knownPitfallRepeat === undefined
+        ? []
+        : ["known_pitfall_repeat: " + session.knownPitfallRepeat],
+    ),
     ...(narratives.length > 0 ? ["", "## What the session's digest says", "", ...narratives] : []),
     ...changeSections(signal).flatMap((section) => ["", section]),
   ].join("\n");

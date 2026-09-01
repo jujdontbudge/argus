@@ -17,6 +17,7 @@ interface RecordOptions {
   ticket?: string;
   johanTouched?: boolean;
   ts?: string;
+  dispatchMemorySnapshot?: { entries: string[]; contentHash: string };
 }
 
 function record(text: string, options: RecordOptions = {}): ProvenanceRecord {
@@ -67,7 +68,13 @@ function scriptedBrain(texts: string[]): ScriptedBrain {
 }
 
 const verdict = (
-  sessions: Array<{ sessionId: string; status?: string; narrative?: string; summary?: string }>,
+  sessions: Array<{
+    sessionId: string;
+    status?: string;
+    narrative?: string;
+    summary?: string;
+    knownPitfallRepeat?: string | null;
+  }>,
 ): string =>
   JSON.stringify({
     sessions: sessions.map((session) => ({
@@ -204,6 +211,49 @@ describe("immediate lifecycle surfacing (no brain involved)", () => {
 });
 
 describe("the coalesced brain path (ADR-0002: 30s quiet / 120s max)", () => {
+  test.each([
+    ["pre-dispatch pitfall", "blocked: known metro port failure", ["metro-port"], "metro-port"],
+    ["novel cause", "blocked: novel network failure", ["metro-port"], undefined],
+    ["post-dispatch fact", "blocked: new fact failure", [], undefined],
+  ])("%s is stamped only when the dispatch snapshot contains the matching entry", async (_name, narrative, entries, expected) => {
+    await withWorld(async ({ open, clock, read }) => {
+      const { brain, requests } = scriptedBrain([verdict([{
+        sessionId: "sess-1",
+        narrative,
+        status: "blocked",
+        knownPitfallRepeat: expected ?? null,
+      }])]);
+      const eye = await open(brain, {
+        sessions: async () => [{
+          ts: "2026-08-24T12:00:00Z",
+          sessionId: "sess-1",
+          dispatchPrompt: "work",
+          ticket: "42",
+          agent: "claude",
+          dispatchMemorySnapshot: { entries, contentHash: "hash" },
+        }],
+      });
+      await eye.ingest([record("failure", { ticket: "42", author: "agent" })]);
+      await eye.ingestLifecycle({ kind: "session-blocked", sessionId: "sess-1", ts: "2026-08-24T12:01:00Z" });
+      expect(await eye.tick()).toBe(true);
+      const digest = await read("42-sess-1.md");
+      expect(digest.includes("known_pitfall_repeat: metro-port")).toBe(expected !== undefined);
+      expect(requests).toHaveLength(1);
+      clock;
+    });
+  });
+
+  test("a clean session-end never asks the brain", async () => {
+    await withWorld(async ({ open, read }) => {
+      const { brain, requests } = scriptedBrain([verdict([])]);
+      const eye = await open(brain);
+      await eye.ingest([record("clean work", { ticket: "42" })]);
+      await eye.ingestLifecycle({ kind: "session-end", sessionId: "sess-1", ts: "2026-08-24T12:01:00Z" });
+      expect(await eye.tick()).toBe(false);
+      expect(requests).toHaveLength(0);
+      expect(await read("42-sess-1.md")).not.toContain("known_pitfall_repeat");
+    });
+  });
   test("the quiet window elapsing fires one evaluation; narrative and summary land", async () => {
     await withWorld(async ({ open, clock, read }) => {
       const { brain, requests } = scriptedBrain([
@@ -257,7 +307,7 @@ describe("the coalesced brain path (ADR-0002: 30s quiet / 120s max)", () => {
         ]),
       ]);
       const eye = await open(brain);
-      await eye.ingest([record("almost done", { ticket: "42" })]);
+      await eye.ingest([record("almost done, but BLOCKED", { ticket: "42" })]);
       clock.set(5 * SECOND); // well inside the quiet window
       expect(await eye.tick()).toBe(false);
 
