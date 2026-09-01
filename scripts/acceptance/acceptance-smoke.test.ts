@@ -9,6 +9,8 @@ import { loadScaledMs } from "../../src/eyes/test-budget.ts";
 const checkout = fileURLToPath(new URL("../..", import.meta.url));
 const PROCESS_BUDGET_MS = loadScaledMs(5_000, 60_000);
 const TEST_BUDGET_MS = loadScaledMs(10_000, 120_000);
+const SCENARIO_PROCESS_BUDGET_MS = loadScaledMs(30_000, 120_000);
+const SCENARIO_TEST_BUDGET_MS = loadScaledMs(40_000, 180_000);
 
 interface ScriptResult {
   exitCode: number | null;
@@ -17,7 +19,10 @@ interface ScriptResult {
   timedOut: boolean;
 }
 
-async function runAcceptanceScript(name: string): Promise<ScriptResult> {
+async function runAcceptanceScript(
+  name: string,
+  processBudgetMs = PROCESS_BUDGET_MS,
+): Promise<ScriptResult> {
   const script = join(checkout, "scripts", "acceptance", name);
   const root = await mkdtemp(join(tmpdir(), "argus-acceptance-smoke-"));
   const home = join(root, "home");
@@ -68,7 +73,7 @@ async function runAcceptanceScript(name: string): Promise<ScriptResult> {
     const stderrPromise = new Response(child.stderr).text();
     const outcome = await Promise.race([
       child.exited.then((exitCode) => ({ exitCode, timedOut: false })),
-      Bun.sleep(PROCESS_BUDGET_MS).then(() => ({ exitCode: null, timedOut: true })),
+      Bun.sleep(processBudgetMs).then(() => ({ exitCode: null, timedOut: true })),
     ]);
     if (outcome.timedOut) {
       process.kill(-child.pid, "SIGTERM");
@@ -130,7 +135,10 @@ test("the watcher stability probe runs its short real-process mode", async () =>
 }, TEST_BUDGET_MS);
 
 test("the scenario evidence reporter executes one composed scratch slot", async () => {
-  const result = await runAcceptanceScript("scenario-evidence.ts");
+  const result = await runAcceptanceScript(
+    "scenario-evidence.ts",
+    SCENARIO_PROCESS_BUDGET_MS,
+  );
 
   expect({ stderr: result.stderr, timedOut: result.timedOut }).toEqual({
     stderr: "",
@@ -139,4 +147,4 @@ test("the scenario evidence reporter executes one composed scratch slot", async 
   expect(result.exitCode).toBe(0);
   expect(result.stdout).toContain("ARGUS §13 SCENARIO EVIDENCE SMOKE");
   expect(result.stdout).toContain("10. Blast-radius zero  ->  PASSED");
-}, TEST_BUDGET_MS);
+}, SCENARIO_TEST_BUDGET_MS);

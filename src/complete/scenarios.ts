@@ -25,6 +25,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { completeReadyTickets } from "./complete.ts";
+import { recordVerificationDeclaration } from "./verification.ts";
 import { deployWorker, worktreeForTicket } from "../deploy";
 import type { WorkerProcess } from "../deploy";
 import { writeEvent } from "../events";
@@ -33,6 +34,15 @@ import type { Brain } from "../eyes/brain";
 import type { ScenarioHandler, ScenarioRegistry } from "../harness/index.ts";
 
 const TICKET = "7";
+const TICKET_BODY = [
+  "Implement the batch's one ticket.",
+  "",
+  "## Verification",
+  "",
+  "```sh",
+  "bun test src/batch.test.ts",
+  "```",
+].join("\n");
 const LOGIN = "argus-bot";
 const CHECKOUT = fileURLToPath(new URL("../../", import.meta.url));
 const MAP_BODY = ["## Destination", "", "A closed loop.", "", "## Decisions so far", ""].join(
@@ -81,7 +91,7 @@ export function batchClosureScenario(brain?: Brain): ScenarioHandler {
     const gh = createFakeGh({ login: LOGIN, repo: "argus-sandbox/sandbox" });
     gh.seed({
       assignees: [LOGIN],
-      body: "Implement the batch's one ticket.",
+      body: TICKET_BODY,
       number: Number(TICKET),
       title: "Autonomous batch ticket",
     });
@@ -99,6 +109,8 @@ export function batchClosureScenario(brain?: Brain): ScenarioHandler {
     ]);
     await git(["add", "package.json", "tsconfig.json", "bun.lock", ".gitignore"], repo);
     await git(["commit", "--quiet", "-m", "seed locked TypeScript project"], repo);
+
+    await recordVerificationDeclaration(repo, { body: TICKET_BODY, ticket: TICKET });
 
     const deployed = await deployWorker(
       {
