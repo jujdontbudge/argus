@@ -922,3 +922,49 @@ describe("dispatch prompt retrieval audit copies (#132, #133)", () => {
     } finally { await cleanup(first); await cleanup(second); }
   }, GIT_BUDGET_MS);
 });
+
+describe("creation-time ticket verification (#155)", () => {
+  test("configured dispatch refuses a ticket without a declared command", async () => {
+    const repo = await scratchRepo();
+    try {
+      await writeConfig(repo, "dispatch:\n  require_ticket_verification: true\n");
+      const gh = createFakeGh({ login: LOGIN, repo: REPO });
+      gh.seed({ number: 155, title: "missing verification", body: "## Outcome\nwork" });
+      const { spawn, witness } = witnessSpawn(repo, gh);
+
+      const report = await dispatchFrontier(options(repo, gh, spawn));
+
+      expect(witness.calls).toHaveLength(0);
+      expect(report.dispatched).toEqual([]);
+      expect(report.skipped).toEqual([{
+        reason: "ticket has no declared fenced Verification command",
+        ticket: "155",
+      }]);
+      expect(gh.find("155")!.assignees).toEqual([]);
+      expect(report.degraded.join("\n")).toContain("routes to Johan");
+    } finally {
+      await cleanup(repo);
+    }
+  }, GIT_BUDGET_MS);
+
+  test("configured dispatch accepts the immutable fenced command", async () => {
+    const repo = await scratchRepo();
+    try {
+      await writeConfig(repo, "dispatch:\n  require_ticket_verification: true\n");
+      const gh = createFakeGh({ login: LOGIN, repo: REPO });
+      gh.seed({
+        number: 156,
+        title: "verified ticket",
+        body: "## Verification\n\n```sh\npython3 -m unittest\n```",
+      });
+      const { spawn, witness } = witnessSpawn(repo, gh);
+
+      const report = await dispatchFrontier(options(repo, gh, spawn));
+
+      expect(witness.calls).toHaveLength(1);
+      expect(report.dispatched.map((entry) => entry.ticket)).toEqual(["156"]);
+    } finally {
+      await cleanup(repo);
+    }
+  }, GIT_BUDGET_MS);
+});

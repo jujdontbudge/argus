@@ -135,6 +135,19 @@ export interface DispatchPromptContext {
   subIssues: DispatchRelatedTicket[];
 }
 
+/** The immutable shell command declared in a ticket's Verification section. */
+export function ticketVerificationCommand(body: string): string | null {
+  const heading = /^##\s+Verification(?:\s+command[^\n]*)?\s*$/im.exec(body);
+  if (heading === null) return null;
+  const tail = body.slice(heading.index + heading[0].length);
+  const nextHeading = /^##\s/m.exec(tail);
+  const section = nextHeading === null ? tail : tail.slice(0, nextHeading.index);
+  const fence = section.match(/```(?:sh|bash|shell)?\s*\n([\s\S]*?)```/i);
+  const command = fence?.[1]?.trim();
+  if (!command || /^<.*>$/.test(command)) return null;
+  return command;
+}
+
 interface DispatchPromptReadOptions {
   cwd: string;
   gh?: GhRunner;
@@ -524,6 +537,16 @@ export async function dispatchFrontier(
 
   for (const ticket of frontier.tickets) {
     if (inFlight >= maxConcurrency) break;
+
+    if (
+      config.dispatch.requireTicketVerification &&
+      ticketVerificationCommand(ticket.body) === null
+    ) {
+      const reason = "ticket has no declared fenced Verification command";
+      report.skipped.push({ reason, ticket: ticket.number });
+      report.degraded.push(`ticket #${ticket.number}: ${reason}; routes to Johan`);
+      continue;
+    }
 
     // SPEC §2's routing table, BEFORE the slot and before the claim: a ticket
     // whose labels name no deployable agent must not spend capacity or leave

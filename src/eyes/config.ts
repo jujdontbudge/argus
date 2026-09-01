@@ -67,6 +67,8 @@ export interface CuratorConfig {
 export interface DispatchConfig {
   /** Concurrent dispatched ticket sessions per repo (SPEC §7.3.3: 3). */
   maxConcurrency: number;
+  /** Refuse tickets without an immutable fenced Verification command. */
+  requireTicketVerification: boolean;
   memoryMaxFacts?: number;
   memoryMaxChars?: number;
   skillMaxCount?: number;
@@ -112,7 +114,7 @@ export const DEFAULT_EYES_CONFIG: EyesConfig = {
     staleAfterDays: 30,
     archiveAfterDays: 90,
   },
-  dispatch: { maxConcurrency: 3, memoryMaxFacts: 5, memoryMaxChars: 12000, skillMaxCount: 3, skillMaxChars: 20000 },
+  dispatch: { maxConcurrency: 3, requireTicketVerification: false, memoryMaxFacts: 5, memoryMaxChars: 12000, skillMaxCount: 3, skillMaxChars: 20000 },
 };
 
 /**
@@ -298,6 +300,10 @@ export async function loadEyesConfig(repo: string): Promise<EyesConfig> {
       maxConcurrency: positiveInteger(
         sections.get("dispatch")?.get("max_concurrency"),
         defaults.dispatch.maxConcurrency,
+      ),
+      requireTicketVerification: boolean(
+        sections.get("dispatch")?.get("require_ticket_verification"),
+        defaults.dispatch.requireTicketVerification,
       ),
       memoryMaxFacts: positiveInteger(sections.get("dispatch")?.get("memory_max_facts"), defaults.dispatch.memoryMaxFacts ?? 5),
       memoryMaxChars: positiveInteger(sections.get("dispatch")?.get("memory_max_chars"), defaults.dispatch.memoryMaxChars ?? 12000),

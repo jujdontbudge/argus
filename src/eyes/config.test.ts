@@ -138,6 +138,7 @@ describe("eyes config (ADR-0002 values, defaults in code)", () => {
         },
         dispatch: {
           maxConcurrency: 3,
+          requireTicketVerification: false,
           memoryMaxFacts: 5,
           memoryMaxChars: 12000,
           skillMaxCount: 3,
@@ -161,7 +162,7 @@ describe("eyes config (ADR-0002 values, defaults in code)", () => {
         digest: { brain: { model: "gpt-5.6-luna", reasoningEffort: "low" }, quietWindowSeconds: 30, maxWaitSeconds: 120 },
         retro: { brain: { model: "gpt-5.6-luna", reasoningEffort: "low" }, quietWindowSeconds: 60, maxWaitSeconds: 600 },
         curator: { enabled: true, intervalHours: 168, staleAfterDays: 30, archiveAfterDays: 90 },
-        dispatch: { maxConcurrency: 3, memoryMaxFacts: 5, memoryMaxChars: 12000, skillMaxCount: 3, skillMaxChars: 20000 },
+        dispatch: { maxConcurrency: 3, requireTicketVerification: false, memoryMaxFacts: 5, memoryMaxChars: 12000, skillMaxCount: 3, skillMaxChars: 20000 },
       });
     });
   });

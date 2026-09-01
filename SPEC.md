@@ -446,8 +446,12 @@ per target repo (native sub-issues + blocking edges = visible frontier).
 3. Concurrency cap: **3**, a config knob (`.argus/config.yaml`), raised only after the
    merge/verify loop proves itself. Worktrees exist because parallel agents in one
    working tree race the index.
-4. On green (repository-native gates pass, review clean): merge the worktree, close
-   the ticket, update the map. Gate selection is repository-scoped: explicit
+4. A repository may require every ticket to carry a fenced `Verification`
+   command fixed when the ticket is created. When
+   `dispatch.require_ticket_verification` is true, a ticket without that command
+   is refused before claim or spawn and routes to Johan. On green
+   (the declared ticket check exists, repository-native gates pass, review clean):
+   merge the worktree, close the ticket, update the map. Gate selection is repository-scoped: explicit
    `.argus/config.yaml` `completion.gates` wins; otherwise only a supported
    authoritative root-manifest contract may be detected. A missing, malformed, or
    empty gate set refuses completion without running a guessed command. See
