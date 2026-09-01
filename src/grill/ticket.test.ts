@@ -72,6 +72,15 @@ describe("grill ticket ownership (#167)", () => {
     });
   });
 
+  test("requires a numeric owning ticket", () => {
+    expect(parseGrillArgs(["scope drift"])).toEqual({
+      error: "argus grill: --ticket is required",
+    });
+    expect(parseGrillArgs(["scope drift", "--ticket", "not-a-number"])).toEqual({
+      error: "argus grill: --ticket must be a ticket number, got 'not-a-number'",
+    });
+  });
+
   test("writes the owning ticket on a new row and preserves existing rows", async () => {
     const machine = await fakeMachine();
     const oldRow = {
