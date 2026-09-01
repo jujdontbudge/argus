@@ -3,6 +3,7 @@ import { chmod, mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { VERIFIED_HERMES_CLI_VERSION } from "../tailing/hermes-compat.ts";
 import { agentsPointers, verifyWiring } from "./verify.ts";
 
 /**
@@ -57,7 +58,7 @@ describe("wiring verification", () => {
   test("is silent for a matching Hermes and reports an absent pin/install as never verified", async () => {
     const repo = await scratchRepo();
     const cli = join(repo, "hermes");
-    await Bun.write(cli, '#!/bin/sh\nprintf "Hermes Agent v0.16.0 (2026.6.5)\\n"\n');
+    await Bun.write(cli, `#!/bin/sh\nprintf "${VERIFIED_HERMES_CLI_VERSION} · upstream deadbeef\\n"\n`);
     await chmod(cli, 0o755);
     const matching = await verifyWiring(repo, { hermes: { profile: "unused", root: repo, cli } });
     expect(matching.at(-1)).toMatchObject({ name: "Hermes compatibility", ok: true });

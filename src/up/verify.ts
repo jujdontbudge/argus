@@ -244,7 +244,9 @@ export interface WiringOptions {
 /**
  * Compare the executable `argus up` will actually run with #126's verified
  * pin. This is deliberately warning-only: an unknown Hermes is degraded
- * operation, not a reason to stop the repo's other eyes from starting.
+ * operation, not a reason to stop the repo's other eyes from starting. The
+ * trailing ` · upstream <hash>` is excluded because it identifies the remote
+ * repository tip, not the installed Hermes version.
  */
 async function checkHermesCompatibility(cli = "hermes"): Promise<WiringCheck> {
   const name = "Hermes compatibility";
@@ -257,7 +259,8 @@ async function checkHermesCompatibility(cli = "hermes"): Promise<WiringCheck> {
       child.exited,
       new Response(child.stdout).text(),
     ]);
-    const reported = stdout.split("\n")[0]?.trim();
+    const firstLine = stdout.split("\n")[0]?.trim();
+    const reported = firstLine?.split(" · ")[0]?.trim();
     if (exitCode !== 0 || !reported) {
       return {
         detail: "WARN: never verified against this install (hermes --version unavailable)",
