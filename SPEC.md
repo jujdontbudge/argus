@@ -456,15 +456,17 @@ per target repo (native sub-issues + blocking edges = visible frontier).
 3. Concurrency cap: **3**, a config knob (`.argus/config.yaml`), raised only after the
    merge/verify loop proves itself. Worktrees exist because parallel agents in one
    working tree race the index.
-4. A repository may require every ticket to carry a fenced `Verification`
-   command fixed when the ticket is created. When
-   `dispatch.require_ticket_verification` is true, a ticket without that command
-   is refused before claim or spawn and routes to Johan. On green
-   (the declared ticket check exists, repository-native gates pass, review clean):
-   merge the worktree, close the ticket, update the map. Gate selection is repository-scoped: explicit
-   `.argus/config.yaml` `completion.gates` wins; otherwise only a supported
-   authoritative root-manifest contract may be detected. A missing, malformed, or
-   empty gate set refuses completion without running a guessed command. See
+4. Every implementation ticket carries exactly one fenced `Verification` command
+   fixed when the ticket is created. When `dispatch.require_ticket_verification`
+   is true, a ticket without that command is refused before claim or spawn. At
+   dispatch Argus captures the exact command and binds it to the complete ticket-body
+   hash. On green (the declaration is unchanged, its command exits 0 in the ticket
+   worktree, repository-native gates pass, and review is clean), Argus merges the
+   worktree, closes the ticket, and updates the map. Missing, malformed, ambiguous,
+   unsafe, or changed declarations fail closed. Gate selection is repository-scoped:
+   explicit `.argus/config.yaml` `completion.gates` wins; otherwise only a supported
+   authoritative root-manifest contract may be detected. Missing, malformed, or
+   empty gates refuse completion without running a guessed substitute. See
    [the completion-gate contract](docs/completion-gates.md). `implement` does not
    reliably close tickets itself; the dispatcher owns ticket state.
 5. Johan can attach to any ticket tab and take over at any time; provenance

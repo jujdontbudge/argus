@@ -22,6 +22,11 @@
 import { mkdir, readdir, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 
+import {
+  readVerificationDeclaration,
+  type VerificationDeclaration,
+} from "./verification.ts";
+
 export type VerificationSource =
   /** A terminal completion signal from #58's consumer. */
   | "signal"
@@ -48,6 +53,8 @@ export interface VerifyEntry {
   mergedSha?: string;
   /** Why the last pass did not close it — the loud half of a stuck ticket. */
   lastFailure?: string;
+  /** The write-once ticket declaration captured at dispatch time. */
+  verification?: VerificationDeclaration;
 }
 
 export function verifyQueueDirectory(repo: string): string {
@@ -75,6 +82,7 @@ function parse(raw: unknown): VerifyEntry | null {
   if (typeof raw !== "object" || raw === null) return null;
   const row = raw as Record<string, unknown>;
   if (typeof row.ticket !== "string" || row.ticket === "") return null;
+  const verification = parseDeclaration(row.verification);
   return {
     attempts: typeof row.attempts === "number" && row.attempts >= 0 ? row.attempts : 0,
     queuedAt: typeof row.queuedAt === "string" ? row.queuedAt : "",
@@ -83,7 +91,23 @@ function parse(raw: unknown): VerifyEntry | null {
     ...(typeof row.sessionId === "string" && { sessionId: row.sessionId }),
     ...(typeof row.mergedSha === "string" && { mergedSha: row.mergedSha }),
     ...(typeof row.lastFailure === "string" && { lastFailure: row.lastFailure }),
+    ...(verification !== null && { verification }),
   };
+}
+
+function parseDeclaration(value: unknown): VerificationDeclaration | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  if (
+    typeof row.ticket !== "string" ||
+    typeof row.bodyHash !== "string" ||
+    (typeof row.command === "string") === (typeof row.reason === "string")
+  ) {
+    return null;
+  }
+  return typeof row.command === "string"
+    ? { bodyHash: row.bodyHash, command: row.command, ticket: row.ticket }
+    : { bodyHash: row.bodyHash, reason: row.reason as string, ticket: row.ticket };
 }
 
 export async function readVerification(
@@ -114,12 +138,14 @@ export async function enqueueVerification(
 ): Promise<VerifyEntry> {
   const existing = await readVerification(repo, request.ticket);
   if (existing !== null) return existing;
+  const declaration = await readVerificationDeclaration(repo, request.ticket);
   const entry: VerifyEntry = {
     attempts: 0,
     queuedAt: (request.now?.() ?? new Date()).toISOString(),
     source: request.source,
     ticket: request.ticket,
     ...(request.sessionId !== undefined && { sessionId: request.sessionId }),
+    ...(declaration !== null && { verification: declaration }),
   };
   await write(repo, entry);
   return entry;

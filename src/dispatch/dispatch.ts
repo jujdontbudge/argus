@@ -46,6 +46,7 @@ import { loadEyesConfig } from "../eyes/config";
 import { resolveGrillModel } from "../grill/config.ts";
 import { isGrillMode } from "../grill/skills.ts";
 import { enqueueVerification } from "../complete/queue.ts";
+import { recordVerificationDeclaration } from "../complete/verification.ts";
 import { runGh, trackerRepoName, type GhRunner } from "../eyes/retro/gh";
 import { addTicketLabel, claimingLogin, claimTicket, releaseClaim } from "./claim.ts";
 import { readFrontier, type ExcludedTicket, type FrontierTicket } from "./frontier.ts";
@@ -692,6 +693,31 @@ export async function dispatchFrontier(
     // dies. Read before the worktree exists, so it describes the starting point.
     const head = await git(["rev-parse", "HEAD"], repo);
     const baseSha = head.exitCode === 0 ? head.stdout.trim() : undefined;
+
+    try {
+      await recordVerificationDeclaration(repo, {
+        body: ticket.body,
+        ticket: ticket.number,
+      });
+    } catch (error) {
+      const released = await releaseClaim({
+        cwd: repo,
+        login,
+        repo: tracker,
+        run: gh,
+        ticket: ticket.number,
+      });
+      await slot.release();
+      const reason = `verification declaration could not be persisted: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+      report.skipped.push({ reason, ticket: ticket.number });
+      report.degraded.push(
+        `ticket #${ticket.number}: ${reason}` +
+          (released ? "" : " (and the claim could not be released)"),
+      );
+      continue;
+    }
 
     const deployment = await deployWorker(
       {
