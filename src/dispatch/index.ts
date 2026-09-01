@@ -22,6 +22,7 @@ export {
   type DispatchRelatedTicket,
   type DispatchReport,
   type DispatchedTicket,
+  type PlannedTicket,
   type SkippedTicket,
 } from "./dispatch.ts";
 export {
