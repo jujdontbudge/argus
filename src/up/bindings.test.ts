@@ -734,6 +734,79 @@ skills:
     expect(jobs[0]!.id).toBe("canonical-job");
   });
 
+  test("preserves another repo's same-name poll in the ticking home", async () => {
+    const { repo, root } = await scratchRepo("Second Poll");
+    const canonicalRepo = await realpath(repo);
+    const otherRepo = join(root, "First Poll");
+    const hermesRoot = join(root, "hermes");
+    const jobs = [
+      {
+        enabled: true,
+        id: "other-repo-job",
+        name: "argus-signal-poll",
+        schedule_display: "every 5m",
+        script: "argus-signal-poll.sh",
+        workdir: otherRepo,
+      },
+    ];
+    await mkdir(join(hermesRoot, "cron"), { recursive: true });
+    await Bun.write(
+      join(hermesRoot, "cron", "jobs.json"),
+      `${JSON.stringify({ jobs })}\n`,
+    );
+
+    const calls: (readonly string[])[] = [];
+    const cron: HermesCronRun = async (args, env) => {
+      calls.push(args);
+      if (args[1] === "create") {
+        jobs.push({
+          enabled: true,
+          id: "second-repo-job",
+          name: "argus-signal-poll",
+          schedule_display: "every 5m",
+          script: "argus-signal-poll.sh",
+          workdir: canonicalRepo,
+        });
+      }
+      await Bun.write(
+        join(env.HERMES_HOME!, "cron", "jobs.json"),
+        `${JSON.stringify({ jobs })}\n`,
+      );
+      return { exitCode: 0, stderr: "", stdout: "ok\n" };
+    };
+
+    const report = await convergeAgentBindings({
+      argusCli: "/opt/argus/src/cli.ts",
+      bunExecutable: "/opt/bun/bin/bun",
+      hermesCron: cron,
+      hermesRoot,
+      honcho: new FakeHoncho(),
+      honchoUrl: "http://honcho.test:8000",
+      repo,
+    });
+
+    expect(report.cron).toBe("created");
+    expect(calls).toEqual([
+      [
+        "cron",
+        "create",
+        "every 5m",
+        "Act on each Argus terminal signal from the script output. Use the repo's argus-orchestrator skill; never implement worker tickets yourself.",
+        "--name",
+        "argus-signal-poll",
+        "--script",
+        "argus-signal-poll.sh",
+        "--workdir",
+        canonicalRepo,
+      ],
+    ]);
+    expect(jobs).toHaveLength(2);
+    expect(jobs.map(({ id }) => id)).toEqual([
+      "other-repo-job",
+      "second-repo-job",
+    ]);
+  });
+
   test("resumes a paused poll after converging its configuration", async () => {
     const { repo, root } = await scratchRepo("Paused Poll");
     const canonicalRepo = await realpath(repo);
@@ -745,7 +818,7 @@ skills:
         name: "argus-signal-poll",
         schedule_display: "every 1h",
         script: "old-poll.sh",
-        workdir: "/old/repo",
+        workdir: canonicalRepo,
       },
     ];
     await mkdir(join(hermesRoot, "cron"), { recursive: true });

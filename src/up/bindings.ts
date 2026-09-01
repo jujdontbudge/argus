@@ -895,7 +895,11 @@ async function ensureHermesSignalCron(
   const existingJobs = (await storedCronJobs(cronHome)).filter(
     ({ name }) => name === SIGNAL_CRON_NAME,
   );
-  const existing = existingJobs.find(
+  // The active Hermes home is shared by every Argus repo. The job name is
+  // intentionally stable for operators, so same-name jobs for other repos
+  // are not duplicates of this repo's poll and must remain untouched.
+  const repoJobs = existingJobs.filter(({ workdir }) => workdir === repo);
+  const existing = repoJobs.find(
     ({ enabled, schedule_display, script: storedScript, workdir }) =>
       enabled !== false &&
       schedule_display === SIGNAL_CRON_SCHEDULE &&
@@ -903,15 +907,15 @@ async function ensureHermesSignalCron(
       workdir === repo,
   );
 
-  if (existingJobs.some(({ id }) => typeof id !== "string" || id === "")) {
+  if (repoJobs.some(({ id }) => typeof id !== "string" || id === "")) {
     return {
       error: `Hermes cron job '${SIGNAL_CRON_NAME}' has no removable id`,
       status: "unavailable",
     };
   }
 
-  const updateTarget = existing ?? existingJobs[0];
-  const duplicateJobs = existingJobs.filter((job) => job !== updateTarget);
+  const updateTarget = existing ?? repoJobs[0];
+  const duplicateJobs = repoJobs.filter((job) => job !== updateTarget);
 
   if (existing && duplicateJobs.length === 0) {
     return { error: null, status: "existing" };
