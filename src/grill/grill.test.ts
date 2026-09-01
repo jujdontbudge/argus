@@ -187,6 +187,27 @@ const decodedTransportValues = (line: string): string[] =>
 
 describe("startGrill (#62): SPEC §7.2, registered before a key is typed", () => {
   test("uses the repo Fable default, with an explicit launch override winning", async () => {
+    const defaultRepo = await sandboxRepo();
+    try {
+      const defaultCmux = cmuxStub();
+      const defaults = await startGrill(
+        { repo: defaultRepo, topic: TOPIC },
+        {
+          cmux: defaultCmux.run,
+          env: GRILL_ENV,
+          git: gitStub().run,
+          manifestFile: MACHINE.manifest,
+          newSessionId: () => SESSION,
+        },
+      );
+      expect(defaults.status).toBe("started");
+      expect(decodedTransportValues(defaultCmux.launches[0] ?? "")).toContain(
+        "claude-fable-5",
+      );
+    } finally {
+      await rm(defaultRepo, { force: true, recursive: true });
+    }
+
     const repo = await sandboxRepo();
     try {
       await mkdir(join(repo, ".argus"));
