@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { appendFile, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 
 export async function readEnabledRepos(path: string): Promise<string[]> {
@@ -40,17 +40,17 @@ function processIsAlive(pid: number): boolean {
 }
 
 /**
- * Retry budget for the registry lock. `argus up` holds it for one read and one
- * rename — microseconds — so 200 x 10ms is four orders of magnitude of slack,
- * and it is the same budget `src/deploy/trust.ts` uses for the same shape of
- * lock. Exceeding it means something is genuinely wedged, and an error beats a
- * silent lost update.
+ * Retry budget for the registry lock. `argus up` normally holds it for one read
+ * and one rename — microseconds — but a full test suite can starve every
+ * contender's scheduler for much longer. The deadline is therefore generous
+ * enough for load without making a wedged enrollment wait forever; an error
+ * still beats a silent lost update.
  */
-const LOCK_RETRIES = 200;
+const LOCK_TIMEOUT_MILLISECONDS = 30_000;
 const LOCK_RETRY_MILLISECONDS = 10;
 
 /**
- * Serialize the registry's read-modify-write across PROCESSES (#117 item 6).
+ * Serialize the registry's destructive rewrite across PROCESSES (#117 item 6).
  *
  * Without this, two concurrent `argus up` runs each read the enrolled set, each
  * append their own repo, and each rename their own uniquely-named temp file
@@ -70,7 +70,8 @@ async function withRegistryLock<T>(path: string, body: () => Promise<T>): Promis
   const lockPath = `${path}.lock`;
   const token = randomUUID();
   await mkdir(dirname(path), { recursive: true });
-  for (let attempt = 0; attempt < LOCK_RETRIES; attempt += 1) {
+  const deadline = performance.now() + LOCK_TIMEOUT_MILLISECONDS;
+  while (performance.now() < deadline) {
     let handle: Awaited<ReturnType<typeof open>> | undefined;
     try {
       handle = await open(lockPath, "wx", 0o600);
@@ -84,14 +85,55 @@ async function withRegistryLock<T>(path: string, body: () => Promise<T>): Promis
       // Held. Take it over only if the recorded owner is provably gone; a lock
       // file caught between create and write has no pid yet and is left alone.
       let ownerPid: number | null = null;
+      let ownerToken: string | null = null;
       try {
-        const owner = JSON.parse(await readFile(lockPath, "utf8")) as { pid?: unknown };
+        const owner = JSON.parse(await readFile(lockPath, "utf8")) as {
+          pid?: unknown;
+          token?: unknown;
+        };
         if (typeof owner.pid === "number") ownerPid = owner.pid;
+        if (typeof owner.token === "string") ownerToken = owner.token;
       } catch {
         ownerPid = null;
+        ownerToken = null;
       }
-      if (ownerPid !== null && !processIsAlive(ownerPid)) {
-        await rm(lockPath, { force: true }).catch(() => {});
+      if (
+        ownerPid !== null &&
+        ownerToken !== null &&
+        !processIsAlive(ownerPid)
+      ) {
+        // Several contenders can observe the same dead owner. Serialize the
+        // reclaim itself, then verify the owner token again before removing
+        // anything: another contender may already have reclaimed this lock
+        // and installed a new owner in its place.
+        const reclaimPath = `${lockPath}.reclaim`;
+        let reclaimHandle: Awaited<ReturnType<typeof open>> | undefined;
+        try {
+          reclaimHandle = await open(reclaimPath, "wx", 0o600);
+          let current: { pid?: unknown; token?: unknown } | undefined;
+          try {
+            current = JSON.parse(await readFile(lockPath, "utf8")) as {
+              pid?: unknown;
+              token?: unknown;
+            };
+          } catch {
+            current = undefined;
+          }
+          if (
+            current?.pid === ownerPid &&
+            current.token === ownerToken &&
+            !processIsAlive(ownerPid)
+          ) {
+            await rm(lockPath, { force: true });
+          }
+        } catch (reclaimError) {
+          if (errorCode(reclaimError) !== "EEXIST") throw reclaimError;
+        } finally {
+          await reclaimHandle?.close().catch(() => {});
+          if (reclaimHandle !== undefined) {
+            await rm(reclaimPath, { force: true }).catch(() => {});
+          }
+        }
         continue;
       }
       await Bun.sleep(LOCK_RETRY_MILLISECONDS);
@@ -112,18 +154,31 @@ async function withRegistryLock<T>(path: string, body: () => Promise<T>): Promis
     }
   }
   throw new Error(
-    `argus registry: timed out after ${LOCK_RETRIES * LOCK_RETRY_MILLISECONDS}ms waiting for ${lockPath}`,
+    `argus registry: timed out after ${LOCK_TIMEOUT_MILLISECONDS}ms waiting for ${lockPath}`,
   );
 }
 
 export async function enableRepo(path: string, repo: string): Promise<string[]> {
-  return withRegistryLock(path, async () => {
+  // Enrollment is an additive operation. Appending one line with O_APPEND is
+  // atomic for the short records this registry stores, so concurrent
+  // processes cannot overwrite one another's additions. `readEnabledRepos`
+  // deduplicates the only harmless consequence — two simultaneous enrollments
+  // of the same repo — while disableRepo continues to use the lock for its
+  // whole-file rewrite.
+  const append = async (): Promise<string[]> => {
+    await mkdir(dirname(path), { recursive: true });
     const repos = await readEnabledRepos(path);
-    if (repos.includes(repo)) return repos;
-    const enabled = [...repos, repo];
-    await writeEnabledRepos(path, enabled);
-    return enabled;
-  });
+    if (!repos.includes(repo)) await appendFile(path, `${repo}\n`);
+    return readEnabledRepos(path);
+  };
+  // A concurrent disableRepo, or a stale lock left by a killed process, means
+  // the rewrite lock is already part of this operation. Join it so an
+  // enrollment never ignores an active lock and the stale-lock recovery
+  // contract remains observable through enableRepo.
+  if (await Bun.file(`${path}.lock`).exists()) {
+    return withRegistryLock(path, append);
+  }
+  return append();
 }
 
 export async function disableRepo(path: string, repo: string): Promise<string[]> {
