@@ -44,6 +44,24 @@ describe("defaultDispatchPrompt (#165): planning routes carry R5 execution guida
     expect(prompt).toContain("file executable tickets");
     expect(prompt).toContain("verification commands fixed at creation time");
   });
+
+  test("carries the mandatory R2 bail-out for unfiled consequential choices", () => {
+    const prompt = defaultDispatchPrompt(
+      {
+        body: "Implement the filed change.",
+        labels: [],
+        number: "165",
+        title: "Implement the change",
+      },
+      REPO,
+    );
+
+    expect(prompt).toContain(
+      "the moment Hermes or Codex detects an unfiled consequential choice inside its ticket",
+    );
+    expect(prompt).toContain("the ticket is relabeled/pinned to Fable");
+    expect(prompt).toContain("the event queues to the digest per D9");
+  });
 });
 
 const GIT_ENV = {

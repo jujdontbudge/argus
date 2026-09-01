@@ -147,6 +147,8 @@ export function defaultDispatchPrompt(
     "Do not merge, do not push, and do not close the ticket — the dispatcher owns",
     "ticket state. Stay inside the ticket's stated scope; anything else belongs in",
     "its own ticket.",
+    "",
+    "R2 (mandatory bail-out): the moment Hermes or Codex detects an unfiled consequential choice inside its ticket, it stops, records the question on the ticket, the ticket is relabeled/pinned to Fable, and the event queues to the digest per D9.",
     ...planningGuidance,
   ].join("\n");
 }
