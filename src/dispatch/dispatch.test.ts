@@ -147,6 +147,40 @@ describe("dispatchFrontier (#56): SPEC §7.3's cap is enforced where spawning ha
     }
   }, GIT_BUDGET_MS);
 
+  test("dry-run routes without deploying or claiming, including human-decision exclusions", async () => {
+    const repo = await scratchRepo();
+    try {
+      const gh = createFakeGh({ login: LOGIN, repo: REPO });
+      gh.seed({
+        number: 42,
+        title: "Johan decides",
+        labels: ["wayfinder:grilling", "agent:codex"],
+      });
+      gh.seed({ number: 43, title: "Implement the follow-up" });
+      const { spawn, witness } = witnessSpawn(repo, gh);
+
+      const report = await dispatchFrontier(options(repo, gh, spawn, { dryRun: true }));
+
+      expect(witness.calls).toEqual([]);
+      expect(gh.calls.some((call) => call[0] === "issue" && call[1] === "edit")).toBe(false);
+      expect(report.dispatched).toEqual([]);
+      expect(report.excluded).toContainEqual({
+        detail: "wayfinder:grilling tickets require a human decision",
+        number: "42",
+        reason: "human-decision",
+      });
+      expect(report.planned).toEqual([
+        {
+          agent: "codex",
+          reason: "no planning label and no pin: an implementation ticket (SPEC §2's default)",
+          ticket: "43",
+        },
+      ]);
+    } finally {
+      await cleanup(repo);
+    }
+  }, GIT_BUDGET_MS);
+
   test("a second run while three workers are alive spawns NOTHING", async () => {
     const repo = await scratchRepo();
     try {

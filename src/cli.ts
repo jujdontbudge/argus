@@ -26,8 +26,9 @@ Commands:
 Flags:
   --mode     (grill) which planning skill to route to: grilling (default),
              spec, tickets, review, diagnosis. All route to Claude Code.
-  --dry-run  (grill) print the routed skill and the exact opening prompt and
-             stop; no workspace, no registry row, no session.
+  --dry-run  (grill) print the routed skill and the exact opening prompt; or
+             (dispatch) print frontier/routing decisions and stop; no claims,
+             worktrees, registry rows or sessions.
   --commit   (init, up) commit the integration files Argus wrote —
              .gitignore, AGENTS.md and docs/agents — as they stand in the
              working tree, in one "chore: adopt Argus" commit. Without it
@@ -106,15 +107,17 @@ async function install(): Promise<number> {
  * be supervised, and would make the cap depend on that process staying alive.
  */
 async function dispatch(args: string[]): Promise<number> {
-  const usage = "Usage: argus dispatch";
+  const usage = "Usage: argus dispatch [--dry-run]";
   if (args.length === 1 && (args[0] === "--help" || args[0] === "-h")) {
     console.log(usage);
     return 0;
   }
-  if (args.length > 0) {
-    console.error(`argus dispatch: unknown argument '${args[0]}'\n${usage}`);
+  const unknown = args.find((argument) => argument !== "--dry-run");
+  if (unknown !== undefined) {
+    console.error(`argus dispatch: unknown argument '${unknown}'\n${usage}`);
     return 1;
   }
+  const dryRun = args.includes("--dry-run");
 
   const { gitRoot } = await import("./up/git.ts");
   const repo = await gitRoot(process.cwd());
@@ -124,7 +127,25 @@ async function dispatch(args: string[]): Promise<number> {
   }
 
   const { dispatchFrontier } = await import("./dispatch/index.ts");
-  const report = await dispatchFrontier({ repo });
+  const report = await dispatchFrontier({ dryRun, repo });
+
+  if (dryRun) {
+    for (const excluded of report.excluded) {
+      console.log(`excluded #${excluded.number}: ${excluded.reason}`);
+    }
+    for (const planned of report.planned) {
+      console.log(`would dispatch #${planned.ticket} -> ${planned.agent} (${planned.reason})`);
+    }
+    for (const skipped of report.skipped) {
+      console.log(`skipped #${skipped.ticket}: ${skipped.reason}`);
+    }
+    console.log(
+      `Dry run: ${report.planned.length} would dispatch; ` +
+        `${report.excluded.length} tickets excluded; no claims or deployments made.`,
+    );
+    for (const reason of report.degraded) console.error(`DEGRADED: ${reason}`);
+    return report.degraded.length > 0 ? 1 : 0;
+  }
 
   for (const recovered of report.recovered) {
     console.log(

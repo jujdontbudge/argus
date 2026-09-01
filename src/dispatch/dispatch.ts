@@ -70,6 +70,12 @@ export interface SkippedTicket {
   reason: string;
 }
 
+export interface PlannedTicket {
+  ticket: string;
+  agent: DeployAgent;
+  reason: string;
+}
+
 export interface DispatchReport {
   /** `owner/name`, or null in tracker-less mode (no remote, no auth). */
   tracker: string | null;
@@ -77,6 +83,8 @@ export interface DispatchReport {
   /** Slots held by a live worker after this pass. */
   inFlight: number;
   dispatched: DispatchedTicket[];
+  /** Tickets and routes computed by a dry run, before any side effect. */
+  planned: PlannedTicket[];
   recovered: RecoveredSlot[];
   skipped: SkippedTicket[];
   /** Tickets the frontier read set aside, with why. */
@@ -111,6 +119,8 @@ export interface DispatchOptions {
   dispatchPrompt?: (ticket: FrontierTicket, tracker: string) => string;
   /** cmux workspace policy, passed through to `deployWorker`. */
   workspace?: "auto" | "none";
+  /** Read the frontier and routes without claiming, deploying, or recovering. */
+  dryRun?: boolean;
 }
 
 /**
@@ -165,6 +175,7 @@ export async function dispatchFrontier(
     excluded: [],
     inFlight: 0,
     maxConcurrency,
+    planned: [],
     recovered: [],
     skipped: [],
     tracker: null,
@@ -188,6 +199,29 @@ export async function dispatchFrontier(
     return report;
   }
   report.tracker = tracker;
+
+  if (options.dryRun) {
+    const frontier = await readFrontier({ cwd: repo, repo: tracker, run: gh });
+    report.excluded = frontier.excluded;
+    report.degraded.push(...frontier.degraded);
+
+    for (const ticket of frontier.tickets) {
+      let agent = forcedAgent;
+      let reason = "forced by dispatch caller";
+      if (agent === undefined) {
+        const routing = routeAgent(ticket.labels);
+        if (routing.status === "refused") {
+          report.skipped.push({ reason: routing.reason, ticket: ticket.number });
+          report.degraded.push(`ticket #${ticket.number}: ${routing.reason}`);
+          continue;
+        }
+        agent = routing.agent;
+        reason = routing.reason;
+      }
+      report.planned.push({ agent, reason, ticket: ticket.number });
+    }
+    return report;
+  }
 
   const identity = await claimingLogin(gh, repo);
   if ("reason" in identity) {

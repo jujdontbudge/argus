@@ -4,7 +4,7 @@
  *
  * SPEC §7.1 names the tracker shape this reads: "GitHub Issues per target repo
  * (native sub-issues + blocking edges = visible frontier)". So a ticket is on
- * the frontier when all four of these hold:
+ * the frontier when all five of these hold:
  *
  * 1. it is OPEN — asked of the API, not filtered afterwards, so a closed
  *    ticket is never even considered;
@@ -13,6 +13,8 @@
  * 3. no OPEN issue blocks it (GitHub issue dependencies, `blocked_by`);
  * 4. it has no OPEN sub-issues — a parent with unfinished children is an epic,
  *    and dispatching one would put an agent on work its children still own.
+ * 5. it is not labelled `wayfinder:grilling` — that ticket is a decision only
+ *    Johan can settle, so it must stay out of every worker route.
  *
  * THE POSTURE ON WHAT CANNOT BE DETERMINED IS FAIL CLOSED, AND LOUD. If the
  * dependency read fails — rate limit, network, permissions — the ticket is
@@ -41,6 +43,8 @@ export type ExclusionReason =
   | "blocked"
   /** It is a parent whose children are not finished. */
   | "has-open-sub-issues"
+  /** Johan must settle the decision; no worker may be dispatched. */
+  | "human-decision"
   /** Blocked-ness could NOT be read; fail closed rather than guess. */
   | "unknown-dependencies";
 
@@ -121,8 +125,18 @@ export async function readFrontier(
 
   const tickets: FrontierTicket[] = [];
   for (const issue of [...open].sort((a, b) => Number(a.number) - Number(b.number))) {
-    // Claimed is checked FIRST and short-circuits: it is the cheapest signal
-    // and it means no dependency call is worth spending on this ticket.
+    if (issue.labels.includes("wayfinder:grilling")) {
+      excluded.push({
+        detail: "wayfinder:grilling tickets require a human decision",
+        number: issue.number,
+        reason: "human-decision",
+      });
+      continue;
+    }
+
+    // Claimed is checked before dependencies and short-circuits: it is the
+    // cheapest signal and it means no dependency call is worth spending on
+    // this ticket.
     if (issue.assignees.length > 0) {
       excluded.push({
         detail: `assigned to ${issue.assignees.join(", ")}`,

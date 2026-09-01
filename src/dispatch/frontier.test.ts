@@ -52,6 +52,26 @@ describe("the frontier (open, unblocked, unclaimed)", () => {
     ]);
   });
 
+  test("a wayfinder:grilling ticket is excluded as a human decision regardless of other labels", async () => {
+    const gh = createFakeGh({ repo: REPO });
+    gh.seed({
+      number: 42,
+      title: "A decision only Johan can settle",
+      labels: ["wayfinder:grilling", "agent:codex", "grilling"],
+    });
+
+    const frontier = await readFrontier({ cwd: "/repo", repo: REPO, run: gh.run });
+
+    expect(frontier.tickets).toEqual([]);
+    expect(frontier.excluded).toEqual([
+      {
+        detail: "wayfinder:grilling tickets require a human decision",
+        number: "42",
+        reason: "human-decision",
+      },
+    ]);
+  });
+
   test("a ticket blocked by an OPEN dependency is excluded", async () => {
     const gh = createFakeGh({ repo: REPO });
     gh.seed({ number: 11, title: "blocker" });
