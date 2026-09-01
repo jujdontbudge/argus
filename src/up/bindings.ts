@@ -1111,6 +1111,24 @@ export async function convergeAgentBindings(
   );
   const binding = await resolveRepoIdentity(canonicalRepo, options.hermesRoot);
   const { profile, workspace } = binding;
+
+  let cron: AgentBindingReport["cron"] = "not-configured";
+  let cronError: string | null = null;
+  if (options.argusCli !== undefined && options.bunExecutable !== undefined) {
+    // The root cron command can lazily initialize Hermes' default profile
+    // (including ~/.hermes/SOUL.md). Run it before copying root defaults into
+    // the repo profile, or the first and second `up` runs differ.
+    const result = await ensureHermesSignalCron(
+      options.hermesRoot,
+      canonicalRepo,
+      options.argusCli,
+      options.bunExecutable,
+      options.hermesCron ?? runHermesCron,
+    );
+    cron = result.status;
+    cronError = result.error;
+  }
+
   await ensureHermesProfile(
     options.hermesRoot,
     profile,
@@ -1132,33 +1150,24 @@ export async function convergeAgentBindings(
     options.hermesProfile ?? runHermesCron,
   );
 
-  let cron: AgentBindingReport["cron"] = "not-configured";
-  let cronError: string | null = null;
-  if (options.argusCli !== undefined && options.bunExecutable !== undefined) {
-    const result = await ensureHermesSignalCron(
-      options.hermesRoot,
-      canonicalRepo,
-      options.argusCli,
-      options.bunExecutable,
+  if (
+    cronError === null &&
+    options.argusCli !== undefined &&
+    options.bunExecutable !== undefined
+  ) {
+    const profilePath = join(options.hermesRoot, "profiles", profile);
+    const retired = await removeHermesSignalCronCopies(
+      profilePath,
       options.hermesCron ?? runHermesCron,
     );
-    cron = result.status;
-    cronError = result.error;
-    if (cronError === null) {
-      const profilePath = join(options.hermesRoot, "profiles", profile);
-      const retired = await removeHermesSignalCronCopies(
-        profilePath,
-        options.hermesCron ?? runHermesCron,
-      );
-      cronError = retired.error;
-      if (cronError !== null) {
-        cron = "unavailable";
-      } else if (cron === "existing" && retired.removed) {
-        // A same-name job was removed from the old profile. Report the
-        // convergence as an update while preserving the existing/created
-        // distinction for the scheduler-home job itself.
-        cron = "updated";
-      }
+    cronError = retired.error;
+    if (cronError !== null) {
+      cron = "unavailable";
+    } else if (cron === "existing" && retired.removed) {
+      // A same-name job was removed from the old profile. Report the
+      // convergence as an update while preserving the existing/created
+      // distinction for the scheduler-home job itself.
+      cron = "updated";
     }
   }
 
