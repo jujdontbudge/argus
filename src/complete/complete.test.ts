@@ -194,6 +194,85 @@ function seedTracker(
 
 describe("completeReadyTickets (#57): the gate can refuse, and a refusal stops the merge", () => {
   test(
+    "a repository with no configured or detected gates fails closed without invoking tsc",
+    async () => {
+      const repo = await scratchRepo();
+      try {
+        const gh = seedTracker(123, "Make completion gates repository-aware");
+        await deployAndCommit(repo, "123", "sess-123");
+        await pushSignal(repo, "sess-123", "end-of-session");
+        const commands: string[][] = [];
+
+        const { gates: _testGate, ...autoGateOptions } = options(repo, gh, {
+          runGate: async (command) => {
+            commands.push([...command]);
+            return { exitCode: 0, stderr: "", stdout: "" };
+          },
+        });
+        const report = await completeReadyTickets(autoGateOptions);
+
+        expect(report.completed[0]?.status).toBe("gate-configuration-error");
+        expect(report.completed[0]?.detail).toContain("completion.gates");
+        expect(commands).toEqual([]);
+        expect(gh.find("123")!.state).toBe("open");
+      } finally {
+        await cleanup(repo);
+      }
+    },
+    BUDGET_MS,
+  );
+
+  test(
+    "a real Python/docs ticket worktree runs its repository-configured gate and merges",
+    async () => {
+      const repo = await scratchRepo();
+      try {
+        const gh = seedTracker(124, "Verify Python docs work");
+        const deployed = await deployAndCommit(
+          repo,
+          "124",
+          "sess-124",
+          "authority-guide.md",
+        );
+        await commitInWorktree(
+          deployed.worktree,
+          "verify.py",
+          [
+            "from pathlib import Path",
+            "assert Path('authority-guide.md').read_text() == 'work for #124\\n'",
+            "print('native Python verification passed')",
+            "",
+          ].join("\n"),
+          "test: add native Python verifier",
+        );
+        await writeFile(
+          join(repo, ".argus", "config.yaml"),
+          [
+            "completion:",
+            "  gates:",
+            "    - name: python-docs",
+            "      command: [python3, verify.py]",
+            "",
+          ].join("\n"),
+        );
+        await pushSignal(repo, "sess-124", "end-of-session");
+
+        const { gates: _testGate, ...autoGateOptions } = options(repo, gh);
+        const report = await completeReadyTickets(autoGateOptions);
+
+        expect(report.completed[0]?.status).toBe("merged");
+        expect(report.completed[0]?.gates).toEqual([
+          expect.objectContaining({ name: "python-docs", passed: true }),
+        ]);
+        expect(gh.find("124")!.state).toBe("closed");
+      } finally {
+        await cleanup(repo);
+      }
+    },
+    BUDGET_MS,
+  );
+
+  test(
     "a failing gate blocks the merge: base untouched, ticket open, claim intact",
     async () => {
       const repo = await scratchRepo();

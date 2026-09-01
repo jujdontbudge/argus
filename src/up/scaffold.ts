@@ -57,6 +57,12 @@ export const DEFAULT_CONFIG = `# Argus per-repo overrides. Uncomment only values
 #   max_wait_seconds: 600
 # dispatch:
 #   max_concurrency: 3
+# completion:
+#   # Required when no supported root manifest can safely provide gates.
+#   # Each command is an argv list, runs in the ticket worktree, and uses no shell.
+#   gates:
+#     - name: tests
+#       command: [python3, -m, unittest, discover]
 `;
 
 export type SkillsLayout = "adapter" | "preserved";

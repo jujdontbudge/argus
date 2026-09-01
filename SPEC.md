@@ -179,7 +179,7 @@ API (`cmux new-surface`, `close-surface`, `tree`, `send`, `send-key`, `read-scre
 
 ```
 <repo>/.argus/            # gitignored, machine-local operational state
-  config.yaml             # instance config: repo id, tracker, caps, model choices
+  config.yaml             # instance config: repo id, tracker, caps, models, gates
   registry/               # provenance registry (§5)
     sessions.jsonl        # one record per deployment: session id, agent, ticket,
                           #   dispatch prompt hash, workspace ref, tab (surface)
@@ -446,9 +446,13 @@ per target repo (native sub-issues + blocking edges = visible frontier).
 3. Concurrency cap: **3**, a config knob (`.argus/config.yaml`), raised only after the
    merge/verify loop proves itself. Worktrees exist because parallel agents in one
    working tree race the index.
-4. On green (tests pass, review clean): merge the worktree, close the ticket, update
-   the map. `implement` does not reliably close tickets itself; the dispatcher owns
-   ticket state.
+4. On green (repository-native gates pass, review clean): merge the worktree, close
+   the ticket, update the map. Gate selection is repository-scoped: explicit
+   `.argus/config.yaml` `completion.gates` wins; otherwise only a supported
+   authoritative root-manifest contract may be detected. A missing, malformed, or
+   empty gate set refuses completion without running a guessed command. See
+   [the completion-gate contract](docs/completion-gates.md). `implement` does not
+   reliably close tickets itself; the dispatcher owns ticket state.
 5. Johan can attach to any ticket tab and take over at any time; provenance
    classification and the retro watcher make this safe by construction.
 
