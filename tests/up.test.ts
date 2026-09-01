@@ -90,6 +90,98 @@ afterEach(async () => {
 });
 
 describe("argus up", () => {
+  test("installs exactly one runnable signal poll in Hermes's active root", async () => {
+    const { env, repo } = await createScratchRepo("Hermes Signal Poll");
+
+    const first = await runUp(repo, env);
+    expect(first.exitCode).toBe(0);
+
+    const rootJobsPath = join(env.HERMES_HOME!, "cron", "jobs.json");
+    const rootJobs = (await Bun.file(rootJobsPath).json()) as {
+      jobs: Array<Record<string, unknown>>;
+    };
+    const pollJobs = rootJobs.jobs.filter(
+      (job) => job.name === "argus-signal-poll",
+    );
+    expect(pollJobs).toHaveLength(1);
+    expect(pollJobs[0]).toMatchObject({
+      enabled: true,
+      script: "argus-signal-poll.sh",
+      schedule_display: "every 5m",
+      workdir: repo,
+    });
+    const jobId = pollJobs[0]!.id;
+    expect(typeof jobId).toBe("string");
+
+    const profile = first.stdout.match(/^Hermes profile: (\S+)$/m)?.[1];
+    expect(profile).toBeDefined();
+    const profileJobsPath = join(
+      env.HERMES_HOME!,
+      "profiles",
+      profile!,
+      "cron",
+      "jobs.json",
+    );
+    expect(await Bun.file(profileJobsPath).exists()).toBe(false);
+
+    const second = await runUp(repo, env);
+    expect(second.exitCode).toBe(0);
+    const afterSecondRun = (await Bun.file(rootJobsPath).json()) as {
+      jobs: Array<Record<string, unknown>>;
+    };
+    expect(
+      afterSecondRun.jobs.filter((job) => job.name === "argus-signal-poll"),
+    ).toHaveLength(1);
+    expect(afterSecondRun.jobs[0]!.id).toBe(jobId);
+
+    const trigger = await run(["hermes", "cron", "run", String(jobId)], repo, env);
+    expect(trigger.exitCode).toBe(0);
+    const tick = await run(["hermes", "cron", "tick"], repo, env);
+    expect(tick.exitCode).toBe(0);
+    expect(await Bun.file(join(env.HERMES_HOME!, "cron", ".tick.lock")).exists()).toBe(
+      true,
+    );
+
+    const afterTick = (await Bun.file(rootJobsPath).json()) as {
+      jobs: Array<Record<string, unknown>>;
+    };
+    expect(afterTick.jobs[0]).toMatchObject({
+      id: jobId,
+      last_status: "ok",
+    });
+  });
+
+  test("keeps the poll in the root when another profile is sticky-active", async () => {
+    const { env, repo } = await createScratchRepo("Sticky Hermes Profile");
+    const activeProfile = "interactive";
+    await mkdir(join(env.HERMES_HOME!, "profiles", activeProfile), {
+      recursive: true,
+    });
+    await Bun.write(
+      join(env.HERMES_HOME!, "active_profile"),
+      `${activeProfile}\n`,
+    );
+
+    const result = await runUp(repo, env);
+
+    expect(result.exitCode).toBe(0);
+    const rootJobs = (await Bun.file(
+      join(env.HERMES_HOME!, "cron", "jobs.json"),
+    ).json()) as { jobs: Array<Record<string, unknown>> };
+    expect(rootJobs.jobs.filter((job) => job.name === "argus-signal-poll")).toHaveLength(1);
+    expect(
+      await Bun.file(
+        join(
+          env.HERMES_HOME!,
+          "profiles",
+          activeProfile,
+          "cron",
+          "jobs.json",
+        ),
+      ).exists(),
+    ).toBe(false);
+  });
+
   test("converges configured Honcho and Hermes bindings through the CLI", async () => {
     const requests: Array<{ body: unknown; path: string }> = [];
     const server = Bun.serve({
