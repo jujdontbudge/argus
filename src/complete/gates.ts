@@ -92,6 +92,7 @@ async function rootFileExists(root: string, name: string): Promise<boolean> {
 export async function resolveRepositoryGates(
   repo: string,
   worktree: string,
+  detectRoot = true,
 ): Promise<GateResolution> {
   const configFile = Bun.file(`${repo}/.argus/config.yaml`);
   if (await configFile.exists()) {
@@ -114,6 +115,14 @@ export async function resolveRepositoryGates(
     }
     const configured = configuredGateResolution(repo, config);
     if (configured !== null) return configured;
+  }
+
+  if (!detectRoot) {
+    return {
+      gates: [],
+      source: "no repository-configured additional gates",
+      status: "resolved",
+    };
   }
 
   const packageFile = Bun.file(`${worktree}/package.json`);

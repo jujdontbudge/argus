@@ -55,6 +55,15 @@ export {
   type VerifyEntry,
 } from "./queue.ts";
 export {
+  parseDeclaredVerification,
+  readVerificationDeclaration,
+  recordVerificationDeclaration,
+  type DeclaredVerification,
+  type DeclaredVerificationParse,
+  type InvalidDeclaredVerification,
+  type VerificationDeclaration,
+} from "./verification.ts";
+export {
   createBrainReviewer,
   reviewPrompt,
   type ReviewInput,

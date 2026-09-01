@@ -14,7 +14,9 @@ import {
   type FakeGhOptions,
 } from "../eyes/retro/fake-gh";
 import { completeReadyTickets, type CompleteOptions } from "./complete.ts";
+import { runGateCommand } from "./gates.ts";
 import { listVerifications } from "./queue.ts";
+import { recordVerificationDeclaration } from "./verification.ts";
 
 /**
  * Ticket #57 — the verify/merge/close/map loop, tested THROUGH THE DOOR
@@ -50,6 +52,10 @@ const FAILING_GATE = {
   command: ["sh", "-c", "echo 'expect(1).toBe(2)' >&2; exit 1"],
   name: "tests",
 } as const;
+
+function ticketBody(ticket: string | number, command = "true"): string {
+  return [`Do ${ticket}.`, "", "## Verification", "", "```sh", command, "```"].join("\n");
+}
 
 async function scratchRepo(): Promise<string> {
   const created = await mkdtemp(join(tmpdir(), "argus-complete-"));
@@ -104,6 +110,7 @@ async function deployAndCommit(
   ticket: string,
   sessionId: string,
   file = `ticket-${ticket}.txt`,
+  body = ticketBody(ticket),
 ): Promise<{ worktree: string; branch: string }> {
   const deployed = await deployWorker(
     {
@@ -118,6 +125,7 @@ async function deployAndCommit(
   if (deployed.status !== "deployed") {
     throw new Error(`fixture deployment failed: ${JSON.stringify(deployed)}`);
   }
+  await recordVerificationDeclaration(repo, { body, ticket });
   await commitInWorktree(
     deployed.deployment.worktree,
     file,
@@ -171,7 +179,7 @@ function seedTracker(
   extra: Partial<FakeGhOptions> = {},
 ): FakeGh {
   const gh = createFakeGh({ login: LOGIN, repo: REPO, ...extra });
-  gh.seed({ assignees: [LOGIN], body: `Do ${ticket}.`, number: ticket, title });
+  gh.seed({ assignees: [LOGIN], body: ticketBody(ticket), number: ticket, title });
   gh.seed({
     body: [
       "## Destination",
@@ -194,7 +202,7 @@ function seedTracker(
 
 describe("completeReadyTickets (#57): the gate can refuse, and a refusal stops the merge", () => {
   test(
-    "a repository with no configured or detected gates fails closed without invoking tsc",
+    "a declared command is sufficient when no repository additional gates are configured",
     async () => {
       const repo = await scratchRepo();
       try {
@@ -211,10 +219,9 @@ describe("completeReadyTickets (#57): the gate can refuse, and a refusal stops t
         });
         const report = await completeReadyTickets(autoGateOptions);
 
-        expect(report.completed[0]?.status).toBe("gate-configuration-error");
-        expect(report.completed[0]?.detail).toContain("completion.gates");
-        expect(commands).toEqual([]);
-        expect(gh.find("123")!.state).toBe("open");
+        expect(report.completed[0]?.status).toBe("merged");
+        expect(commands).toEqual([["sh", "-c", "true"]]);
+        expect(gh.find("123")!.state).toBe("closed");
       } finally {
         await cleanup(repo);
       }
@@ -466,6 +473,192 @@ describe("completeReadyTickets (#57): review is a gate, and it can refuse too", 
   );
 });
 
+describe("completeReadyTickets (#141): immutable ticket verification", () => {
+  test("runs the declared command successfully before the configured gate", async () => {
+    const repo = await scratchRepo();
+    try {
+      const gh = seedTracker(141, "Declared verification succeeds");
+      const body = ticketBody(141, "test -f declared.txt");
+      gh.find("141")!.body = body;
+      const deployed = await deployAndCommit(repo, "141", "sess-141", "declared.txt", body);
+      await pushSignal(repo, "sess-141", "end-of-session");
+      let queuedVerification: Awaited<ReturnType<typeof listVerifications>> = [];
+      const calls: Array<{ command: readonly string[]; cwd: string }> = [];
+      const report = await completeReadyTickets(
+        options(repo, gh, {
+          runGate: async (command, cwd) => {
+            if (calls.length === 0) queuedVerification = await listVerifications(repo);
+            calls.push({ command, cwd });
+            return runGateCommand(command, cwd);
+          },
+        }),
+      );
+
+      expect(report.completed[0]?.status).toBe("merged");
+      expect(calls.map(({ command }) => command)).toEqual([
+        ["sh", "-c", "test -f declared.txt"],
+        ["sh", "-c", "exit 0"],
+      ]);
+      expect(calls[0]?.cwd).toBe(deployed.worktree);
+      expect(queuedVerification[0]?.verification).toEqual({
+        bodyHash: expect.any(String),
+        command: "test -f declared.txt",
+        ticket: "141",
+      });
+      expect(report.completed[0]?.verification).toMatchObject({
+        name: "declared verification",
+        passed: true,
+      });
+    } finally {
+      await cleanup(repo);
+    }
+  }, BUDGET_MS);
+
+  test("refuses a failing declared command without running repository gates", async () => {
+    const repo = await scratchRepo();
+    try {
+      const gh = seedTracker(142, "Declared verification fails");
+      const body = ticketBody(142, "exit 7");
+      gh.find("142")!.body = body;
+      await deployAndCommit(repo, "142", "sess-142", "failed-marker.txt", body);
+      await pushSignal(repo, "sess-142", "end-of-session");
+      const calls: readonly string[][] = [];
+      const report = await completeReadyTickets(
+        options(repo, gh, {
+          runGate: async (command) => {
+            (calls as string[][]).push([...command]);
+            return command[0] === "sh"
+              ? runGateCommand(command, repo)
+              : { exitCode: 0, stderr: "", stdout: "" };
+          },
+        }),
+      );
+
+      expect(report.completed[0]?.status).toBe("gate-failed");
+      expect(calls).toEqual([["sh", "-c", "exit 7"]]);
+      expect(gh.find("142")!.state).toBe("open");
+    } finally {
+      await cleanup(repo);
+    }
+  }, BUDGET_MS);
+
+  test("fails closed when the declaration is missing or malformed", async () => {
+    const repo = await scratchRepo();
+    try {
+      const gh = seedTracker(143, "No declared verification");
+      const body = "Do 143.\n\n## Verification\n\n```sh\nbun test; touch unsafe\n```";
+      await deployAndCommit(repo, "143", "sess-143", "marker.txt", body);
+      // The helper recorded the malformed declaration at dispatch time.
+      gh.find("143")!.body = body;
+      await pushSignal(repo, "sess-143", "end-of-session");
+      const report = await completeReadyTickets(
+        options(repo, gh, {
+          runGate: async () => {
+            throw new Error("a malformed declaration must not execute");
+          },
+        }),
+      );
+
+      expect(report.completed[0]?.status).toBe("gate-configuration-error");
+      expect(report.completed[0]?.detail).toContain("shell-injection-prone");
+      expect(gh.find("143")!.state).toBe("open");
+    } finally {
+      await cleanup(repo);
+    }
+  }, BUDGET_MS);
+
+  test("refuses a ticket with no declared verification command", async () => {
+    const repo = await scratchRepo();
+    try {
+      const gh = seedTracker(146, "Missing verification");
+      const body = "Implement 146, but do not guess how to verify it.";
+      gh.find("146")!.body = body;
+      await deployAndCommit(repo, "146", "sess-146", "marker.txt", body);
+      await pushSignal(repo, "sess-146", "end-of-session");
+      const report = await completeReadyTickets(
+        options(repo, gh, {
+          runGate: async () => {
+            throw new Error("a missing declaration must not execute a command");
+          },
+        }),
+      );
+
+      expect(report.completed[0]?.status).toBe("gate-configuration-error");
+      expect(report.completed[0]?.detail).toContain("no unambiguous");
+      expect(gh.find("146")!.state).toBe("open");
+    } finally {
+      await cleanup(repo);
+    }
+  }, BUDGET_MS);
+
+  test("refuses a ticket body changed after dispatch", async () => {
+    const repo = await scratchRepo();
+    try {
+      const gh = seedTracker(144, "Immutable body");
+      const body = ticketBody(144, "true");
+      await deployAndCommit(repo, "144", "sess-144", "marker.txt", body);
+      gh.find("144")!.body = ticketBody(144, "false");
+      await pushSignal(repo, "sess-144", "end-of-session");
+      const calls: string[][] = [];
+      const report = await completeReadyTickets(
+        options(repo, gh, {
+          runGate: async (command) => {
+            calls.push([...command]);
+            return { exitCode: 0, stderr: "", stdout: "" };
+          },
+        }),
+      );
+
+      expect(report.completed[0]?.status).toBe("gate-configuration-error");
+      expect(report.completed[0]?.detail).toContain("body changed after dispatch");
+      expect(calls).toEqual([]);
+      expect(gh.find("144")!.state).toBe("open");
+    } finally {
+      await cleanup(repo);
+    }
+  }, BUDGET_MS);
+
+  test("runs repository-configured gates as an additional policy layer", async () => {
+    const repo = await scratchRepo();
+    try {
+      const gh = seedTracker(145, "Additional repository gate");
+      const body = ticketBody(145, "test -f declared.txt");
+      gh.find("145")!.body = body;
+      const deployed = await deployAndCommit(repo, "145", "sess-145", "declared.txt", body);
+      await commitInWorktree(
+        deployed.worktree,
+        "configured.txt",
+        "configured gate marker\n",
+        "test: configured gate marker",
+      );
+      await writeFile(
+        join(repo, ".argus", "config.yaml"),
+        "completion:\n  gates:\n    - name: repository-policy\n      command: [test, -f, configured.txt]\n",
+      );
+      await pushSignal(repo, "sess-145", "end-of-session");
+      const calls: string[][] = [];
+      const { gates: _explicit, ...autoGates } = options(repo, gh, {
+        runGate: async (command, cwd) => {
+          calls.push([...command]);
+          return runGateCommand(command, cwd);
+        },
+      });
+      const report = await completeReadyTickets(autoGates);
+
+      expect(report.completed[0]?.status).toBe("merged");
+      expect(calls).toEqual([
+        ["sh", "-c", "test -f declared.txt"],
+        ["test", "-f", "configured.txt"],
+      ]);
+      expect(report.completed[0]?.gates).toEqual([
+        expect.objectContaining({ name: "repository-policy", passed: true }),
+      ]);
+    } finally {
+      await cleanup(repo);
+    }
+  }, BUDGET_MS);
+});
+
 describe("completeReadyTickets (#57): finished is not the same as died", () => {
   test(
     "a finished session merges; a session that only stopped breathing does not",
@@ -473,8 +666,8 @@ describe("completeReadyTickets (#57): finished is not the same as died", () => {
       const repo = await scratchRepo();
       try {
         const gh = createFakeGh({ login: LOGIN, repo: REPO });
-        gh.seed({ assignees: [LOGIN], number: 70, title: "Finished" });
-        gh.seed({ assignees: [LOGIN], number: 71, title: "Died" });
+        gh.seed({ assignees: [LOGIN], body: ticketBody(70), number: 70, title: "Finished" });
+        gh.seed({ assignees: [LOGIN], body: ticketBody(71), number: 71, title: "Died" });
         await deployAndCommit(repo, "70", "sess-70");
         await deployAndCommit(repo, "71", "sess-71");
         // #70 said so. #71 said nothing — its digest went `dead`, which is
@@ -638,7 +831,7 @@ describe("completeReadyTickets (#57): finished is not the same as died", () => {
       const repo = await scratchRepo();
       try {
         const gh = createFakeGh({ login: LOGIN, repo: REPO });
-        gh.seed({ number: 73, title: "Dead worker, real commits" });
+        gh.seed({ body: ticketBody(73), number: 73, title: "Dead worker, real commits" });
         const child = Bun.spawn(["sleep", "60"]);
         const spawnAlive = async (): Promise<WorkerProcess> => ({
           ...deadWorker(),
@@ -759,7 +952,7 @@ describe("completeReadyTickets (#57): closing the loop", () => {
       const repo = await scratchRepo();
       try {
         const gh = createFakeGh({ login: LOGIN, repo: REPO });
-        gh.seed({ assignees: [LOGIN], number: 64, title: "No map here" });
+        gh.seed({ assignees: [LOGIN], body: ticketBody(64), number: 64, title: "No map here" });
         await deployAndCommit(repo, "64", "sess-64");
         await pushSignal(repo, "sess-64", "end-of-session");
 

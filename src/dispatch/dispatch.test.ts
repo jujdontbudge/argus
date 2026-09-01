@@ -7,6 +7,7 @@ import { createFakeGh, type FakeGh } from "../eyes/retro/fake-gh";
 import { registryPaths } from "../provenance";
 import type { WorkerProcess, WorkerSpawnRequest } from "../deploy";
 import { defaultDispatchPrompt, dispatchFrontier, type DispatchOptions } from "./dispatch.ts";
+import { readVerificationDeclaration } from "../complete/verification.ts";
 
 /**
  * Ticket #56 — the dispatcher, tested THROUGH THE DOOR PRODUCTION USES.
@@ -247,6 +248,40 @@ describe("dispatchFrontier (#56): SPEC §7.3's cap is enforced where spawning ha
       }
       const sessions = report.dispatched.map((entry) => entry.sessionId);
       expect(new Set(sessions).size).toBe(2);
+    } finally {
+      await cleanup(repo);
+    }
+  }, GIT_BUDGET_MS);
+});
+
+describe("dispatchFrontier (#141): verification is captured at dispatch", () => {
+  test("persists the exact declared command before the worker starts", async () => {
+    const repo = await scratchRepo();
+    try {
+      const gh = createFakeGh({ login: LOGIN, repo: REPO });
+      const body = [
+        "Implement the ticket.",
+        "",
+        "## Verification command (immutable — dispatcher-owned)",
+        "",
+        "```sh",
+        "bun test tests/feature.test.ts && bun run typecheck",
+        "```",
+      ].join("\n");
+      gh.seed({ body, number: 141, title: "Capture verification" });
+      const { spawn, witness } = witnessSpawn(repo, gh);
+
+      const report = await dispatchFrontier(options(repo, gh, spawn));
+      const declaration = await readVerificationDeclaration(repo, "141");
+
+      expect(report.dispatched).toHaveLength(1);
+      expect(witness.calls).toHaveLength(1);
+      expect(declaration).toEqual({
+        bodyHash: expect.any(String),
+        command: "bun test tests/feature.test.ts && bun run typecheck",
+        ticket: "141",
+      });
+      expect(declaration?.bodyHash).not.toBe("");
     } finally {
       await cleanup(repo);
     }

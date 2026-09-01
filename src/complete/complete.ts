@@ -66,6 +66,10 @@ import {
   type GateResult,
   type GateRunner,
 } from "./gates.ts";
+import {
+  parseDeclaredVerification,
+  readVerificationDeclaration,
+} from "./verification.ts";
 import { updateWayfinderMap, type MapUpdate } from "./map.ts";
 import {
   checkoutRefusal,
@@ -116,6 +120,7 @@ export interface CompletionOutcome {
   detail: string;
   sessionId?: string;
   gates?: GateResult[];
+  verification?: GateResult;
   mergeSha?: string;
   map?: MapUpdate;
 }
@@ -445,9 +450,47 @@ async function verifyOne(request: {
     return refuse("failed", "the ticket could not be read from the tracker");
   }
 
+  const declaration = entry.verification ?? await readVerificationDeclaration(repo, ticket);
+  if (declaration === null) {
+    return refuse(
+      "gate-configuration-error",
+      "the ticket has no dispatch-time verification declaration; add one ## Verification fenced command and redispatch it",
+    );
+  }
+  if (declaration.reason !== undefined) {
+    return refuse(
+      "gate-configuration-error",
+      `the ticket verification declaration is invalid: ${declaration.reason}`,
+    );
+  }
+  const currentDeclaration = parseDeclaredVerification(scope.body);
+  if (declaration.bodyHash !== currentDeclaration.bodyHash) {
+    return refuse(
+      "gate-configuration-error",
+      "the ticket body changed after dispatch; its immutable verification declaration is no longer trusted",
+    );
+  }
+  if ("status" in currentDeclaration) {
+    return refuse(
+      "gate-configuration-error",
+      `the ticket verification declaration is now invalid: ${currentDeclaration.reason}`,
+    );
+  }
+  const declaredCommand = declaration.command;
+  if (declaredCommand === undefined) {
+    return refuse("gate-configuration-error", "the ticket has no executable verification command");
+  }
+  if (declaredCommand !== currentDeclaration.command) {
+    return refuse(
+      "gate-configuration-error",
+      "the persisted verification command changed after dispatch; refusing to execute it",
+    );
+  }
+
   let mergeSha: string | undefined;
   let mergeDetail: string;
   let successfulGateResults: GateResult[] | undefined;
+  let successfulDeclaredResult: GateResult | undefined;
 
   if (alreadyMerged) {
     // An earlier pass merged and then failed to close. Re-gating it would be
@@ -468,9 +511,35 @@ async function verifyOne(request: {
     const early = await checkoutRefusal({ base, git, repo });
     if (early !== null) return refuse("failed", early);
 
+    const declaredReport = await runGates(
+      worktree,
+      [{ command: ["sh", "-c", declaredCommand], name: "declared verification" }],
+      request.gateRunner,
+    );
+    const declaredResult = declaredReport.results[0]!;
+    if (!declaredReport.passed) {
+      await comment(
+        gh,
+        repo,
+        tracker.repo,
+        ticket,
+        refusalComment(
+          ticket,
+          `the immutable declared verification failed (exit ${declaredResult.exitCode})`,
+          ["```", declaredResult.output || "(no output)", "```"].join("\n"),
+        ),
+      );
+      return refuse(
+        "gate-failed",
+        `the immutable declared verification failed (exit ${declaredResult.exitCode}); nothing was merged`,
+        { verification: declaredResult },
+      );
+    }
+    successfulDeclaredResult = declaredResult;
+
     const resolution =
       request.gates === undefined
-        ? await resolveRepositoryGates(repo, worktree)
+        ? await resolveRepositoryGates(repo, worktree, false)
         : request.gates.length > 0
           ? { gates: request.gates, source: "CompleteOptions.gates", status: "resolved" as const }
           : {
@@ -485,14 +554,15 @@ async function verifyOne(request: {
         ticket,
         refusalComment(ticket, "completion gates are not configured", resolution.reason),
       );
-      return refuse("gate-configuration-error", resolution.reason);
+      return refuse("gate-configuration-error", resolution.reason, {
+        verification: declaredResult,
+      });
     }
 
-    const gateReport = await runGates(
-      worktree,
-      resolution.gates,
-      request.gateRunner,
-    );
+    const gateReport =
+      resolution.gates.length === 0
+        ? { failure: null, passed: true, results: [] as GateResult[] }
+        : await runGates(worktree, resolution.gates, request.gateRunner);
     if (!gateReport.passed) {
       const failure = gateReport.failure!;
       await comment(
@@ -509,7 +579,7 @@ async function verifyOne(request: {
       return refuse(
         "gate-failed",
         `the ${failure.name} gate failed (exit ${failure.exitCode}); nothing was merged`,
-        { gates: gateReport.results },
+        { gates: gateReport.results, verification: declaredResult },
       );
     }
     successfulGateResults = gateReport.results;
@@ -542,7 +612,7 @@ async function verifyOne(request: {
       return refuse(
         "review-blocked",
         `${headline}: ${[verdict.summary, ...verdict.concerns].filter(Boolean).join("; ")}`,
-        { gates: gateReport.results },
+        { gates: gateReport.results, verification: declaredResult },
       );
     }
 
@@ -557,7 +627,10 @@ async function verifyOne(request: {
       title: scope.title,
     });
     if (merged.status === "failed") {
-      return refuse("failed", merged.reason, { gates: gateReport.results });
+      return refuse("failed", merged.reason, {
+        gates: gateReport.results,
+        verification: declaredResult,
+      });
     }
     mergeSha = merged.sha;
     mergeDetail = `merged into ${base} as ${merged.sha.slice(0, 12)}`;
@@ -635,6 +708,7 @@ async function verifyOne(request: {
       status: "merged",
       ...(mergeSha !== undefined && { mergeSha }),
       ...(successfulGateResults !== undefined && { gates: successfulGateResults }),
+      ...(successfulDeclaredResult !== undefined && { verification: successfulDeclaredResult }),
     },
   };
 }
