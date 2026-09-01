@@ -100,34 +100,46 @@ function isCause(value: unknown): value is EscalationCause {
   return Object.values(ESCALATION_CAUSES).includes(value as EscalationCause);
 }
 
-/** The only four states allowed to route to Johan. Everything else is ignored. */
-export function classifyEscalationCause(
-  trigger: EscalationTrigger,
-): EscalationCause | null {
-  if (
-    typeof trigger !== "object" ||
-    trigger === null ||
-    ticketNumber((trigger as { ticket?: unknown }).ticket) === null ||
-    typeof (trigger as { sessionId?: unknown }).sessionId !== "string" ||
-    (trigger as { sessionId: string }).sessionId.trim() === ""
-  ) {
+interface EscalationFields {
+  sessionId: string;
+  ticket: string;
+  agent?: string;
+}
+
+function escalationFields(value: unknown): EscalationFields | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const ticket = ticketNumber(row.ticket);
+  if (ticket === null || typeof row.sessionId !== "string" || row.sessionId.trim() === "") {
     return null;
   }
-  switch (trigger.kind) {
+  return {
+    sessionId: row.sessionId,
+    ticket,
+    ...(typeof row.agent === "string" && { agent: row.agent }),
+  };
+}
+
+/** The only four states allowed to route to Johan. Everything else is ignored. */
+export function classifyEscalationCause(trigger: unknown): EscalationCause | null {
+  if (escalationFields(trigger) === null) return null;
+  const row = trigger as Record<string, unknown>;
+  switch (row.kind) {
     case "nudge-budget-exhausted":
-      return trigger.liveState === "stalled-live"
+      return row.liveState === "stalled-live"
         ? ESCALATION_CAUSES.nudgeBudgetExhausted
         : null;
     case "r2-bailout":
-      return trigger.consequentialChoiceRecordedOnTicket === true
+      return row.consequentialChoiceRecordedOnTicket === true
         ? ESCALATION_CAUSES.r2Bailout
         : null;
     case "dispatched-ticket-death":
-      return trigger.deathCount === 2 && trigger.automaticRelaunchCount === 1
+      return row.deathCount === 2 && row.automaticRelaunchCount === 1
         ? ESCALATION_CAUSES.secondDispatchedDeath
         : null;
     case "grill-park-proposal":
-      return Number.isFinite(trigger.parkedHours) && trigger.parkedHours >= 72
+      return typeof row.parkedHours === "number" &&
+        Number.isFinite(row.parkedHours) && row.parkedHours >= 72
         ? ESCALATION_CAUSES.grillParkProposal
         : null;
     default:
@@ -246,23 +258,20 @@ async function logicalSessionId(repo: string, sessionId: string): Promise<string
 /** Route one classified lifecycle trigger to the digest marker and local push. */
 export async function escalateNeedsJohan(
   repo: string,
-  trigger: EscalationTrigger,
+  trigger: unknown,
   options: EscalationOptions = {},
 ): Promise<EscalationResult> {
   const cause = classifyEscalationCause(trigger);
-  const ticket = ticketNumber(
-    typeof trigger === "object" && trigger !== null
-      ? (trigger as { ticket?: unknown }).ticket
-      : undefined,
-  );
-  if (cause === null || ticket === null) return { status: "ignored", reason: "not-trigger" };
+  const fields = escalationFields(trigger);
+  if (cause === null || fields === null) return { status: "ignored", reason: "not-trigger" };
+  const { sessionId, ticket, agent } = fields;
   const notification = notificationFor(ticket, cause);
 
   return withLifecycleLock(repo, async () => {
     // Digest chain rotation gives one logical session several physical ids.
     // Resolve that identity before deduping so a restart under a new id cannot
     // produce a second escalation for the same cause.
-    const root = await logicalSessionId(repo, trigger.sessionId);
+    const root = await logicalSessionId(repo, sessionId);
     const existing = await readLifecycleRecords(repo);
     if (existing.some((record) => recordKey(record.sessionId, record.cause) === recordKey(root, cause))) {
       return { status: "duplicate", cause, ticket };
@@ -281,7 +290,7 @@ export async function escalateNeedsJohan(
     await appendDurably(lifecyclePath(repo), record);
 
     const fileName = digestFileName(ticket, root);
-    const seed = { agent: trigger.agent ?? "argus", ticket, startedBy: "hermes" as const };
+    const seed = { agent: agent ?? "argus", ticket, startedBy: "hermes" as const };
     const marker = `[needs-johan] ticket #${ticket}: ${cause}`;
     const frontmatter = await applyDigestUpdate(
       join(repo, ".argus", "sessions"),

@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { readDigest } from "../eyes/digest/outputs.ts";
 import {
+  classifyEscalationCause,
   escalateNeedsJohan,
   type EscalationTrigger,
   type MacNotificationRequest,
@@ -246,12 +247,12 @@ describe("needs-Johan escalation routing", () => {
   test("fails closed for malformed runtime trigger data", async () => {
     const repo = await repoFixture();
     const notifications: MacNotificationRequest[] = [];
-    const malformed = {
+    const malformed: unknown = {
       kind: "nudge-budget-exhausted",
       sessionId: undefined,
       ticket: "189",
       liveState: "stalled-live",
-    } as unknown as EscalationTrigger;
+    };
 
     const result = await escalateNeedsJohan(repo, malformed, {
       notify: async (request) => {
@@ -272,7 +273,7 @@ describe("needs-Johan escalation routing", () => {
 
       const result = await escalateNeedsJohan(
         repo,
-        candidate as unknown as EscalationTrigger,
+        candidate,
         {
           notify: async (request) => {
             notifications.push(request);
@@ -285,6 +286,17 @@ describe("needs-Johan escalation routing", () => {
       expect(await Bun.file(join(repo, ".argus/registry/lifecycle.jsonl")).exists()).toBe(false);
     },
   );
+
+  test("the public classifier accepts unknown runtime inputs and fails closed", () => {
+    const candidates: unknown[] = [undefined, null, "not-an-object", 42, { kind: "unknown-trigger" }];
+    expect(candidates.map((candidate) => classifyEscalationCause(candidate))).toEqual([
+      null,
+      null,
+      null,
+      null,
+      null,
+    ]);
+  });
 
   test("does not mutate ticket or surface state", async () => {
     const repo = await repoFixture();
