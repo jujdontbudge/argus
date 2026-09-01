@@ -51,6 +51,11 @@ const TRACKER_LABELS = [
     description: "Wayfinder implementation task",
     name: "wayfinder:task",
   },
+  {
+    color: "B60205",
+    description: "Planning work launched on the Opus degradation fallback",
+    name: "degraded-model",
+  },
 ] as const;
 
 function configuredHonchoUrl(config: string): string {

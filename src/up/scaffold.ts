@@ -33,6 +33,8 @@ export const ARGUS_DIRECTORIES = [
 export const DEFAULT_CONFIG = `# Argus per-repo overrides. Uncomment only values that differ from defaults.
 # honcho:
 #   url: http://localhost:8000
+# grill:
+#   model: claude-fable-5
 # brain:
 #   model: gpt-5.6-luna
 #   reasoning_effort: low

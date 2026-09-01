@@ -247,7 +247,7 @@ async function grill(args: string[]): Promise<number> {
   const usage =
     'Usage: argus grill "<topic>" [--mode <grilling|spec|tickets|review|diagnosis>]' +
     " [--model <model>] [--dry-run]";
-  const { isGrillMode, resolveGrillDispatch, grillPrompt, startGrill } = await import(
+  const { isGrillMode, resolveGrillDispatch, resolveGrillModel, grillPrompt, startGrill } = await import(
     "./grill/index.ts"
   );
 
@@ -304,6 +304,7 @@ async function grill(args: string[]): Promise<number> {
       return 1;
     }
     const { invocation } = dispatch;
+    console.log(`model: ${await resolveGrillModel(repo, model)}`);
     console.log(`repo:  ${repo}`);
     console.log(`skill: ${invocation.skill} (${invocation.source}, ${invocation.form})`);
     console.log(`from:  ${invocation.path}`);

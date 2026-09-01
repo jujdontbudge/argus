@@ -22,6 +22,7 @@
  * — is that difference.
  */
 import type { AgentRoute } from "../deploy";
+import { DEFAULT_GRILL_MODEL } from "./config.ts";
 
 export const CLAUDE_GRILL_ROUTE: AgentRoute = {
   agent: "claude",
@@ -30,7 +31,7 @@ export const CLAUDE_GRILL_ROUTE: AgentRoute = {
     "--session-id",
     sessionId ?? "",
     "--model",
-    model ?? "claude-opus-5",
+    model ?? DEFAULT_GRILL_MODEL,
     ...extraArgs,
     dispatchPrompt,
   ],

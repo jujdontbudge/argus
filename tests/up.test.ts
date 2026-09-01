@@ -171,6 +171,7 @@ describe("argus up", () => {
       );
     }
     const scaffolded = await Bun.file(join(repo, ".argus/config.yaml")).text();
+    expect(scaffolded).toContain("# grill:\n#   model: claude-fable-5");
     expect(scaffolded).toContain("# brain:");
     for (const eye of ["reviewer", "digest", "retro"]) {
       expect(scaffolded).toContain(
@@ -536,6 +537,7 @@ if (args[0] === "label" && args[1] === "list") console.log(JSON.stringify([{ nam
       "wayfinder:prototype",
       "wayfinder:grilling",
       "wayfinder:task",
+      "degraded-model",
     ]);
     expect(await Bun.file(join(repo, "docs/agents/issue-tracker.md")).text()).toContain(
       "acme/widgets",

@@ -7,6 +7,7 @@ import {
   STRIPPED_ENV,
   subscriptionEnv,
 } from "./index.ts";
+import { CLAUDE_GRILL_ROUTE } from "../grill/route.ts";
 
 /**
  * Ticket #55 — routing, and the two CLI facts the ordering promise rests on.
@@ -41,6 +42,18 @@ describe("routes (#55): who names the session", () => {
     ]);
     // SPEC §1 item 7: subscription mode. No `--api-key`, no token argument.
     expect(command.join(" ")).not.toContain("api");
+  });
+
+  test("the grill route defaults to Fable and accepts a launch override", () => {
+    const defaults = CLAUDE_GRILL_ROUTE.command({ dispatchPrompt: "grill" });
+    expect(defaults).toContain("claude-fable-5");
+
+    const overridden = CLAUDE_GRILL_ROUTE.command({
+      dispatchPrompt: "grill",
+      model: "claude-opus-5",
+    });
+    expect(overridden).toContain("claude-opus-5");
+    expect(overridden).not.toContain("claude-fable-5");
   });
 
   test("codex announces its own id on stdout, and only `thread.started` counts", () => {

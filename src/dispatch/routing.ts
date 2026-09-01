@@ -3,7 +3,7 @@
  * else:
  *
  * > Routing is by ticket label. Hermes reads the label and picks the worker:
- * > `grilling`, `spec`, `review`, `diagnosis` → Claude Code; implementation
+ * > `grilling`, `spec`, `tickets`, `review`, `diagnosis` → Claude Code; implementation
  * > tickets (default) → Codex; exceptions can be pinned per-ticket with an
  * > explicit `agent:claude-code` / `agent:codex` label.
  *

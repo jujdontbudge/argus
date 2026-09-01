@@ -44,6 +44,12 @@ export {
 export { grillPrompt, type GrillPromptInput } from "./prompt.ts";
 export { CLAUDE_GRILL_ROUTE } from "./route.ts";
 export {
+  DEFAULT_GRILL_MODEL,
+  loadGrillConfig,
+  resolveGrillModel,
+  type GrillConfig,
+} from "./config.ts";
+export {
   GRILL_MODES,
   isGrillMode,
   type GrillMode,
